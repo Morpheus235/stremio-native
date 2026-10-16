@@ -10,8 +10,8 @@
     "object_id": "snstate.debug"
   },
   {
-    "name": "nightly",
-    "app_id": "com.morpheus235.stremionative.nightly",
-    "object_id": "snstate.night"
+    "name": "beta",
+    "app_id": "com.morpheus235.stremionative.beta",
+    "object_id": "snstate.beta"
   }
 ]

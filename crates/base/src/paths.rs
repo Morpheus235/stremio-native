@@ -844,8 +844,8 @@ mod tests {
         use std::path::Path;
         let dev = "/media/developer/apps/usr/palm/applications/com.morpheus235.stremionative.debug/stremionative";
         let hbc = "/media/cryptofs/apps/usr/palm/applications/com.morpheus235.stremionative/stremionative";
-        let nightly =
-            "/media/developer/apps/usr/palm/applications/com.morpheus235.stremionative.nightly/stremionative";
+        let beta =
+            "/media/developer/apps/usr/palm/applications/com.morpheus235.stremionative.beta/stremionative";
         assert_eq!(
             super::installed_app_id(Path::new(dev)).as_deref(),
             Some("com.morpheus235.stremionative.debug")
@@ -855,8 +855,8 @@ mod tests {
             Some("com.morpheus235.stremionative")
         );
         assert_eq!(
-            super::installed_app_id(Path::new(nightly)).as_deref(),
-            Some("com.morpheus235.stremionative.nightly")
+            super::installed_app_id(Path::new(beta)).as_deref(),
+            Some("com.morpheus235.stremionative.beta")
         );
         // A host build: the parent is `debug`, whose parent is `target-sim` — not `applications`.
         // Without this arm the simulator would mint an app called `debug`, take `/tmp/debug` as its
@@ -893,10 +893,10 @@ mod tests {
             Some("debug")
         );
         assert_eq!(
-            "com.morpheus235.stremionative.nightly"
+            "com.morpheus235.stremionative.beta"
                 .strip_prefix(super::STABLE_APP_ID)
                 .and_then(|r| r.strip_prefix('.')),
-            Some("nightly")
+            Some("beta")
         );
         // The real one must agree with the real id, whatever this binary turned out to be.
         assert_eq!(
@@ -919,19 +919,19 @@ mod tests {
         }
         let stable = super::resolve_runtime_dir(None, None, super::STABLE_APP_ID);
         let debug = super::resolve_runtime_dir(None, None, "com.morpheus235.stremionative.debug");
-        let nightly = super::resolve_runtime_dir(None, None, "com.morpheus235.stremionative.nightly");
+        let beta = super::resolve_runtime_dir(None, None, "com.morpheus235.stremionative.beta");
         assert_eq!(stable, std::path::Path::new("/tmp"));
         assert_eq!(debug, std::path::Path::new("/tmp/com.morpheus235.stremionative.debug"));
-        assert_eq!(nightly, std::path::Path::new("/tmp/com.morpheus235.stremionative.nightly"));
+        assert_eq!(beta, std::path::Path::new("/tmp/com.morpheus235.stremionative.beta"));
         assert_ne!(
             stable.join("stremionative-events.log"),
             debug.join("stremionative-events.log")
         );
         assert_ne!(
             debug.join("stremionative-events.log"),
-            nightly.join("stremionative-events.log")
+            beta.join("stremionative-events.log")
         );
-        for flavoured in [&debug, &nightly] {
+        for flavoured in [&debug, &beta] {
             let name = flavoured.file_name().unwrap().to_string_lossy().into_owned();
             assert!(
                 !name.starts_with("stremionative-"),

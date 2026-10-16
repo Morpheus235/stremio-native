@@ -260,17 +260,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn nightly_app_identity() {
-        assert_eq!(app_identity(Path::new("/media/developer/apps/usr/palm/services/com.morpheus235.stremionative.nightly.storage/stremionative-storage")), Ok("com.morpheus235.stremionative.nightly"));
+    fn beta_app_identity() {
+        assert_eq!(app_identity(Path::new("/media/developer/apps/usr/palm/services/com.morpheus235.stremionative.beta.storage/stremionative-storage")), Ok("com.morpheus235.stremionative.beta"));
     }
 
     #[test]
     fn rejects_foreign_or_malformed_install_paths() {
         for path in [
             "/usr/palm/services/com.morpheus235.stremionative.typo.storage/stremionative-storage",
-            "/usr/palm/services/com.morpheus235.stremionative.nightly/stremionative-storage",
-            "/usr/palm/applications/com.morpheus235.stremionative.nightly.storage/stremionative-storage",
-            "/usr/palm/services/com.morpheus235.stremionative.nightly.storage/other",
+            "/usr/palm/services/com.morpheus235.stremionative.beta/stremionative-storage",
+            "/usr/palm/applications/com.morpheus235.stremionative.beta.storage/stremionative-storage",
+            "/usr/palm/services/com.morpheus235.stremionative.beta.storage/other",
             "stremionative-storage",
         ] {
             assert_eq!(app_identity(Path::new(path)), Err(ErrorCode::Invalid));
