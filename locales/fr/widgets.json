@@ -265,5 +265,14 @@
   "widgets.region.nl": "Pays-Bas",
   "widgets.region.latin_america": "Amérique latine",
   "widgets.failure.play_auto": "Passer en Auto et lire",
-  "widgets.failure.change_quality": "Changer la qualité"
+  "widgets.failure.change_quality": "Changer la qualité",
+  "widgets.failure.audio_unsupported": "Échec de la lecture : ce téléviseur ne peut pas décoder la piste audio",
+  "widgets.reason.audio_unsupported": "Ce téléviseur n’a pas de décodeur pour cette piste audio ; choisissez une autre piste audio ou un autre flux",
+  "widgets.panel.audio_unsupported": "le téléviseur n’a pas de décodeur pour la piste audio",
+  "widgets.failure.video_unsupported": "Échec de la lecture : ce téléviseur ne peut pas décoder la vidéo",
+  "widgets.reason.video_unsupported": "Ce téléviseur n’a pas de décodeur pour ce format vidéo ; choisissez un autre flux",
+  "widgets.panel.video_unsupported": "le téléviseur n’a pas de décodeur pour la vidéo",
+  "widgets.failure.dolby_vision": "Échec de la lecture : ce flux Dolby Vision ne peut pas être affiché correctement ici",
+  "widgets.reason.dolby_vision": "Ce flux Dolby Vision n’a pas d’image que ce téléviseur puisse afficher sans Dolby Vision ; choisissez un autre flux",
+  "widgets.panel.dolby_vision": "flux Dolby Vision sans couche de base affichable"
 }

@@ -1091,5 +1091,41 @@
   "widgets.failure.change_quality": {
     "value": "Change quality",
     "description": "Failed-playback button: opens the quality ladder; picking a rung retries at it."
+  },
+  "widgets.failure.audio_unsupported": {
+    "value": "Playback failed — this TV cannot decode the audio track",
+    "description": "Player error caption: the selected audio track's format (or channel count) has no decoder on this TV and the app has no software decoder for it yet."
+  },
+  "widgets.reason.audio_unsupported": {
+    "value": "This TV has no decoder for this audio track; choose another audio track or stream",
+    "description": "Explanation beneath the playback-failed heading when the audio track cannot be decoded by the TV."
+  },
+  "widgets.panel.audio_unsupported": {
+    "value": "the TV has no decoder for the audio track",
+    "description": "Diagnostics panel verdict suffix: the audio track cannot be decoded by the TV."
+  },
+  "widgets.failure.video_unsupported": {
+    "value": "Playback failed — this TV cannot decode the video",
+    "description": "Player error caption: the stream's video codec has no decoder on this TV."
+  },
+  "widgets.reason.video_unsupported": {
+    "value": "This TV has no decoder for this video format; choose another stream",
+    "description": "Explanation beneath the playback-failed heading when the video codec cannot be decoded by the TV."
+  },
+  "widgets.panel.video_unsupported": {
+    "value": "the TV has no decoder for the video",
+    "description": "Diagnostics panel verdict suffix: the video codec cannot be decoded by the TV."
+  },
+  "widgets.failure.dolby_vision": {
+    "value": "Playback failed — this Dolby Vision stream cannot be shown correctly here",
+    "description": "Player error caption: a Dolby Vision stream whose base layer alone is a wrong picture, on a TV that cannot be told it is Dolby Vision."
+  },
+  "widgets.reason.dolby_vision": {
+    "value": "This Dolby Vision stream has no picture this TV can show without Dolby Vision; choose another stream",
+    "description": "Explanation beneath the playback-failed heading for a Dolby Vision stream that cannot be shown correctly."
+  },
+  "widgets.panel.dolby_vision": {
+    "value": "Dolby Vision stream with no displayable base layer",
+    "description": "Diagnostics panel verdict suffix: a Dolby Vision stream refused because its base layer is not a correct picture."
   }
 }

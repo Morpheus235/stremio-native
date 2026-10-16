@@ -265,5 +265,14 @@
   "widgets.region.nl": "Países Bajos",
   "widgets.region.latin_america": "Latinoamérica",
   "widgets.failure.play_auto": "Cambiar a Automático y reproducir",
-  "widgets.failure.change_quality": "Cambiar calidad"
+  "widgets.failure.change_quality": "Cambiar calidad",
+  "widgets.failure.audio_unsupported": "Error de reproducción: este televisor no puede decodificar la pista de audio",
+  "widgets.reason.audio_unsupported": "Este televisor no tiene decodificador para esta pista de audio; elige otra pista de audio u otra fuente",
+  "widgets.panel.audio_unsupported": "el televisor no tiene decodificador para la pista de audio",
+  "widgets.failure.video_unsupported": "Error de reproducción: este televisor no puede decodificar el vídeo",
+  "widgets.reason.video_unsupported": "Este televisor no tiene decodificador para este formato de vídeo; elige otra fuente",
+  "widgets.panel.video_unsupported": "el televisor no tiene decodificador para el vídeo",
+  "widgets.failure.dolby_vision": "Error de reproducción: esta fuente Dolby Vision no se puede mostrar correctamente aquí",
+  "widgets.reason.dolby_vision": "Esta fuente Dolby Vision no tiene una imagen que este televisor pueda mostrar sin Dolby Vision; elige otra fuente",
+  "widgets.panel.dolby_vision": "fuente Dolby Vision sin capa base visualizable"
 }

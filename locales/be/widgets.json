@@ -269,5 +269,14 @@
   "widgets.region.nl": "Нідэрланды",
   "widgets.region.latin_america": "Лацінская Амерыка",
   "widgets.failure.play_auto": "Уключыць «Аўтаматычна» і прайграць",
-  "widgets.failure.change_quality": "Змяніць якасць"
+  "widgets.failure.change_quality": "Змяніць якасць",
+  "widgets.failure.audio_unsupported": "Не ўдалося прайграць: гэты тэлевізар не можа дэкадаваць аўдыядарожку",
+  "widgets.reason.audio_unsupported": "У гэтага тэлевізара няма дэкодэра для гэтай аўдыядарожкі; выберыце іншую аўдыядарожку або іншы паток",
+  "widgets.panel.audio_unsupported": "у тэлевізара няма дэкодэра для аўдыядарожкі",
+  "widgets.failure.video_unsupported": "Не ўдалося прайграць: гэты тэлевізар не можа дэкадаваць відэа",
+  "widgets.reason.video_unsupported": "У гэтага тэлевізара няма дэкодэра для гэтага фармату відэа; выберыце іншы паток",
+  "widgets.panel.video_unsupported": "у тэлевізара няма дэкодэра для відэа",
+  "widgets.failure.dolby_vision": "Не ўдалося прайграць: гэты паток Dolby Vision нельга правільна паказаць тут",
+  "widgets.reason.dolby_vision": "У гэтага патоку Dolby Vision няма выявы, якую гэты тэлевізар можа паказаць без Dolby Vision; выберыце іншы паток",
+  "widgets.panel.dolby_vision": "паток Dolby Vision без прыдатнага да паказу базавага слоя"
 }

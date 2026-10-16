@@ -1,0 +1,27 @@
+//! sn_media: the media layer of the StremioNative application core.
+//!
+//! Demux (`ff`, the bundled FFmpeg), the HTTPS media pull source (`curlio`), the access-unit
+//! queues (`aq`), the stream's request headers (`headers`), what a stream is and how it is fed
+//! (`stream`), the seam the layer above starts a playback through (`session`), the subtitle
+//! preferences the renderers read (`prefs`) and the buffer-feed engine (`player`). It uses `base`,
+//! `machine`, `platform`, `net` and (for the simulator's picture only) `gfx`, and nothing above
+//! them: what to play arrives as a `session::PlaybackStart`, and what happened leaves through its
+//! `session::PlaybackObserver`.
+//!
+//! The Starfish/ACB surface is declared here and nowhere else: `sf_on_event` and `acb_on_event`
+//! (`player`), which `native/starfish.c` calls, and the externs of `player::ffi`. The crate links
+//! nothing itself; the final link resolves them.
+//!
+//! `test-support` exposes the `cfg(test)` seams the layers above test through (`player::preview`,
+//! `player::restore_state_for_test`, ...). The application crate enables it in
+//! `[dev-dependencies]` only, so no shipped build sees it.
+
+pub mod aq;
+pub mod curlio; // the HTTPS media plane: a remote file pulled by byte range over libcurl-multi (stream.rs is the plaintext-socket twin)
+#[macro_use]
+pub mod ff; // THE demuxer -- the FFmpeg 9.0 this app BUNDLES and pins (majors 63/63/61), dlopen'd by absolute path beside the binary, never the television's
+pub mod headers; // a stream's request headers (Stremio `behaviorHints.proxyHeaders.request`), checked once
+pub mod player; // buffer-feed video engine
+pub mod prefs; // the viewer's subtitle preferences, as the renderers read them
+pub mod session; // PlaybackStart / PlaybackSession / PlaybackObserver: the seam to the layer above
+pub mod stream; // the stream declaration, Dolby Vision presentation and the audio-feed (DTS) policy
