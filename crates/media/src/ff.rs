@@ -5,9 +5,10 @@
 //!
 //! This module is THE media demuxer: robust MKV/MP4/TS demux, HTTP input, and
 //! index-based seeking (av_seek_frame). Design record: docs/ffmpeg-demuxer-plan.md.
-//! It also owns the ONE encode path (`venc`, near the end of the file): the dev
-//! capture stream's MPEG1 + MPEG-TS muxer, kept here because every FFmpeg ABI
-//! detail — struct offsets, AVOption names, custom AVIO — belongs in one module.
+//! It also owns the encode paths, because every FFmpeg ABI detail — struct offsets, AVOption
+//! names, custom AVIO — belongs in one module: the dev capture stream's MPEG1 + MPEG-TS muxer
+//! (`venc`, near the end of the file), the pre-Load stream probe (`probe`, ff_probe.rs) and the
+//! DTS -> AC-3 audio transcoder (`transcode`, ff_transcode.rs).
 //! The struct layouts below are the FFmpeg n3.3 ABI, confirmed on-device by the
 //! Phase A probe (/tmp/stremionative-ffprobe logs codec_id/width/height for a known title).
 #![allow(dead_code)]
@@ -41,6 +42,13 @@ static SWS_OK: AtomicBool = AtomicBool::new(false);
 pub fn set_feed_audio(on: bool) {
     FEED_AUDIO.store(on, Ordering::Relaxed);
 }
+/// Transcode the fed DTS track to AC-3 (`transcode::DtsToAc3`) instead of extracting its core.
+/// Set by `engine::start_bufferfeed` from the session's frozen `AudioFeed` before it spawns the
+/// demuxer, which reads it once, at open — the same contract as [`FEED_AUDIO`].
+static TRANSCODE_DTS: AtomicBool = AtomicBool::new(false);
+pub fn set_transcode_dts(on: bool) {
+    TRANSCODE_DTS.store(on, Ordering::Relaxed);
+}
 
 // ---- opaque handles (pointer-only, never dereferenced) ----
 pub enum AVClass {}
@@ -67,7 +75,7 @@ pub enum AVStream {}
 // That is the point of bundling. An offset that is merely *probably* right — derived from a
 // version string plus an upstream tarball — becomes one the compiler checked.
 //
-// `tools/ffabi-dump.sh` re-derives all of them if the bundled version ever changes.
+// `ci/ffabi-check.sh dump` re-derives all of them if the bundled version ever changes.
 //
 // **TWO TABLES, and the axis is POINTER WIDTH rather than FFmpeg version.** The 32-bit arm is the
 // television; the 64-bit arm is the desktop simulator (`make sim`), which runs this same code
@@ -76,7 +84,7 @@ pub enum AVStream {}
 // alignment; nothing here is a version difference, which is exactly why the old runtime
 // major-selected table does not come back. `ci/ffabi-assert.c` holds both, `#if`-ed the same way,
 // against each build's own headers — so a wrong number is a compile error on the platform it is
-// wrong for, and `HOST=1 tools/ffabi-dump.sh` prints the 64-bit half.
+// wrong for, and `ci/ffabi-check.sh dump --host` prints the 64-bit half (`--arm-eabi` the 32-bit one without an NDK).
 #[cfg(target_pointer_width = "32")]
 const OFF_STREAM_INDEX: usize = 4; // NB not 0 — FFmpeg 5.0 put `const AVClass *av_class` first
 #[cfg(target_pointer_width = "32")]
@@ -101,6 +109,22 @@ const OFF_STREAM_TIME_BASE: usize = 32;
 const OFF_STREAM_METADATA: usize = 72;
 #[cfg(target_pointer_width = "64")]
 const OFF_STREAM_METADATA: usize = 80;
+/// `AVStream.disposition` (`AV_DISPOSITION_*` flags), `avg_frame_rate` and `r_frame_rate` — read
+/// by the probe (ff_probe.rs) for the default audio track and the declared frame rate. Proven on
+/// both widths in `ci/ffabi-assert.c`; the ARM numbers are not the host ones less the pointer
+/// growth because the int64 `start_time` after `time_base` is 8-aligned on ARM EABI.
+#[cfg(target_pointer_width = "32")]
+const OFF_STREAM_DISPOSITION: usize = 56;
+#[cfg(target_pointer_width = "64")]
+const OFF_STREAM_DISPOSITION: usize = 64;
+#[cfg(target_pointer_width = "32")]
+const OFF_STREAM_AVG_FRAME_RATE: usize = 76;
+#[cfg(target_pointer_width = "64")]
+const OFF_STREAM_AVG_FRAME_RATE: usize = 88;
+#[cfg(target_pointer_width = "32")]
+const OFF_STREAM_R_FRAME_RATE: usize = 172;
+#[cfg(target_pointer_width = "64")]
+const OFF_STREAM_R_FRAME_RATE: usize = 204;
 /// `AVFormatContext.duration`, in AV_TIME_BASE units. By offset — see the struct's closing note.
 #[cfg(target_pointer_width = "32")]
 const OFF_FMT_DURATION: usize = 64;
@@ -233,15 +257,63 @@ pub struct AVCodecParameters {
     pub alpha_mode: c_int,          // +160
 }
 
-/// `AVChannelLayout`, modelled only as far as `nb_channels` — the one field this app reads.
-/// The union that follows is 8-aligned, so a 4-byte pad sits after `nb_channels` on ARM.
+/// `AVChannelLayout`, in full (24 bytes on both widths). The probe reads `nb_channels`; the
+/// transcoder BUILDS one (`order` NATIVE + `u_mask`) for the AC-3 layout it encodes and hands it to
+/// `av_channel_layout_copy`, which is what writes it into FFmpeg's structs. The union that follows
+/// `nb_channels` is 8-aligned, so a 4-byte pad sits after it on ARM.
 #[repr(C)]
 pub struct AVChannelLayout {
-    pub order: c_int,        // +0
+    pub order: c_int,        // +0  (enum AVChannelOrder: 1 = NATIVE)
     pub nb_channels: c_int,  // +4
-    pub u_mask: u64,         // +8  (union { mask, map })
+    pub u_mask: u64,         // +8  (union { uint64_t mask; AVChannelCustom *map })
     pub opaque: *mut c_void, // +16
 }
+
+// The #[repr(C)] models above, held to the numbers `ci/ffabi-assert.c` proves against the bundled
+// headers. The C file proves FFmpeg's layout; these prove OURS is the same one — a model field of
+// the wrong type or in the wrong place is then a compile error on the width it is wrong for, not a
+// write into the next field. Only the fields the probe and the transcoder read or WRITE are listed.
+const _: () = {
+    use std::mem::{offset_of, size_of};
+    assert!(size_of::<AVChannelLayout>() == 24);
+    assert!(offset_of!(AVChannelLayout, nb_channels) == 4);
+    assert!(offset_of!(AVChannelLayout, u_mask) == 8);
+    assert!(offset_of!(AVChannelLayout, opaque) == 16);
+    assert!(offset_of!(AVCodecParameters, codec_type) == 0);
+    assert!(offset_of!(AVCodecParameters, codec_id) == 4);
+};
+#[cfg(target_pointer_width = "32")]
+const _: () = {
+    use std::mem::offset_of;
+    assert!(offset_of!(AVCodecParameters, format) == 28);
+    assert!(offset_of!(AVCodecParameters, bit_rate) == 32);
+    assert!(offset_of!(AVCodecParameters, profile) == 48);
+    assert!(offset_of!(AVCodecParameters, width) == 56);
+    assert!(offset_of!(AVCodecParameters, framerate) == 72);
+    assert!(offset_of!(AVCodecParameters, ch_layout) == 112);
+    assert!(offset_of!(AVCodecParameters, sample_rate) == 136);
+    assert!(offset_of!(AVCodecParameters, frame_size) == 144);
+    assert!(offset_of!(AVCodecParameters, initial_padding) == 148);
+    assert!(offset_of!(AVPacket, pts) == 8);
+    assert!(offset_of!(AVPacket, data) == 24);
+    assert!(offset_of!(AVPacket, size) == 28);
+};
+#[cfg(target_pointer_width = "64")]
+const _: () = {
+    use std::mem::offset_of;
+    assert!(offset_of!(AVCodecParameters, format) == 44);
+    assert!(offset_of!(AVCodecParameters, bit_rate) == 48);
+    assert!(offset_of!(AVCodecParameters, profile) == 64);
+    assert!(offset_of!(AVCodecParameters, width) == 72);
+    assert!(offset_of!(AVCodecParameters, framerate) == 88);
+    assert!(offset_of!(AVCodecParameters, ch_layout) == 128);
+    assert!(offset_of!(AVCodecParameters, sample_rate) == 152);
+    assert!(offset_of!(AVCodecParameters, frame_size) == 160);
+    assert!(offset_of!(AVCodecParameters, initial_padding) == 164);
+    assert!(offset_of!(AVPacket, pts) == 8);
+    assert!(offset_of!(AVPacket, data) == 24);
+    assert!(offset_of!(AVPacket, size) == 32);
+};
 
 // AVFormatContext truncated after `filename` — we only ever hold a library-returned pointer and
 // read leading fields. NEVER stack-allocate this.
@@ -431,6 +503,14 @@ sn_base::dynlib! {
     fn avcodec_receive_packet(ctx: *mut AVCodecContext, pkt: *mut AVPacket) -> c_int;
     fn avcodec_parameters_from_context(par: *mut AVCodecParameters, ctx: *const AVCodecContext) -> c_int;
     fn av_packet_rescale_ts(pkt: *mut AVPacket, tb_src: AVRational, tb_dst: AVRational);
+    // The DTS -> AC-3 transcoder (ff_transcode.rs): the send/receive decode and encode API, the
+    // decoder looked up by NAME (no codec-id enum value to trust), and a packet it fills itself.
+    // All exported by the bundled libavcodec 63 (`nm -D` of the host build, 2026-10-16).
+    fn avcodec_find_decoder_by_name(name: *const c_char) -> *const AVCodec;
+    fn avcodec_send_packet(ctx: *mut AVCodecContext, pkt: *const AVPacket) -> c_int;
+    fn avcodec_receive_frame(ctx: *mut AVCodecContext, frame: *mut c_void) -> c_int;
+    fn avcodec_flush_buffers(ctx: *mut AVCodecContext);
+    fn av_new_packet(pkt: *mut AVPacket, size: c_int) -> c_int;
 }}
 sn_base::dynlib! {
     // avformat_version lives in libavformat, not libavutil — but it was declared here and the
@@ -455,6 +535,15 @@ sn_base::dynlib! {
     fn av_frame_make_writable(frame: *mut c_void) -> c_int;
     fn av_opt_set(obj: *mut c_void, name: *const c_char, val: *const c_char, search_flags: c_int) -> c_int;
     fn av_get_pix_fmt(name: *const c_char) -> c_int;
+    // The transcoder: codec-private options by name, the sample format by name, and channel
+    // layouts through their own accessors (copy / uninit / per-index channel / describe).
+    fn av_opt_set_int(obj: *mut c_void, name: *const c_char, val: i64, search_flags: c_int) -> c_int;
+    fn av_get_sample_fmt(name: *const c_char) -> c_int;
+    fn av_frame_unref(frame: *mut c_void);
+    fn av_channel_layout_copy(dst: *mut AVChannelLayout, src: *const AVChannelLayout) -> c_int;
+    fn av_channel_layout_uninit(layout: *mut AVChannelLayout);
+    fn av_channel_layout_channel_from_index(layout: *const AVChannelLayout, idx: c_uint) -> c_int;
+    fn av_channel_layout_describe(layout: *const AVChannelLayout, buf: *mut c_char, size: usize) -> c_int;
     // Container tags. Borrowed, never freed: the entry belongs to the dictionary, which belongs to
     // the AVStream, which `avformat_close_input` frees — so every read must copy before the close.
     fn av_dict_get(
@@ -499,6 +588,15 @@ const AVMEDIA_TYPE_ATTACHMENT: c_int = 4;
 // with the av1 parser absent the packets arrive raw. `av1_packet_to_tu` frames the OBUs itself.
 // Enabling the parser would pull in cbs_av1 for nothing.
 pub const AV_CODEC_ID_AAC: c_int = 0x15002;
+/// The AC-3 encoder's codec id, which `avcodec_parameters_to_context` writes and `avcodec_open2`
+/// checks against the codec it opens. Asserted in ci/ffabi-assert.c.
+pub const AV_CODEC_ID_AC3: c_int = 0x15003;
+/// `AV_DISPOSITION_DEFAULT` — the muxer's default track. Asserted in ci/ffabi-assert.c.
+pub const AV_DISPOSITION_DEFAULT: c_int = 1;
+/// `AV_PROFILE_EAC3_DDP_ATMOS` (libavcodec/defs.h) — what `codecpar.profile` reads for E-AC3 JOC.
+pub const AV_PROFILE_EAC3_DDP_ATMOS: c_int = 30;
+/// `av_opt_set*`'s flag that reaches a codec's PRIVATE options (`priv_data`). Asserted.
+pub const AV_OPT_SEARCH_CHILDREN: c_int = 1;
 pub const AV_CODEC_ID_H264: c_int = 27;
 // FF_API_XVMC and FF_API_VOXWARE both died before FFmpeg 6, which is why these differ from the
 // values the n3.3 televisions use (28 / 174 / 0x15029).
@@ -778,6 +876,25 @@ const OFF_FRAME_HEIGHT: usize = 108;
 const OFF_FRAME_FORMAT: usize = 116;
 #[cfg(target_pointer_width = "64")]
 const OFF_FRAME_PTS: usize = 136;
+// AVFrame's audio half, read and written by the transcoder (ff_transcode.rs) — it has no setter.
+// Proven on both widths in ci/ffabi-assert.c. `ch_layout` sits past four size_t crop fields and a
+// pointer, so it is the field the widths disagree on most.
+#[cfg(target_pointer_width = "32")]
+const OFF_FRAME_EXTENDED_DATA: usize = 64;
+#[cfg(target_pointer_width = "32")]
+const OFF_FRAME_NB_SAMPLES: usize = 76;
+#[cfg(target_pointer_width = "32")]
+const OFF_FRAME_SAMPLE_RATE: usize = 132;
+#[cfg(target_pointer_width = "32")]
+const OFF_FRAME_CH_LAYOUT: usize = 256;
+#[cfg(target_pointer_width = "64")]
+const OFF_FRAME_EXTENDED_DATA: usize = 96;
+#[cfg(target_pointer_width = "64")]
+const OFF_FRAME_NB_SAMPLES: usize = 112;
+#[cfg(target_pointer_width = "64")]
+const OFF_FRAME_SAMPLE_RATE: usize = 180;
+#[cfg(target_pointer_width = "64")]
+const OFF_FRAME_CH_LAYOUT: usize = 384;
 const SWS_BILINEAR: c_int = 2;
 const VENC_TB: AVRational = AVRational { num: 1, den: 30 };
 
@@ -1415,6 +1532,9 @@ pub fn boot() {
             );
         }
     }
+    // Which software audio paths the loaded libavcodec carries (a registry lookup: no symbol table
+    // can answer it). Latched before any playback decides its audio feed.
+    transcode::detect();
     // Phase A dev trigger: /tmp/stremionative-ffprobe holds a media URL to open + dump streams,
     // confirming the FFmpeg-3.3 struct offsets against known media before we build on them.
     if let Some(u) = sn_base::devtrig::read("ffprobe") {
@@ -1531,6 +1651,12 @@ enum Src {
 
 #[path = "ff_subs.rs"]
 mod subs;
+/// The pre-Load stream probe: open with the bundled demuxer, read the streams, close.
+#[path = "ff_probe.rs"]
+pub mod probe;
+/// DTS -> AC-3 on the CPU, for the DTS the television's table will not take.
+#[path = "ff_transcode.rs"]
+pub mod transcode;
 #[path = "ff_subside.rs"]
 pub(crate) mod subside;
 use subs::{SubKind, SubTracks};
@@ -2459,8 +2585,8 @@ unsafe fn packet_to_annexb(
 static DIAG_FIRST: AtomicBool = AtomicBool::new(true);
 
 /// Extract one DTS core access unit, dropping the DTS-HD extension substream. Matroska and
-/// MOV demux return the complete packet; our bundled FFmpeg 9.0 has neither the dca parser nor
-/// dca_core BSF enabled. The core size is the 14-bit FSIZE + 1 from its normalized header
+/// MOV demux return the complete packet (core + extension); the bundled FFmpeg 9.0 has the dca
+/// PARSER (so an MPEG-TS PES is framed one frame per packet) but not the dca_core BSF. The core size is the 14-bit FSIZE + 1 from its normalized header
 /// (ETSI TS 102 114; FFmpeg 9.0 libavcodec/bsf/dca_core.c). No new FFmpeg ABI is needed.
 /// Normalize the four core sync formats to 16-bit big endian before measuring. Extension-only,
 /// truncated and malformed packets are rejected instead of sending HD data to the core decoder.
@@ -2734,6 +2860,34 @@ fn open_plain_progressive(
     path: &str,
     aq_p: *mut AuQueue,
 ) -> Result<(Src, i64), MediaOpenFail> {
+    let mut hop = |url: &str| open_curl_hop(url, 0, &crate::headers::RequestHeaders::none(), aq_p);
+    match open_plain_following(hs_p, origin, path, aq_p, &mut hop) {
+        Ok((src, size, st)) => {
+            SHARED.file_size.store(size, Ordering::Release);
+            SHARED.dg_http_status.store(st, Ordering::Relaxed);
+            Ok((src, size))
+        }
+        Err((fail, status)) => {
+            if let Some(st) = status {
+                SHARED.dg_http_status.store(st, Ordering::Relaxed);
+            }
+            Err(fail)
+        }
+    }
+}
+
+/// [`open_plain_progressive`] without the diagnostics: the open itself, for the demuxer and for
+/// the probe (`ff_probe.rs`), which must not write a playback's read-out before that playback
+/// exists. `hop` opens the curl source an https redirect lands on — the demuxer's registers as
+/// teardown's wake target, the probe's stays private. `Ok` carries the source, its size and the
+/// HTTP status; `Err` the failure and the status worth publishing, if any.
+fn open_plain_following(
+    hs_p: *mut HttpStream,
+    origin: &sn_net::net::origin::Origin,
+    path: &str,
+    aq_p: *mut AuQueue,
+    hop: &mut dyn FnMut(&str) -> Result<Box<crate::curlio::CurlSource>, crate::curlio::OpenErr>,
+) -> Result<(Src, i64, c_int), (MediaOpenFail, Option<c_int>)> {
     use sn_net::stream::redirect::Opened;
     sn_net::stream::http_close(hs_p);
     let req = sn_net::stream::redirect::Request {
@@ -2749,12 +2903,10 @@ fn open_plain_progressive(
     {
         Ok(Opened::Socket(t)) => {
             let size = sn_net::stream::hs_content_length(hs_p);
-            SHARED.file_size.store(size, Ordering::Release);
             let st = sn_net::stream::hs_status(hs_p);
-            SHARED.dg_http_status.store(st, Ordering::Relaxed);
             crate::player::log(&format!("ff: open status={st} clen={size}"));
             let (Ok(host), Ok(path)) = (CString::new(t.origin.host()), CString::new(t.path)) else {
-                return Err(MediaOpenFail::Failed);
+                return Err((MediaOpenFail::Failed, Some(st)));
             };
             Ok((
                 Src::Socket {
@@ -2764,33 +2916,29 @@ fn open_plain_progressive(
                     path,
                 },
                 size,
+                st,
             ))
         }
-        Ok(Opened::Tls(t)) => match open_curl_hop(&t.url(), 0, &crate::headers::RequestHeaders::none(), aq_p) {
+        Ok(Opened::Tls(t)) => match hop(&t.url()) {
             Ok(cs) => {
                 let (st, size) = (cs.status(), cs.size());
-                SHARED.file_size.store(size, Ordering::Release);
-                SHARED.dg_http_status.store(st, Ordering::Relaxed);
                 crate::player::log(&format!("ff: open https status={st} clen={size}"));
-                Ok((Src::Curl(cs), size))
+                Ok((Src::Curl(cs), size, st))
             }
-            Err(crate::curlio::OpenErr::Aborted) => Err(MediaOpenFail::Aborted),
+            Err(crate::curlio::OpenErr::Aborted) => Err((MediaOpenFail::Aborted, None)),
             Err(e) => {
-                if let crate::curlio::OpenErr::Status(st) = e {
-                    SHARED.dg_http_status.store(st, Ordering::Relaxed);
-                }
                 crate::player::log(&format!("ff: https open FAILED: {e:?}"));
-                Err(MediaOpenFail::Failed)
+                let st = if let crate::curlio::OpenErr::Status(st) = e { Some(st) } else { None };
+                Err((MediaOpenFail::Failed, st))
             }
         },
         Err(e) => {
             if unsafe { crate::aq::aq_is_aborted(aq_p) } {
-                return Err(MediaOpenFail::Aborted);
+                return Err((MediaOpenFail::Aborted, None));
             }
             let st = sn_net::stream::hs_status(hs_p);
-            SHARED.dg_http_status.store(st, Ordering::Relaxed);
             crate::player::log(&format!("ff: http_open FAILED status={st} ({e:?})"));
-            Err(MediaOpenFail::Failed)
+            Err((MediaOpenFail::Failed, Some(st)))
         }
     }
 }
@@ -3136,6 +3284,33 @@ mod pre_audio_headroom_tests {
     }
 }
 
+/// The bookkeeping after one audio AU (stamped `pts`) reached the audio lane — the same for a
+/// demuxed packet and a transcoded AC-3 frame: the pre-audio headroom's progress (and its release
+/// once the engine's lead-in is in), and the audio tail the seek logic reads.
+fn audio_pushed(headroom: &mut PreAudioHeadroom, aq_p: *mut AuQueue, pts: i64) {
+    let step = headroom.after_audio(pts);
+    if step.first && headroom.granted {
+        // The late audio arrived: say how far ahead video had to run.
+        crate::player::log(&format!(
+            "ff: first audio at {}ms after {} bytes of video queued ahead of it",
+            pts / 1_000_000,
+            crate::aq::aq_bytes(aq_p)
+        ));
+    }
+    if step.release {
+        // The engine's lead-in is on the audio lane: from here the video lane
+        // falls back to its base cap as the consumer drains it, never under what
+        // it holds (see `PRE_AUDIO_VIDEO_HEADROOM`).
+        crate::aq::aq_release_headroom(aq_p);
+        crate::player::log(&format!(
+            "ff: audio lead-in pushed ({}ms past the first); video headroom released with {} bytes queued",
+            (pts - headroom.first_audio_ns.unwrap_or(pts)) / 1_000_000,
+            crate::aq::aq_bytes(aq_p)
+        ));
+    }
+    SHARED.audio_tail_ns.store(pts, Ordering::Release);
+}
+
 /// The demux thread body (spawned by `engine::start_bufferfeed`).
 ///
 /// Takes the stream's URL and its request headers ([`crate::headers::RequestHeaders`]) because
@@ -3460,7 +3635,24 @@ pub fn demux(
                 let dts_audio = ai >= 0 && std::ffi::CStr::from_ptr(avcodec_get_name(
                     (*stream_codecpar(*streams.add(ai as usize))).codec_id
                 )).to_bytes() == b"dts";
-                if dts_audio {
+                // The session decided this track plays as AC-3 made on the CPU (`AudioFeed::
+                // TranscodeAc3`): open the transcoder now, before any packet is read, so a build or
+                // a stream it cannot serve fails the open with a reason rather than a silent lane.
+                let mut transcoder = if dts_audio && TRANSCODE_DTS.load(Ordering::Relaxed) && FEED_AUDIO.load(Ordering::Relaxed) {
+                    match transcode::DtsToAc3::open(stream_codecpar(*streams.add(ai as usize))) {
+                        Ok(t) => Some(t),
+                        Err(e) => {
+                            crate::player::log(&format!("ff: DTS -> AC-3 transcoder unavailable ({e:?}); refusing the stream"));
+                            SHARED.demux_failed.store(true, Ordering::Release);
+                            avformat_close_input(&mut fmt);
+                            free_avio(avio);
+                            break;
+                        }
+                    }
+                } else {
+                    None
+                };
+                if dts_audio && transcoder.is_none() {
                     crate::player::log("ff: DTS core extraction on (DTS-HD extensions discarded)");
                 }
                 if let Some((fi, ch)) = aac_adts {
@@ -3637,6 +3829,9 @@ pub fn demux(
                 // Restarted (and the lane's grant withdrawn) by every seek and at loop exit.
                 let mut headroom = PreAudioHeadroom::default();
                 SHARED.first_audio_pts.store(i64::MIN, Ordering::Release);
+                // The read loop ended on the file's own end (not a failure, a stop or a full lane):
+                // the transcoder's last partial frame is still owed to the audio lane.
+                let mut reached_end = false;
                 // INNER read loop
                 loop {
                     // Direct-play seek (and the armed resume, which is just a seek published before
@@ -3684,9 +3879,13 @@ pub fn demux(
                         ));
                         headroom.restart(aq_p);
                         SHARED.first_audio_pts.store(i64::MIN, Ordering::Release);
+                        if let Some(t) = transcoder.as_mut() {
+                            t.reset();
+                        }
                     }
                     let r = av_read_frame(fmt, pkt);
                     if frame_read_failed(&mut state, r) {
+                        reached_end = r == AVERROR_EOF && !state.io_failed;
                         // Genuine end of stream, teardown, or an unrecovered I/O error published by
                         // `frame_read_failed`. NOT an app seek — that is serviced at the top of this
                         // loop and never surfaces as a read error.
@@ -3797,6 +3996,51 @@ pub fn demux(
                         }
                         PUSHED_ANY.store(true, Ordering::Relaxed);
                         SHARED.video_tail_ns.store(pts, Ordering::Release);
+                    } else if si == ai && FEED_AUDIO.load(Ordering::Relaxed) && transcoder.is_some() {
+                        // DTS in, AC-3 out: the packet may complete zero, one or two AC-3 frames,
+                        // each its own AU with its own (sample-counted) pts. The lane bookkeeping
+                        // runs per AU pushed, exactly as for a demuxed one.
+                        let ast = *streams.add(ai as usize);
+                        let pts_in = pts_ns(pkt, ast);
+                        let raw: &[u8] = if (*pkt).data.is_null() {
+                            &[]
+                        } else {
+                            std::slice::from_raw_parts((*pkt).data, (*pkt).size.max(0) as usize)
+                        };
+                        let out = transcoder.as_mut().expect("checked").push(raw, pts_in);
+                        av_packet_unref(pkt);
+                        let frames = match out {
+                            Ok(f) => f,
+                            Err(e) => {
+                                crate::player::log(&format!("ff: DTS -> AC-3 transcode failed ({e:?}); ending the audio feed"));
+                                SHARED.demux_failed.store(true, Ordering::Release);
+                                SHARED.demux_io_failed.store(true, Ordering::Release);
+                                break;
+                            }
+                        };
+                        let mut lane_closed = false;
+                        for f in frames {
+                            if headroom.first_audio_ns.is_none() {
+                                SHARED.first_audio_pts.store(f.pts_ns, Ordering::Release);
+                            }
+                            let pushed = crate::aq::aq_push_with_drain(
+                                aqa_p,
+                                f.data.as_ptr(),
+                                f.data.len() as c_int,
+                                f.pts_ns,
+                                1,
+                                2,
+                                || state.drain_wire(),
+                            );
+                            if pushed != 0 {
+                                lane_closed = true;
+                                break;
+                            }
+                            audio_pushed(&mut headroom, aq_p, f.pts_ns);
+                        }
+                        if lane_closed {
+                            break;
+                        }
                     } else if si == ai && FEED_AUDIO.load(Ordering::Relaxed) {
                         let ast = *streams.add(ai as usize);
                         let pts = pts_ns(pkt, ast);
@@ -3849,27 +4093,7 @@ pub fn demux(
                         if pushed != 0 {
                             break;
                         }
-                        let step = headroom.after_audio(pts);
-                        if step.first && headroom.granted {
-                            // The late audio arrived: say how far ahead video had to run.
-                            crate::player::log(&format!(
-                                "ff: first audio at {}ms after {} bytes of video queued ahead of it",
-                                pts / 1_000_000,
-                                crate::aq::aq_bytes(aq_p)
-                            ));
-                        }
-                        if step.release {
-                            // The engine's lead-in is on the audio lane: from here the video lane
-                            // falls back to its base cap as the consumer drains it, never under what
-                            // it holds (see `PRE_AUDIO_VIDEO_HEADROOM`).
-                            crate::aq::aq_release_headroom(aq_p);
-                            crate::player::log(&format!(
-                                "ff: audio lead-in pushed ({}ms past the first); video headroom released with {} bytes queued",
-                                (pts - headroom.first_audio_ns.unwrap_or(pts)) / 1_000_000,
-                                crate::aq::aq_bytes(aq_p)
-                            ));
-                        }
-                        SHARED.audio_tail_ns.store(pts, Ordering::Release);
+                        audio_pushed(&mut headroom, aq_p, pts);
                     } else if let Some(sub_pos) = sub_tracks.position(si) {
                         // Subtitle packet: `SubTracks::decode` yields a cue for EVERY text track
                         // (not just the selected one) and decodes every image track while subtitles
@@ -3885,6 +4109,24 @@ pub fn demux(
                         break;
                     }
                 }
+
+                // The file ended: the transcoder's last partial AC-3 frame (padded) and whatever its
+                // encoder still holds go to the audio lane, so the final ~30 ms are not lost. A
+                // failed push here is a stop arriving at the same moment, and changes nothing.
+                if let Some(t) = transcoder.as_mut().filter(|_| reached_end && !crate::aq::aq_is_aborted(aq_p)) {
+                    match t.finish() {
+                        Ok(frames) => {
+                            for f in frames {
+                                if crate::aq::aq_push_with_drain(aqa_p, f.data.as_ptr(), f.data.len() as c_int, f.pts_ns, 1, 2, || state.drain_wire()) != 0 {
+                                    break;
+                                }
+                                SHARED.audio_tail_ns.store(f.pts_ns, Ordering::Release);
+                            }
+                        }
+                        Err(e) => crate::player::log(&format!("ff: DTS -> AC-3 transcoder flush failed ({e:?})")),
+                    }
+                }
+                drop(transcoder);
 
                 // Whatever way the read loop ended, the video lane does not keep a standing grant.
                 headroom.withdraw(aq_p);
@@ -3990,3 +4232,7 @@ mod eof_seek_tests;
 #[cfg(test)]
 #[path = "ff_hls_tests.rs"]
 mod hls_tests;
+
+#[cfg(test)]
+#[path = "ff_transcode_tests.rs"]
+mod transcode_tests;

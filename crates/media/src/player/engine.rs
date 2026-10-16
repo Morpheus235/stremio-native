@@ -1196,6 +1196,9 @@ fn fps_rational(fps: f64) -> Option<(i64, i64)> {
 pub enum BufferfeedStartOutcome {
     AlreadyRunning,
     Launched,
+    /// The start had no declaration: the stream is being probed (`player::probe`), and `pump`
+    /// launches the native start when the probe resolves it — or refuses it.
+    Probing,
     Failed,
 }
 
@@ -1222,6 +1225,27 @@ pub fn start_bufferfeed_tracked(ps: &mut crate::session::PlaybackSession, pa: &m
     if pa.engine().is_some() {
         log("start_bufferfeed: already running (no-op)");
         return BufferfeedStartOutcome::AlreadyRunning;
+    }
+    // A start with no declaration cannot build a Load yet: probe the stream first. The probe's
+    // answer comes back through `pump` (`player::finish_probe`), which calls this again.
+    if ps.unresolved() {
+        if pa.has_probe() {
+            return BufferfeedStartOutcome::Probing;
+        }
+        let Some(start) = ps.start() else {
+            return BufferfeedStartOutcome::Failed;
+        };
+        return match super::probe::PendingProbe::spawn(start.url.clone(), start.headers.clone()) {
+            Ok(p) => {
+                log("start_bufferfeed: no declaration — probing the stream before the Load");
+                pa.start_probe(p);
+                BufferfeedStartOutcome::Probing
+            }
+            Err(f) => {
+                ps.refuse_probe(f);
+                BufferfeedStartOutcome::Failed
+            }
+        };
     }
     // A fresh play (not a `reload_at`, which reaches `start_bufferfeed_for` directly) is a new
     // playback: it gets to try the native Seek again.
@@ -1299,7 +1323,12 @@ fn start_bufferfeed_inner(ps: &mut crate::session::PlaybackSession, pa: &mut sup
     }
     if ps.url().is_empty() {
         if let Some(t) = sn_base::devtrig::read("url") {
-            if !t.is_empty() && ps.begin(crate::session::PlaybackStart::new(t)).is_err() {
+            // The bare-URL trigger keeps its baseline declaration (H.264, video only) rather
+            // than probing: it is the pipeline tier's "a URL and nothing else" case.
+            // `stremionative-playurl` declares the rest; a real start probes.
+            let mut start = crate::session::PlaybackStart::new(t);
+            start.stream = Some(crate::stream::StreamDeclaration::default());
+            if !start.url.is_empty() && ps.begin(start).is_err() {
                 return Err(StartFailed);
             }
         }
@@ -1347,6 +1376,8 @@ fn start_bufferfeed_inner(ps: &mut crate::session::PlaybackSession, pa: &mut sup
     let audio_payload = ps.audio().payload();
     let no_audio = sn_base::devtrig::flag("noaudio") || audio_payload.is_none();
     crate::ff::set_feed_audio(!no_audio);
+    // A DTS track the television will not take, transcoded to the AC-3 this Load declares.
+    crate::ff::set_transcode_dts(matches!(ps.audio(), crate::stream::AudioFeed::TranscodeAc3 { .. }));
     let stream_payload;
     // Every arm below assigns this — the static payloads through `static_envelope`, the streamed
     // one through `sink_envelope_now` — so a new arm that forgets it fails to compile.
@@ -1719,6 +1750,9 @@ fn stop_reason_now() -> crate::session::StopReason {
 /// suspend, NOT a real stop: preserve the playback session so start_bufferfeed can restart the
 /// SAME item, and tell the observer nothing.
 fn teardown(ps: &mut crate::session::PlaybackSession, pa: &mut super::adapter::PlayerAdapter, for_reload: bool) {
+    // A probe in flight belongs to the playback being stopped or suspended. A suspended,
+    // still-unresolved start probes again when it is restarted.
+    pa.cancel_probe();
     if !pa.is_live() {
         // No Engine (a refused start, or nothing ever started): a real stop still ends the
         // playback the session holds.
@@ -4727,7 +4761,9 @@ mod load_in_flight_tests {
         let mut pa = crate::player::adapter::PlayerAdapter::new(unsafe {
             sn_base::task::MainThread::assume()
         });
-        ps.begin(crate::session::PlaybackStart::new("http://127.0.0.1:1/media/film.mkv")).expect("admitted");
+        let mut start = crate::session::PlaybackStart::new("http://127.0.0.1:1/media/film.mkv");
+        start.stream = Some(crate::stream::StreamDeclaration::default());
+        ps.begin(start).expect("admitted");
         install_engine_with_timed_out_load(&mut ps, &mut pa);
 
         // The reload (whose teardown parks the still-running Load) and the settle that publishes
@@ -4820,7 +4856,7 @@ mod load_in_flight_tests {
         stop_bufferfeed(&mut ps, &mut pa);
         assert!(pa.has_abandoned_load(), "PRECONDITION FAILED: the Load must be parked");
         let mut start = crate::session::PlaybackStart::new("http://127.0.0.1:1/media/film.mkv");
-        start.stream.acodec = "aac".into();
+        start.stream = Some(crate::stream::StreamDeclaration { acodec: "aac".into(), ..Default::default() });
         ps.begin(start).expect("an AAC stream is admitted");
 
         // The resumed foreground's `PlayerForegroundActuator::start_load`.
@@ -4881,7 +4917,7 @@ mod sink_envelope_tests {
         let mut c = sn_platform::devcaps::Caps::assumed();
         c.audio = "aac,ac3,eac3,dts".to_string();
         c.audio_channels.insert("dts".to_string(), 6);
-        let payload = |codec: &str| crate::stream::AudioFeed::decide(codec, 2, &c).payload();
+        let payload = |codec: &str| crate::stream::AudioFeed::decide(codec, 2, &c, crate::stream::SoftwareAudio::NONE).payload();
         assert_eq!(payload("dts"), Some(("DTS", 4)));
         assert_eq!(payload("eac3"), Some(("AC3 PLUS", 2)));
         for codec in ["truehd", "flac", "", "unknown"] {

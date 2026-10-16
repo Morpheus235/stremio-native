@@ -94,7 +94,7 @@ impl PlayUrl {
         let pairs: Vec<(&str, &str)> = self.headers.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
         let mut start = crate::session::PlaybackStart::new(self.url.clone());
         start.headers = crate::headers::RequestHeaders::from_pairs(&pairs)?;
-        start.stream = crate::stream::StreamDeclaration {
+        start.stream = Some(crate::stream::StreamDeclaration {
             vcodec: self.vcodec.clone(),
             acodec: self.acodec.clone(),
             audio_channels: self.channels,
@@ -102,7 +102,7 @@ impl PlayUrl {
             raster: self.raster.map_or((0, 0), |[w, h]| (w, h)),
             dovi: self.dovi.to_dovi(),
             atmos: self.atmos,
-        };
+        });
         Ok(start)
     }
 }
@@ -149,12 +149,13 @@ mod tests {
         )
         .unwrap();
         let start = p.to_start().unwrap();
+        let d = start.stream.clone().expect("the trigger always declares");
         assert_eq!(start.url, "http://192.0.2.10:8020/pipe_hevc_eac3_4k_dovi_p8.mkv");
-        assert_eq!((start.stream.vcodec.as_str(), start.stream.acodec.as_str()), ("hevc", "eac3"));
-        assert_eq!(start.stream.audio_channels, 6);
-        assert!((start.stream.fps - 23.976).abs() < 1e-9);
-        assert!(!start.stream.atmos);
-        let dv = start.stream.dovi;
+        assert_eq!((d.vcodec.as_str(), d.acodec.as_str()), ("hevc", "eac3"));
+        assert_eq!(d.audio_channels, 6);
+        assert!((d.fps - 23.976).abs() < 1e-9);
+        assert!(!d.atmos);
+        let dv = d.dovi;
         assert!(dv.present, "profile 8 must derive present=true");
         assert_eq!((dv.profile, dv.bl_compat, dv.el_present), (8, 1, false));
         assert_eq!(start.headers.user_agent(), Some("LiveClient/2.6"));
@@ -166,11 +167,12 @@ mod tests {
     fn omitted_fields_default_to_a_silent_declaration() {
         let p = super::parse_playurl(r#"{"url":"http://10.0.0.2:8020/a.mkv","vcodec":"h264","acodec":"ac3"}"#).unwrap();
         let start = p.to_start().unwrap();
-        assert_eq!(start.stream.fps, 0.0);
-        assert!(!start.stream.atmos);
-        assert_eq!(start.stream.dovi, crate::stream::Dovi::NONE, "an absent dovi node must be silence itself");
+        let d = start.stream.clone().expect("the trigger always declares");
+        assert_eq!(start.stream.as_ref().map(|d| d.fps), Some(0.0));
+        assert!(!d.atmos);
+        assert_eq!(d.dovi, crate::stream::Dovi::NONE, "an absent dovi node must be silence itself");
         assert!(start.headers.is_empty());
-        assert_eq!(start.stream.raster, (0, 0));
+        assert_eq!(d.raster, (0, 0));
     }
 
     /// A header the media plane refuses refuses the trigger, rather than playing without it.

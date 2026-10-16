@@ -11,7 +11,12 @@ The Plex transcode decision (`route/`) and transcode ABR are not carried over.
 
 - **DTS plays natively.** Feed the DTS core to the TV's decoder when its codec table lists DTS
   and the stream's channel count fits the measured ceiling (DTS-HD extensions are stripped to the
-  core). Otherwise decode in software and feed PCM/AC3: there is no server to transcode it.
+  core). Otherwise decode in software and feed AC3: there is no server to transcode it. Done for
+  DTS (`ff::transcode`: the bundled `dca` decoder and float `ac3` encoder, core-only, at most 5.1,
+  640 kb/s); still to verify on a TV. TrueHD, FLAC and Opus are still refused.
+- **Probe before Load.** A stream comes with no codec facts, so the player opens it with the
+  bundled demuxer first (`ff::probe`, off-frame, bounded) and declares the Load from what the
+  container says; a caller's declaration is an optional override.
 - **Never hang on audio the pipeline cannot render.** A stalled start falls back instead of
   spinning forever; a video-only stream plays silently.
 

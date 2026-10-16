@@ -26,6 +26,7 @@ pub mod engine;
 pub mod machine;
 pub mod playurl; // the `stremionative-playurl` dev trigger: a stream and its Load declaration, parsed beside the engine that acts on it
 pub mod preview;
+pub mod probe; // the pre-Load probe's thread and budget, held by the adapter
 // `test` here is THIS crate's own test build only, not `any(test, feature = "test-support")`: the
 // application crate's `port.rs` names `StarfishSink` in every build of its library that is not its
 // own test build, and `cargo check --lib --tests` builds that library with this crate's
@@ -612,6 +613,10 @@ pub fn state(ps: &crate::session::PlaybackSession) -> shared::PlaybackState {
     if ps.jail_load_blocked || ps.native_start_refused || ps.refusal().is_some() {
         return shared::PlaybackState::Error;
     }
+    // Probing the stream before the Load (or suspended while it was): still connecting.
+    if ps.unresolved() {
+        return shared::PlaybackState::Connecting;
+    }
     // A seek in flight is derived HERE too, not only published by the pump's own ladder (which
     // says the same thing in the same order — a seek outranks frames). `request_seek` sets the
     // flag at the press, but `pb_state` is only republished at the end of a pump pass, so a
@@ -665,9 +670,10 @@ pub enum FailureKind {
     /// Dolby Vision whose base layer alone is a wrong picture, on a set that cannot be told —
     /// refused before any Load.
     DolbyVision,
-    /// The selected audio track needs a software decoder the app does not have yet
-    /// ([`crate::stream::AudioFeed::NeedsSoftwareDecode`]) — refused before any Load, so the
-    /// player never sits in a start whose audio clock cannot run.
+    /// The selected audio track needs a software decoder this build does not have
+    /// ([`crate::stream::AudioFeed::NeedsSoftwareDecode`]: TrueHD, FLAC, Opus, ..., or DTS where
+    /// the DTS -> AC-3 path is unavailable) — refused before any Load, so the player never sits in
+    /// a start whose audio clock cannot run.
     AudioUnsupported,
     /// The producer never opened a usable media stream or produced a video access unit.
     MediaSource,
@@ -859,6 +865,10 @@ fn refusal_shape(refusal: &crate::session::StartRefusal) -> ErrorShape {
             readout: msg::widgets_reason_audio_unsupported(),
             detail: b(""),
         },
+        // A probe that found no video track says so, exactly like a demuxer that found none;
+        // every other probe failure is the stream not opening, which may be transient (Try again).
+        R::Probe(crate::stream::ProbeFailure::NoVideo) => error_shape(true, RuntimeFailure::Unknown),
+        R::Probe(_) => error_shape(false, RuntimeFailure::MediaSource),
     }
 }
 
@@ -956,6 +966,7 @@ fn failtest_arm() -> Option<ErrorShape> {
         "audio" => refusal_shape(&R::AudioUnsupported { codec: "truehd".into(), channels: 8 }),
         "video" => refusal_shape(&R::VideoUnsupported("mpeg2video".into())),
         "dv" => refusal_shape(&R::DolbyVision("dual-layer")),
+        "probe" => refusal_shape(&R::Probe(crate::stream::ProbeFailure::Timeout)),
         _ => error_shape(false, RuntimeFailure::Unknown),
     })
 }
@@ -1120,6 +1131,7 @@ impl Diag {
             2 => "AC3 PLUS",
             3 => "AAC",
             4 => "DTS",
+            5 => "AC3 (from DTS)",
             _ => "NONE (needAudio:false)",
         }
     }
@@ -1250,11 +1262,17 @@ pub fn request_audio_track(
 /// starts the native Engine.
 ///
 /// `Err` is a start the session refused before anything reached the pipeline — a video codec the
-/// set cannot decode, a Dolby Vision layering it cannot present, or an audio track that needs the
-/// (not yet existing) software decoder ([`crate::stream::AudioFeed::NeedsSoftwareDecode`]).
+/// set cannot decode, a Dolby Vision layering it cannot present, or an audio track that needs a
+/// software decoder this build does not have ([`crate::stream::AudioFeed::NeedsSoftwareDecode`]).
 /// [`state`] then reads `Error` and [`error_now`] names the refusal, until the next start or a
 /// stop. `Ok` carries what the native start did; a `Failed` start also reads `Error` (or
 /// `Connecting` while the sandbox repair runs).
+///
+/// **A start with no declaration (`start.stream == None`, every Stremio stream) is probed first**:
+/// `Ok(BufferfeedStartOutcome::Probing)`, [`state`] reads `Connecting`, and [`pump`] — which the
+/// application already calls every frame — launches the native start when the probe resolves the
+/// session, or leaves the refusal (`StartRefusal::Probe`, or any of the above for what the probe
+/// found) for [`error_now`]. A caller-supplied declaration skips the probe.
 pub fn begin_playback(
     ps: &mut crate::session::PlaybackSession,
     pa: &mut adapter::PlayerAdapter,
@@ -1263,6 +1281,8 @@ pub fn begin_playback(
     if pa.is_live() {
         stop_bufferfeed(ps, pa);
     }
+    // A probe still running for the previous start must never resolve this one.
+    pa.cancel_probe();
     reset_audio_track();
     reset_subtitle();
     let (audio, subtitle, at_ns) = (start.audio_track, start.subtitle_track, start.start_ns);
@@ -1277,6 +1297,35 @@ pub fn begin_playback(
         engine::arm_seek(at_ns);
     }
     Ok(engine::start_bufferfeed_tracked(ps, pa))
+}
+
+/// **The probe of an unresolved start answered** (`pump`, main thread): resolve the session from
+/// what it read and launch the native start, or leave the refusal for [`error_now`]. `url` is the
+/// stream the probe read; an answer for any other start is stale and dropped.
+pub(crate) fn finish_probe(
+    ps: &mut crate::session::PlaybackSession,
+    pa: &mut adapter::PlayerAdapter,
+    url: &str,
+    result: Result<crate::stream::ProbedStreams, crate::stream::ProbeFailure>,
+) {
+    if !ps.unresolved() || ps.url() != url {
+        log("probe: answer for a start that is no longer installed — dropped");
+        return;
+    }
+    let resolved = match result {
+        Ok(probed) => ps.resolve(probed),
+        Err(f) => Err(ps.refuse_probe(f)),
+    };
+    match resolved {
+        Ok(track) => {
+            if let Some(t) = track {
+                set_audio_track(t);
+            }
+            let outcome = engine::start_bufferfeed_tracked(ps, pa);
+            log(&format!("probe: resolved; native start {outcome:?}"));
+        }
+        Err(r) => log(&format!("probe: start refused ({r:?})")),
+    }
 }
 
 /// reset to the default audio stream — called on a new item so a prior track choice does not leak
@@ -2006,9 +2055,12 @@ mod tests {
         caps.audio_channels.insert("dts".into(), 6);
         let start = |channels| {
             let mut s = crate::session::PlaybackStart::new("https://cdn.example/film.mkv");
-            s.stream.vcodec = "h264".into();
-            s.stream.acodec = "dts".into();
-            s.stream.audio_channels = channels;
+            s.stream = Some(crate::stream::StreamDeclaration {
+                vcodec: "h264".into(),
+                acodec: "dts".into(),
+                audio_channels: channels,
+                ..Default::default()
+            });
             s
         };
 
@@ -2026,6 +2078,43 @@ mod tests {
         assert_eq!(error_now(&ps).kind, FailureKind::AudioUnsupported);
         ps.clear();
         assert_ne!(state(&ps), shared::PlaybackState::Error, "a stop retires the refusal");
+        restore_state_for_test(saved);
+    }
+
+    /// **A start without a declaration reads `Connecting` while it is probed, and a failed probe
+    /// is an explicit error state with the read-out a stream that will not open gets** (or the
+    /// no-video one), never a spinner. An answer for a start that is no longer installed is
+    /// dropped. None of these reach the native pipeline.
+    #[test]
+    fn a_probed_start_connects_then_resolves_or_fails_explicitly() {
+        let _serial = sn_base::testlock::serial();
+        let saved = swap_state_for_test(shared::PlaybackState::Idle);
+        let url = "https://cdn.example/film.mkv";
+        let mut pa = adapter::PlayerAdapter::new(unsafe { sn_base::task::MainThread::assume() });
+        let mut ps = crate::session::PlaybackSession::IDLE;
+        ps.begin(crate::session::PlaybackStart::new(url)).unwrap();
+        assert_eq!(state(&ps), shared::PlaybackState::Connecting, "probing reads as connecting");
+
+        finish_probe(&mut ps, &mut pa, "https://cdn.example/other.mkv", Err(crate::stream::ProbeFailure::Open));
+        assert_eq!(state(&ps), shared::PlaybackState::Connecting, "a stale answer changes nothing");
+
+        finish_probe(&mut ps, &mut pa, url, Err(crate::stream::ProbeFailure::Timeout));
+        assert_eq!(state(&ps), shared::PlaybackState::Error);
+        assert_eq!(error_now(&ps).kind, FailureKind::MediaSource);
+        assert!(
+            failure_actions(error_now(&ps).kind, failure_context(&ps)).contains(&FailureAction::TryAgain),
+            "the same start may well open next time"
+        );
+
+        ps.begin(crate::session::PlaybackStart::new(url)).unwrap();
+        let audio_only = crate::stream::ProbedStreams {
+            audio: vec![crate::stream::ProbedAudio { codec: "aac".into(), channels: 2, ..Default::default() }],
+            ..Default::default()
+        };
+        finish_probe(&mut ps, &mut pa, url, Ok(audio_only));
+        assert_eq!(error_now(&ps).kind, FailureKind::NoVideoTrack);
+        assert!(!pa.is_live() && !pa.has_probe(), "nothing native was built");
+        ps.clear();
         restore_state_for_test(saved);
     }
 

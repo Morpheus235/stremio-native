@@ -1,0 +1,15 @@
+Declaration-only libc headers for `ci/ffabi-check.sh --arm-eabi`.
+
+They let clang compile `ci/ffabi-assert.c` for 32-bit ARM EABI (`--target=armv7a-unknown-linux-gnueabi`)
+on a machine that has no ARM sysroot, against the HOST prefix's FFmpeg headers -- the installed headers
+are the same files for every architecture except `libavutil/avconfig.h`, whose two macros
+(AV_HAVE_BIGENDIAN, AV_HAVE_FAST_UNALIGNED) change no struct layout.
+
+Nothing here defines a type that appears inside an FFmpeg struct: FILE is only ever a pointer, and
+time_t/struct tm are not members of anything ffabi-assert.c measures. The layout under test comes
+from clang's own AAPCS rules (int64/double 8-byte aligned, 4-byte pointers) and clang's builtin
+<stdint.h>/<stddef.h>/<limits.h>/<stdarg.h>. The errno values are Linux's, which is what AVERROR()
+expands against on the television.
+
+The NDK compile (`ci/ffabi-check.sh vendor/ffmpeg-prefix/include $WEBOS_SDK/bin/arm-webos-linux-gnueabi-gcc`)
+remains the authority; this is the same assertion file, reachable without the NDK.

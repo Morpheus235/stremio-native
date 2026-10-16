@@ -349,6 +349,17 @@ pub fn pump(ps: &mut crate::session::PlaybackSession, pa: &mut super::adapter::P
         super::restore_preroll_volume(pa.mt());
     }
     settle_paused_seek(pa, now);
+    // An unresolved start is being probed: nothing native exists yet. Its answer launches the
+    // native start (or refuses it) and the rest of this tick sees whatever that built.
+    if pa.has_probe() {
+        match pa.poll_probe() {
+            None => {
+                set_state(PlaybackState::Connecting);
+                return;
+            }
+            Some((url, result)) => super::finish_probe(ps, pa, &url, result),
+        }
+    }
     // ONE `&mut PlayerAdapter`, split into the live session and the seam token. Everything below
     // that replaces the session (`reload_*`) takes `pa` back, which the borrow checker only allows
     // where neither half is read afterwards.

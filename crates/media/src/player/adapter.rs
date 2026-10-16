@@ -46,6 +46,8 @@ pub struct PlayerAdapter {
     /// `RefCell` because `mt` takes `&self`; the adapter is `!Send` (it holds the token), so the
     /// cell never crosses a thread.
     pending_release: std::cell::RefCell<Option<super::engine::PendingRelease>>,
+    /// The pre-Load probe of an unresolved start (`player::probe`), while it runs.
+    probe: Option<super::probe::PendingProbe>,
 }
 
 impl PlayerAdapter {
@@ -57,6 +59,39 @@ impl PlayerAdapter {
             repair: None,
             abandoned_load: None,
             pending_release: std::cell::RefCell::new(None),
+            probe: None,
+        }
+    }
+
+    /// Hold the probe `engine::start_bufferfeed_tracked` started for an unresolved start.
+    pub fn start_probe(&mut self, probe: super::probe::PendingProbe) {
+        if let Some(old) = self.probe.replace(probe) {
+            old.cancel();
+        }
+    }
+
+    /// Is a probe running?
+    pub fn has_probe(&self) -> bool {
+        self.probe.is_some()
+    }
+
+    /// Once a frame (`pump`): the probe's answer — the URL it probed and its result — once there
+    /// is one (the probe is then released), `None` while it works. Never blocks.
+    pub fn poll_probe(&mut self) -> Option<(String, Result<crate::stream::ProbedStreams, crate::stream::ProbeFailure>)> {
+        let result = self.probe.as_mut()?.poll()?;
+        let probe = self.probe.take().expect("polled above");
+        let url = probe.url().to_string();
+        // A timeout already cancelled it; an answered probe's thread is exiting. Either way this
+        // only latches the abort, it never waits.
+        probe.cancel();
+        Some((url, result))
+    }
+
+    /// Stop a running probe (a stop, a new start, a suspend). Returns at once.
+    pub fn cancel_probe(&mut self) {
+        if let Some(p) = self.probe.take() {
+            super::log("probe: cancelled");
+            p.cancel();
         }
     }
 

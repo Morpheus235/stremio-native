@@ -62,7 +62,7 @@ const FIXTURE_VIDEO_BPS: i64 = 12_000_000;
 const LATE_AUDIO_DELAY_S: f64 = 11.008;
 
 /// Whether a command line tool runs at all. A missing tool is a skip, never a failure.
-fn tool_present(name: &str) -> bool {
+pub(super) fn tool_present(name: &str) -> bool {
     Command::new(name)
         .arg("-version")
         .stdout(Stdio::null())
@@ -72,10 +72,10 @@ fn tool_present(name: &str) -> bool {
 }
 
 /// A scratch directory removed on drop, however the test leaves.
-struct Scratch(PathBuf);
+pub(super) struct Scratch(pub(super) PathBuf);
 
 impl Scratch {
-    fn new(tag: &str) -> Scratch {
+    pub(super) fn new(tag: &str) -> Scratch {
         let dir = std::env::temp_dir().join(format!("sn-late-audio-{}-{tag}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("create the scratch directory");
@@ -176,13 +176,13 @@ fn first_audio_and_video_bytes_before_it(path: &Path) -> (f64, u64) {
 /// A loopback HTTP server over one file that honours `Range: bytes=a-[b]` — what the AVIO's
 /// `seek_cb` reopens with when libavformat reads the Cues at the end of the file. One thread per
 /// connection; everything stops when the value drops.
-struct FileServer {
-    port: u16,
+pub(super) struct FileServer {
+    pub(super) port: u16,
     stop: std::sync::Arc<AtomicBool>,
 }
 
 impl FileServer {
-    fn start(path: &Path) -> FileServer {
+    pub(super) fn start(path: &Path) -> FileServer {
         let body = std::sync::Arc::new(std::fs::read(path).expect("read the fixture"));
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let port = listener.local_addr().unwrap().port();
