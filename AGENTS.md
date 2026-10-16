@@ -5,9 +5,10 @@ plane, StarfishMediaAPIs). Rust layer crates live under `crates/`; `native/` hol
 shim, the Starfish/ACB seam and the libass/nanosvg glue. `docs/roadmap.md` is the plan.
 
 ## Layers
-`base` → `machine` → `net`, `platform` → `gfx` → `ui`; `stremio` (the addon protocol) depends on
-nothing above serde. References point down only. The media, app and screens crates are not
-ported yet.
+`base` → `machine` → `net`, `platform` → `gfx` → `ui`; `media` (demux, curl media source,
+subtitles, the Starfish buffer-feed player) sits on base/machine/platform/net; `stremio` (the
+addon protocol) depends on nothing above serde. References point down only. The app crate and
+the screens are not built yet.
 
 ## Working rules
 - Host checks: `CARGO_INCREMENTAL=0 cargo test --workspace --no-fail-fast` (needs `libsdl2-dev
