@@ -1,0 +1,46 @@
+# Every push to main and every pull request: host tests, the release feature set, and an ARM
+# compile of every crate (no link, so no NDK needed here).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  host:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: System libraries
+        run: sudo apt-get update -q && sudo apt-get install -y -q libsdl2-dev libsdl2-ttf-dev libgl-dev
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Tests
+        run: SNATIVE_RUNTIME_DIR=$(mktemp -d) cargo test --workspace --no-fail-fast
+      - name: Shipping feature set
+        run: cargo check --workspace --lib --no-default-features
+      - name: Packaging tools
+        run: python3 -I ci/hbrepo.py --selftest
+
+  arm:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Nightly with rust-src
+        run: rustup toolchain install nightly --profile minimal --component rust-src
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: arm
+      - name: Cross-compile check
+        run: cargo +nightly check --workspace --lib --target arm-unknown-linux-gnueabi -Z build-std=std,panic_unwind

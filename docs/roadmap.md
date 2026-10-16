@@ -41,3 +41,12 @@ GitHub Pages for every release, so a TV adds
 `https://morpheus235.github.io/stremio-native/repo.json` under Settings > Add repository and
 receives updates as new releases appear. Still needed: the ipk packaging step (`mkipk`) and the
 launcher icons (`pkg/icon160.png` and friends).
+
+## Releases
+Tags on `main`, no release branch: bump `pkg/appinfo.json`'s version, then
+`git tag -a vX.Y.Z -m "StremioNative X.Y.Z" && git push origin vX.Y.Z`. `release.yml` checks the tag
+matches the packaged version and is on `main`, runs the tests, cross-builds the ipk on an arm64
+runner with the pinned webOS NDK, publishes the GitHub release (ipk + sha256) and refreshes the
+Homebrew Channel repository. A suffixed tag (`v0.2.0-rc.1`) publishes a prerelease only. The build
+step fails with a clear message until the `ipk` make target is ported. `ci.yml` runs the host
+tests, the shipping feature set and an ARM compile check on every push and pull request.

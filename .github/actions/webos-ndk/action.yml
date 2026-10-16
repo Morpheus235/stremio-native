@@ -1,0 +1,60 @@
+name: Provision webOS NDK
+description: >
+  Cache, download (sha256-checked by ci/deps.py), extract and relocate the webosbrew buildroot SDK
+  pinned in ci/dependencies.json (`webos-ndk`), then prove its sysroot has the link libraries.
+
+# runs-on MUST be an arm64 Linux runner (ubuntu-24.04-arm): webosbrew/native-toolchain publishes
+# darwin-arm64, darwin-x86_64 and linux-aarch64 builds only.
+
+inputs:
+  install-root:
+    description: Directory the SDK is extracted into; must match between cache save and restore.
+    required: false
+    default: ${{ github.workspace }}/.webos-ndk
+
+outputs:
+  sdk-dir:
+    description: The SDK root (pass as WEBOS_SDK).
+    value: ${{ inputs.install-root }}/arm-webos-linux-gnueabi_sdk-buildroot
+
+runs:
+  using: composite
+  steps:
+    - name: Read the NDK pin
+      id: pin
+      shell: bash
+      run: echo "release=$(python3 ci/deps.py get webos-ndk version)" >> "$GITHUB_OUTPUT"
+
+    - name: Restore webOS NDK
+      id: cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ inputs.install-root }}
+        key: webos-ndk-${{ runner.os }}-${{ runner.arch }}-${{ steps.pin.outputs.release }}
+
+    - name: Download and relocate
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        root='${{ inputs.install-root }}'
+        mkdir -p "$root" "$RUNNER_TEMP/ndk-dl"
+        tarball=$(python3 ci/deps.py fetch webos-ndk --asset linux-aarch64 --into "$RUNNER_TEMP/ndk-dl")
+        tar xjf "$tarball" -C "$root"
+        (cd "$root/arm-webos-linux-gnueabi_sdk-buildroot" && ./relocate-sdk.sh)
+
+    - name: Verify the toolchain and sysroot
+      shell: bash
+      run: |
+        set -euo pipefail
+        SDK='${{ inputs.install-root }}/arm-webos-linux-gnueabi_sdk-buildroot'
+        "$SDK/bin/arm-webos-linux-gnueabi-gcc" --version | head -1
+        SYSROOT="$SDK/arm-webos-linux-gnueabi/sysroot"
+        missing=()
+        for l in SDL2 SDL2_ttf GLESv2 luna-service2 glib-2.0 AcbAPI wayland-client playerAPIs pf-1.0; do
+          find "$SYSROOT" -maxdepth 5 \( -name "lib${l}.so" -o -name "lib${l}.so.*" \) -print -quit | grep -q . || missing+=("$l")
+        done
+        if [ "${#missing[@]}" -ne 0 ]; then
+          echo "::error::webOS sysroot is missing link libraries: ${missing[*]}"
+          exit 1
+        fi
