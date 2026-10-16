@@ -1,30 +1,22 @@
-# Publishes the Homebrew Channel repository on GitHub Pages.
+# Publishes the Homebrew Channel repository on GitHub Pages, one URL with two entries:
 #
-# On every published release carrying an .ipk, this regenerates repo.json and the package
-# manifest (ci/hbrepo.py) and serves them on Pages; the manifest points the TV at the release's
-# own ipk asset, which a public repository serves anonymously. On the TV:
-#   Homebrew Channel > Settings > Add repository > https://<owner>.github.io/stremio-native/repo.json
+#   https://<owner>.github.io/stremio-native/repo.json
+#     StremioNative        the newest stable release
+#     StremioNative Beta   the newest prerelease, a separate app (own id, tile and sign-in)
+#                          that installs beside stable
 #
-# Before the first stable release it serves an empty index, so a TV can add the URL early.
+# Each entry points the TV at its release's own ipk asset. An entry with no release yet is left
+# out, so the URL can be added on the TV before the first build (it lists nothing until then).
+# Pages replaces the whole site on every deploy, so every run regenerates both entries.
 # One-time setup: Settings > Pages > Source: "GitHub Actions".
 name: Homebrew Channel repository
 
 on:
-  release:
-    types: [published]
   push:
     branches: [main]
     paths: [ci/hbrepo.py, .github/workflows/hbrepo.yml]
   workflow_dispatch:
-    inputs:
-      tag:
-        description: Release tag to publish (empty = the latest stable release)
-        required: false
   workflow_call:
-    inputs:
-      tag:
-        type: string
-        required: true
 
 permissions:
   contents: read
@@ -37,43 +29,42 @@ concurrency:
 
 jobs:
   publish:
-    if: github.event_name != 'release' || !github.event.release.prerelease
     runs-on: ubuntu-24.04
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Fetch the release's ipk
+      - name: Generate both channels
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
           set -euo pipefail
-          mkdir -p dl
-          if [ -z "$TAG" ]; then
-            TAG=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // ""')
-          fi
-          if [ -z "$TAG" ]; then
-            echo "no stable release yet: publishing an empty repository"
-            echo "EMPTY=1" >> "$GITHUB_ENV"
-            exit 0
-          fi
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.ipk' --dir dl
-          test "$(ls dl/*.ipk | wc -l)" = 1
-          echo "IPK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$(basename dl/*.ipk)" >> "$GITHUB_ENV"
-      - name: Generate the repository
-        run: |
-          set -euo pipefail
-          base="https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}"
           python3 -I ci/hbrepo.py --selftest
-          if [ "${EMPTY:-0}" = 1 ]; then
-            mkdir -p _site && echo '{"packages": []}' > _site/repo.json
-          else
-            python3 -I ci/hbrepo.py --ipk dl/*.ipk --base-url "$base" --ipk-url "$IPK_URL" --out _site
-          fi
+          base="https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}"
+          releases=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,isPrerelease,isDraft,createdAt)
+          mkdir -p _site && echo '{"packages": []}' > _site/repo.json
+          channel() {  # channel <prerelease true|false> <title>
+            local tag
+            tag=$(echo "$releases" | jq -r --argjson pre "$1" \
+              '[.[] | select(.isDraft == false and .isPrerelease == $pre)] | sort_by(.createdAt) | last | .tagName // ""')
+            if [ -z "$tag" ]; then
+              echo "$2: no release yet, not listed"
+              return
+            fi
+            rm -rf dl && mkdir dl
+            gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern '*.ipk' --dir dl
+            test "$(ls dl/*.ipk | wc -l)" = 1
+            local ipk; ipk=$(ls dl/*.ipk)
+            python3 -I ci/hbrepo.py --ipk "$ipk" --base-url "$base" --title "$2" \
+              --ipk-url "https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/$(basename "$ipk")" \
+              --icon-url "$base/icon160.png" --out _site
+            echo "$2: $tag"
+          }
+          channel false "StremioNative"
+          channel true "StremioNative Beta"
           if [ -f pkg/icon160.png ]; then cp pkg/icon160.png _site/; fi
-          cat _site/*.json
+          find _site -name '*.json' -print -exec cat {} \;
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
           path: _site

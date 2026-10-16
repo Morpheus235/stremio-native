@@ -5,7 +5,9 @@ Homebrew Channel (Settings > Add repository) takes the URL of a `repo.json` inde
 the index, then each package's manifest, icon and .ipk, all anonymously over HTTPS. This writes
 the files that URL serves:
 
-    <out>/repo.json                        the index: one entry per package
+    <out>/repo.json                        the index: one entry per package (merged into an
+                                           existing repo.json in <out>, so stable and beta
+                                           share one URL)
     <out>/<app id>.manifest.json           what the TV installs: version, ipk URL, sha256, size
     <out>/<ipk name>                       the package itself (copied unless --ipk-url is given)
 
@@ -70,7 +72,7 @@ def control_of(ipk: bytes) -> "dict[str, str]":
     return fields
 
 
-def build(ipk_path: str, base_url: str, ipk_url: "str | None", icon_url: str) -> "dict[str, bytes]":
+def build(ipk_path: str, base_url: str, ipk_url: "str | None", icon_url: str, title: str = TITLE) -> "dict[str, bytes]":
     """Every file the repository serves, as `{name: bytes}`."""
     with open(ipk_path, "rb") as f:
         ipk = f.read()
@@ -83,7 +85,7 @@ def build(ipk_path: str, base_url: str, ipk_url: "str | None", icon_url: str) ->
     manifest_name = f"{app_id}.manifest.json"
     manifest = {
         "id": app_id,
-        "title": TITLE,
+        "title": title,
         "version": version,
         "type": "native",
         "appDescription": SHORT_DESCRIPTION,
@@ -96,7 +98,7 @@ def build(ipk_path: str, base_url: str, ipk_url: "str | None", icon_url: str) ->
     }
     index = {"packages": [{
         "id": app_id,
-        "title": TITLE,
+        "title": title,
         "shortDescription": SHORT_DESCRIPTION,
         "iconUri": icon_url,
         "manifestUrl": f"{base}/{manifest_name}",
@@ -110,6 +112,15 @@ def build(ipk_path: str, base_url: str, ipk_url: "str | None", icon_url: str) ->
     return files
 
 
+def merge_index(existing: bytes, new: bytes) -> bytes:
+    """Add `new`'s packages to the index `existing`, replacing any entry with the same app id, so
+    one repo.json lists the stable app and the beta app side by side."""
+    ours = json.loads(new)["packages"]
+    ids = {p["id"] for p in ours}
+    kept = [p for p in json.loads(existing).get("packages", []) if p.get("id") not in ids]
+    return (json.dumps({"packages": kept + ours}, indent=2) + "\n").encode()
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--ipk")
@@ -117,6 +128,7 @@ def main(argv=None) -> int:
     p.add_argument("--out")
     p.add_argument("--ipk-url", help="serve the ipk from here (e.g. a release asset) instead of copying it")
     p.add_argument("--icon-url", help="defaults to <base-url>/icon160.png")
+    p.add_argument("--title", default=TITLE, help="the listing title (e.g. \"StremioNative Beta\")")
     p.add_argument("--selftest", action="store_true")
     a = p.parse_args(argv)
     if a.selftest:
@@ -124,8 +136,12 @@ def main(argv=None) -> int:
     if not (a.ipk and a.base_url and a.out):
         p.error("--ipk, --base-url and --out are required")
     icon = a.icon_url or f"{a.base_url.rstrip('/')}/icon160.png"
-    files = build(a.ipk, a.base_url, a.ipk_url, icon)
+    files = build(a.ipk, a.base_url, a.ipk_url, icon, a.title)
     os.makedirs(a.out, exist_ok=True)
+    index_path = os.path.join(a.out, "repo.json")
+    if os.path.exists(index_path):
+        with open(index_path, "rb") as f:
+            files["repo.json"] = merge_index(f.read(), files["repo.json"])
     for name, data in files.items():
         with open(os.path.join(a.out, name), "wb") as f:
             f.write(data)
@@ -167,6 +183,26 @@ def selftest() -> int:
         files = build(path, "https://host.example/repo", "https://dl.example/x.ipk", "https://i.example/i.png")
         assert json.loads(files["com.morpheus235.stremionative.manifest.json"])["ipkUrl"] == "https://dl.example/x.ipk"
         assert len(files) == 2, "an external ipk URL is not copied"
+        files = build(path, "https://host.example/repo/beta", "https://dl.example/x.ipk", "https://i.example/i.png", "StremioNative Beta")
+        assert json.loads(files["repo.json"])["packages"][0]["title"] == "StremioNative Beta"
+        beta_ipk = _fake_ipk("com.morpheus235.stremionative.beta", "0.2.20261016")
+        beta_path = os.path.join(tmp, "beta.ipk")
+        with open(beta_path, "wb") as f:
+            f.write(beta_ipk)
+        out = os.path.join(tmp, "site")
+        os.makedirs(out)
+        with open(os.path.join(out, "repo.json"), "w") as f:
+            f.write('{"packages": []}')
+        for ipk_path, title in [(path, "StremioNative"), (beta_path, "StremioNative Beta"), (beta_path, "StremioNative Beta")]:
+            assert main(["--ipk", ipk_path, "--base-url", "https://h.example/r", "--ipk-url", "https://dl.example/x.ipk",
+                         "--title", title, "--out", out]) == 0
+        with open(os.path.join(out, "repo.json")) as f:
+            merged = json.load(f)["packages"]
+        assert [(p["id"], p["title"]) for p in merged] == [
+            ("com.morpheus235.stremionative", "StremioNative"),
+            ("com.morpheus235.stremionative.beta", "StremioNative Beta"),
+        ], merged
+        assert os.path.exists(os.path.join(out, "com.morpheus235.stremionative.beta.manifest.json"))
         try:
             control_of(b"not an archive")
             raise AssertionError("garbage accepted")

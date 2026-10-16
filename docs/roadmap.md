@@ -50,3 +50,11 @@ runner with the pinned webOS NDK, publishes the GitHub release (ipk + sha256) an
 Homebrew Channel repository. A suffixed tag (`v0.2.0-rc.1`) publishes a prerelease only. The build
 step fails with a clear message until the `ipk` make target is ported. `ci.yml` runs the host
 tests, the shipping feature set and an ARM compile check on every push and pull request.
+
+### Beta
+A suffixed tag (`v0.2.0-beta.1`) builds the separate **StremioNative Beta** app (`FLAVOR=beta`, app
+id `com.morpheus235.stremionative.beta`, version `X.Y.YYYYMMDD`, so at most one beta a day) and
+publishes it as a GitHub prerelease. The one Homebrew Channel `repo.json` lists both apps, each
+pointing at its newest release; install either or both. Still needed: rename the `nightly`
+install flavor to `beta` in `ci/install-identities.json` and `sn_platform`, and teach the
+packaging step the flavor's id, title and version.

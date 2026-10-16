@@ -3,7 +3,9 @@
 #   git tag -a v0.2.0 -m "StremioNative 0.2.0" && git push origin v0.2.0
 #
 # The tag must equal pkg/appinfo.json's "version" (with a leading v). A tag with a suffix
-# (v0.2.0-rc.1) publishes a prerelease and leaves the Homebrew Channel repository alone.
+# (v0.2.0-beta.1) publishes a PRERELEASE built as the separate "StremioNative Beta" app
+# (FLAVOR=beta: its own app id, version X.Y.YYYYMMDD), listed beside stable in the Homebrew Channel repository.
+# webOS versions are numeric, so the date is what orders betas: one beta per day.
 #
 # Releases created with the workflow token do not fire `release` events for other workflows, so
 # this calls the Homebrew Channel repository workflow itself.
@@ -71,7 +73,9 @@ jobs:
             echo "::error::the ipk packaging target is not ported yet (docs/roadmap.md, Distribution)"
             exit 1
           fi
-          make RELEASE=1 WEBOS_SDK="$WEBOS_SDK" ipk
+          flavor=stable
+          if [ "${{ needs.verify.outputs.prerelease }}" = true ]; then flavor=beta; fi
+          make RELEASE=1 FLAVOR="$flavor" WEBOS_SDK="$WEBOS_SDK" ipk
           ipk=$(ls build/*.ipk)
           test "$(echo "$ipk" | wc -l)" = 1
           sha256sum "$ipk" | awk '{print $1}' > "$ipk.sha256"
@@ -104,12 +108,9 @@ jobs:
           fail_on_unmatched_files: true
 
   homebrew-channel:
-    needs: [verify, publish]
-    if: needs.verify.outputs.prerelease == 'false'
+    needs: publish
     permissions:
       contents: read
       pages: write
       id-token: write
     uses: ./.github/workflows/hbrepo.yml
-    with:
-      tag: ${{ github.ref_name }}
