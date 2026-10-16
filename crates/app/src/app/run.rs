@@ -171,9 +171,9 @@ unsafe fn ingest(app: &mut App, tick: Tick) -> Vec<InputEvent<u32>> {
             }
             inputs.push(key_input(sym, wcode, state, Tick { ms: tick.ms, dt_us: 0 }));
         } else if et == crate::textinput::SDL_TEXTINPUT {
-            // The television's keyboard committing text. Only the Search page has a field; text
+            // The television's keyboard committing text. Only Search and Sign in have fields; text
             // with any other page up is queued (and bounded) by `textinput`, never delivered.
-            if bridge::search_on_top(&app.pages) {
+            if bridge::text_field_on_top(&app.pages) {
                 let text = crate::textinput::decode(&app.ev);
                 let at = Tick { ms: tick.ms, dt_us: 0 };
                 inputs.extend(super::input::text_inputs(&text, crate::textinput::available(), at));

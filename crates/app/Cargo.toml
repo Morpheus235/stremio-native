@@ -43,11 +43,12 @@ sn_media = { path = "../media" }
 sn_stremio = { path = "../stremio" }
 sn_screens = { path = "../screens" }
 libc = "0.2"
-# the settings file (app/prefs.rs)
-serde = { version = "1", default-features = false, features = ["derive", "alloc", "std"] }
+# the settings file (app/prefs.rs); serde_json also the stored session and the private files
+# (account.rs)
+serde ={ version = "1", default-features = false, features = ["derive", "alloc", "std"] }
 serde_json = { version = "1", default-features = false, features = ["alloc", "std"] }
 # the artwork source's cover-scale (art.rs); the same decoder build sn_gfx already compiles
-image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 
 [dev-dependencies]
 sn_base = { path = "../base", features = ["test-support"] }

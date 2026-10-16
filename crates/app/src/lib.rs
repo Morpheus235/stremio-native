@@ -16,6 +16,7 @@
 //! place that names `sn_platform::webos`, the keymanager and `sn_media::player::ffi` together
 //! ([`port`]), and the only crate that touches SDL's event queue and window ([`app`]).
 
+pub mod account;
 pub mod app;
 pub mod art;
 pub mod crash;

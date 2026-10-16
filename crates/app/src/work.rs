@@ -14,20 +14,31 @@
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use sn_base::task::OffFrame;
+use sn_screens::stores::account::{AccountJob, AccountLanding};
+use sn_screens::stores::addons::{AddonsJob, AddonsLanding};
 use sn_screens::stores::catalog::{Job, Landing};
 use sn_screens::stores::detail::{DetailJob, DetailLanding};
+use sn_screens::stores::library::{LibraryJob, LibraryLanding};
+use sn_stremio::account::ApiError;
 use sn_screens::stores::grid::{GridJob, GridLanding};
 use sn_screens::stores::search::{SearchJob, SearchLanding};
 use sn_stremio::streams::GroupState;
 use sn_stremio::types::{CatalogPage, MetaResponse};
 use sn_stremio::{get_json, Fetch, FetchError};
 
+use crate::account::Services;
 use crate::fetch::{NetFetch, Profile};
 
 /// One outcome for the frame thread.
 pub enum Done {
-    Catalog(Landing),
+    /// A catalog landing, and the install list (`CatalogStore::epoch`) its job was planned against:
+    /// a landing for a list that has since been replaced is dropped.
+    Catalog(u32, Landing),
     Detail(DetailLanding),
+    Account(AccountLanding),
+    /// `None`: a write, which lands nothing.
+    Addons(Option<AddonsLanding>),
+    Library(LibraryLanding),
     Search(SearchLanding),
     Grid(GridLanding),
 }
@@ -72,14 +83,75 @@ impl Work {
         Work { tx, rx }
     }
 
-    /// Start every catalog job.
-    pub fn catalog(&self, runner: &dyn Runner, jobs: Vec<Job>) {
+    /// Start every catalog job, planned against install list `epoch`.
+    pub fn catalog(&self, runner: &dyn Runner, epoch: u32, jobs: Vec<Job>) {
         for job in jobs {
             let (what, fail) = match &job {
                 Job::Manifest { source, .. } => ("addon-manifest", Landing::Manifest { source: *source, result: Err(refused()) }),
                 Job::Page { row, .. } => ("addon-catalog", Landing::Page { row: *row, result: Err(refused()) }),
             };
-            runner.run(what, Box::new(move |off| Done::Catalog(run_catalog(off, job))), self.tx.clone(), Done::Catalog(fail));
+            runner.run(what, Box::new(move |off| Done::Catalog(epoch, run_catalog(off, job))), self.tx.clone(), Done::Catalog(epoch, fail));
+        }
+    }
+
+    /// Start every account job.
+    pub fn account(&self, runner: &dyn Runner, services: &Services, jobs: Vec<AccountJob>) {
+        for job in jobs {
+            let fail = match &job {
+                AccountJob::Restore => AccountLanding::Restored(sn_screens::stores::account::Stored::Unavailable),
+                AccountJob::Login { .. } => AccountLanding::LoggedIn(Err(api_refused())),
+                AccountJob::LinkCreate => AccountLanding::LinkCreated(Err(api_refused())),
+                AccountJob::LinkRead { code } => AccountLanding::LinkRead { code: code.clone(), result: Err(api_refused()) },
+                AccountJob::Confirm { .. } => AccountLanding::Confirmed(Err(api_refused())),
+                AccountJob::Save { .. } => AccountLanding::Saved(false),
+                AccountJob::Forget { .. } => AccountLanding::Forgotten,
+                AccountJob::Skip => AccountLanding::Skipped,
+            };
+            let services = services.clone();
+            runner.run(
+                "account",
+                Box::new(move |off| Done::Account(crate::account::run_account(off, &services, job))),
+                self.tx.clone(),
+                Done::Account(fail),
+            );
+        }
+    }
+
+    /// Start every addons job.
+    pub fn addons(&self, runner: &dyn Runner, services: &Services, jobs: Vec<AddonsJob>) {
+        for job in jobs {
+            let fail = match &job {
+                AddonsJob::ReadCache { user_id } => Some(AddonsLanding::CacheRead { user_id: user_id.clone(), addons: None }),
+                AddonsJob::Fetch { user_id, .. } => Some(AddonsLanding::Fetched { user_id: user_id.clone(), result: Err(api_refused()) }),
+                AddonsJob::ReadFilter => Some(AddonsLanding::FilterRead(Default::default())),
+                AddonsJob::WriteCache { .. } | AddonsJob::DropCache { .. } | AddonsJob::WriteFilter(_) => None,
+            };
+            let services = services.clone();
+            runner.run(
+                "addons",
+                Box::new(move |off| Done::Addons(crate::account::run_addons(off, &services, job))),
+                self.tx.clone(),
+                Done::Addons(fail),
+            );
+        }
+    }
+
+    /// Start every library job.
+    pub fn library(&self, runner: &dyn Runner, services: &Services, jobs: Vec<LibraryJob>) {
+        for job in jobs {
+            let fail = match &job {
+                LibraryJob::Fetch { user_id, .. } => LibraryLanding::Fetched { user_id: user_id.clone(), result: Err(api_refused()) },
+                LibraryJob::Add { user_id, entry, .. } => {
+                    LibraryLanding::Added { user_id: user_id.clone(), id: entry.id.clone(), result: Err(api_refused()) }
+                }
+            };
+            let services = services.clone();
+            runner.run(
+                "library",
+                Box::new(move |off| Done::Library(crate::account::run_library(off, &services, job))),
+                self.tx.clone(),
+                Done::Library(fail),
+            );
         }
     }
 
@@ -138,6 +210,10 @@ fn refused() -> FetchError {
     FetchError::Transport("no worker".into())
 }
 
+fn api_refused() -> ApiError {
+    ApiError::Fetch(refused())
+}
+
 /// One catalog job, on a worker.
 pub fn run_catalog(off: &OffFrame, job: Job) -> Landing {
     match job {
@@ -185,9 +261,9 @@ mod tests {
         let mut store = CatalogStore::signed_out();
         let jobs = store.take_jobs();
         assert!(!jobs.is_empty(), "a signed-out store asks for the default manifests");
-        work.catalog(&Refusing, jobs);
+        work.catalog(&Refusing, store.epoch(), jobs);
         for done in work.drain() {
-            let Done::Catalog(landing) = done else { panic!("a catalog job lands as a catalog landing") };
+            let Done::Catalog(_, landing) = done else { panic!("a catalog job lands as a catalog landing") };
             store.land(landing);
         }
         assert_eq!(store.addons_state(), sn_screens::stores::catalog::AddonsState::Failed);

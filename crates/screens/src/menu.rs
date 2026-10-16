@@ -4,8 +4,11 @@
 //!
 //! Two contents ([`MenuKind`]):
 //!
-//! - **a card's item menu** (a held OK on any catalog card): *Open*, and *Add to library* —
-//!   disabled, with the reason under it, until the user is signed in ([`SessionView`]);
+//! - **a card's item menu** (a held OK on any catalog card): *Open*, and *Add to library* — the
+//!   account's real library write (`LibraryCmd::Add`, stremio-core's `datastorePut`). Disabled,
+//!   with the reason under it, while signed out ([`SessionView`]) or while the write is on its
+//!   way; *In your library* (disabled) once the account holds it; after a failed write it says
+//!   so and is offered again ([`AddState`]);
 //! - **a choice** (the Live TV page's catalog and genre chips): one row per option, the current
 //!   one checked; OK sends the pick back to the presenting page as [`AppMsg::Chose`].
 //!
@@ -28,7 +31,8 @@ use sn_ui::screen::{
 use sn_ui::table::{Row, MENU_MAX_W, MENU_MIN_W};
 use sn_ui::{theme, Rect};
 
-use crate::registry::{word, AppArg, AppMsg, Bundle, ItemRef, MenuArg, MenuKind, SessionView};
+use crate::registry::{word, AppArg, AppFx, AppMsg, Bundle, ItemRef, LibraryCmd, MenuArg, MenuKind, SessionView};
+use crate::stores::library::AddState;
 
 const PANEL_RAD: f32 = 20.0;
 /// The air between the opener and the panel.
@@ -60,18 +64,21 @@ impl FormId for MenuRow {
 type MenuForm = Form<MenuRow, MenuRow, Infallible>;
 
 /// The rows for `kind`. Pure, so the fit tests build the real menu.
-pub fn build(kind: &MenuKind, session: SessionView) -> MenuForm {
+pub fn build(kind: &MenuKind, session: SessionView, add: AddState) -> MenuForm {
     match kind {
-        MenuKind::Item(_) => {
-            let mut lib = Row::new(msg::app_menu_add_to_library());
-            if !session.signed_in {
-                lib = lib.detail(msg::app_menu_sign_in_first());
-            }
+        MenuKind::Item { .. } => {
+            let (lib, disabled) = match (session.signed_in, add) {
+                (false, _) => (Row::new(msg::app_menu_add_to_library()).detail(msg::app_menu_sign_in_first()), true),
+                (true, AddState::In) => (Row::new(msg::app_menu_in_library()), true),
+                (true, AddState::Adding) => (Row::new(msg::app_menu_add_to_library()).detail(msg::app_menu_adding()), true),
+                (true, AddState::Failed) => (Row::new(msg::app_menu_add_to_library()).detail(msg::app_menu_add_failed()), false),
+                (true, AddState::Absent) => (Row::new(msg::app_menu_add_to_library()), false),
+            };
             Form::new().section(
                 FormSection::new("")
                     .item(MenuRow::Open, RowKind::Button, MenuRow::Open, Row::new(msg::app_menu_open()))
                     .item(MenuRow::AddToLibrary, RowKind::Button, MenuRow::AddToLibrary, lib)
-                    .disabled(!session.signed_in),
+                    .disabled(disabled),
             )
         }
         MenuKind::Choice { title, options, current, .. } => {
@@ -108,14 +115,14 @@ pub struct MenuScreen {
 }
 
 impl MenuScreen {
-    pub fn new(entry: EntryId, arg: MenuArg, session: SessionView) -> Self {
+    pub fn new(entry: EntryId, arg: MenuArg, session: SessionView, add: AddState) -> Self {
         let mut form = FormTable::new(KEY_BAND);
         form.table.compact = true;
         let initial = match &arg.kind {
             MenuKind::Choice { current, .. } => Some(MenuRow::Option(*current)),
-            MenuKind::Item(_) => None,
+            MenuKind::Item { .. } => None,
         };
-        form.set(build(&arg.kind, session), initial.as_ref());
+        form.set(build(&arg.kind, session, add), initial.as_ref());
         MenuScreen { entry, arg, form }
     }
 
@@ -146,11 +153,19 @@ impl MenuScreen {
         let Some(Activation::Action(row)) = self.form.activate(i) else { return };
         fx.push(Fx::Nav(NavOp::Dismiss(self.entry)));
         match (&self.arg.kind, row) {
-            (MenuKind::Item(item), MenuRow::Open) => fx.push(Fx::Nav(NavOp::Push(AppArg::Detail(item.clone())))),
+            (MenuKind::Item { item, .. }, MenuRow::Open) => fx.push(Fx::Nav(NavOp::Push(AppArg::Detail(item.clone())))),
+            (MenuKind::Item { item, poster }, MenuRow::AddToLibrary) => {
+                let entry = sn_stremio::library::NewEntry {
+                    id: item.id.clone(),
+                    kind: item.kind.clone(),
+                    name: item.name.clone(),
+                    poster: poster.clone(),
+                };
+                fx.push(Fx::App(AppFx::Library(LibraryCmd::Add(entry))));
+            }
             (MenuKind::Choice { target, .. }, MenuRow::Option(i)) => {
                 fx.push(Fx::Deliver(self.arg.reply, Delivery::Screen(ScreenEvent::App(AppMsg::Chose(*target, i)))));
             }
-            // Add to library is offered only signed in; until sign-in lands it is disabled above
             _ => {}
         }
     }
@@ -297,7 +312,7 @@ impl LogicalState for MenuScreen {
 /// The item a menu was opened on, for the tests.
 pub fn item_of(kind: &MenuKind) -> Option<&ItemRef> {
     match kind {
-        MenuKind::Item(i) => Some(i),
+        MenuKind::Item { item, .. } => Some(item),
         MenuKind::Choice { .. } => None,
     }
 }
@@ -321,15 +336,21 @@ mod tests {
     #[test]
     fn the_item_menu_fits_its_panel_in_every_shipped_language() {
         use sn_platform::i18n::{language_on_this_thread_for_test, SHIPPED};
-        let item = MenuKind::Item(ItemRef { kind: "movie".into(), id: "tt1".into(), name: "Film".into() });
+        let item = MenuKind::Item { item: ItemRef { kind: "movie".into(), id: "tt1".into(), name: "Film".into() }, poster: None };
         let mut out = Vec::new();
         for language in SHIPPED {
             let _g = language_on_this_thread_for_test(language);
-            for signed_in in [false, true] {
+            for (signed_in, add) in [
+                (false, AddState::Absent),
+                (true, AddState::Absent),
+                (true, AddState::Adding),
+                (true, AddState::Failed),
+                (true, AddState::In),
+            ] {
                 let mut t = FormTable::<MenuRow, MenuRow, Infallible>::new(KEY_BAND);
                 t.table.compact = true;
-                t.set(build(&item, SessionView { signed_in }), None);
-                out.extend(t.table.app_fit_failures_hugged(&format!("{} signed_in={signed_in}", language.tag())));
+                t.set(build(&item, SessionView { signed_in }, add), None);
+                out.extend(t.table.app_fit_failures_hugged(&format!("{} signed_in={signed_in} {add:?}", language.tag())));
                 if let Some(why) = t.table.menu_cap_failure(&sn_base::fontcov::advances::ShippedMeasure, "item menu") {
                     out.push(why);
                 }
@@ -340,13 +361,22 @@ mod tests {
 
     #[test]
     fn add_to_library_is_disabled_until_signed_in() {
-        let item = MenuKind::Item(ItemRef { kind: "movie".into(), id: "tt1".into(), name: "Film".into() });
+        let item = MenuKind::Item { item: ItemRef { kind: "movie".into(), id: "tt1".into(), name: "Film".into() }, poster: None };
         let mut t = FormTable::<MenuRow, MenuRow, Infallible>::new(KEY_BAND);
-        t.set(build(&item, SessionView { signed_in: false }), None);
+        t.set(build(&item, SessionView { signed_in: false }, AddState::Absent), None);
         assert_eq!(t.activate(0), Some(Activation::Action(MenuRow::Open)));
         assert_eq!(t.activate(1), None, "disabled while signed out");
         assert!(t.table.sections[0].rows[1].dim);
-        t.set(build(&item, SessionView { signed_in: true }), None);
+        let signed_in = SessionView { signed_in: true };
+        t.set(build(&item, signed_in, AddState::Absent), None);
         assert_eq!(t.activate(1), Some(Activation::Action(MenuRow::AddToLibrary)));
+        t.set(build(&item, signed_in, AddState::Failed), None);
+        assert_eq!(t.activate(1), Some(Activation::Action(MenuRow::AddToLibrary)), "a failed write is offered again");
+        assert_eq!(t.table.sections[0].rows[1].detail, msg::app_menu_add_failed());
+        for add in [AddState::Adding, AddState::In] {
+            t.set(build(&item, signed_in, add), None);
+            assert_eq!(t.activate(1), None, "{add:?}: nothing to press");
+        }
+        assert_eq!(t.table.sections[0].rows[1].label, msg::app_menu_in_library());
     }
 }

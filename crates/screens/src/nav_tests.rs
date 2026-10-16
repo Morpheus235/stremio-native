@@ -211,7 +211,7 @@ fn hold_ok_opens_the_item_menu_and_add_to_library_waits_for_sign_in() {
     let Some(AppArg::Menu(m)) = app.d.nav.modals.surfaces.last().map(|s| s.entry.arg.clone()) else {
         panic!("the menu is a surface over Home")
     };
-    let MenuKind::Item(item) = &m.kind else { panic!("an item menu") };
+    let MenuKind::Item { item, .. } = &m.kind else { panic!("an item menu") };
     assert_eq!(item.id, "tt0-0-0");
     let menu = app.top_surface().and_then(|s| s.as_any()).and_then(|a| a.downcast_ref::<crate::menu::MenuScreen>()).expect("the menu screen");
     let rows: Vec<(String, bool)> = menu.table().sections[0].rows.iter().map(|r| (r.label.clone(), r.dim)).collect();
@@ -227,6 +227,53 @@ fn hold_ok_opens_the_item_menu_and_add_to_library_waits_for_sign_in() {
     app.press(Key::Ok);
     assert_eq!(app.top_name(), "detail", "Open opens the item's page");
     assert_eq!(app.top_arg(), Some(&AppArg::Detail(item.clone())));
+}
+
+#[test]
+fn signed_in_add_to_library_asks_the_library_store_and_then_waits_for_it() {
+    use crate::registry::{AppFx, LibraryCmd};
+    use crate::stores::account::{Account, AccountLanding, AccountStore, Secret, Stored};
+    use crate::stores::library::{LibraryLanding, LibraryStore};
+    let _g = sn_base::testlock::serial();
+    let mut app = boot(false);
+    let mut account = AccountStore::new();
+    let _ = account.land(AccountLanding::Restored(Stored::Session(Account { user_id: "u1".into(), email: "v@example.com".into(), auth_key: Secret::new("k") })), 0);
+    let mut library = LibraryStore::new();
+    let _ = library.sign_in("u1", &Secret::new("k"));
+    let _ = library.land(LibraryLanding::Fetched { user_id: "u1".into(), result: Ok(Vec::new()) });
+    app.rig.account = account;
+    app.rig.library = library;
+    app.notify(StoreId::Account, 7);
+    app.notify(StoreId::Library, 7);
+    app.frames(3);
+    let menu_rows = |app: &TestApp| -> Vec<(String, String, bool)> {
+        let menu = app.top_surface().and_then(|s| s.as_any()).and_then(|a| a.downcast_ref::<crate::menu::MenuScreen>()).expect("the menu screen");
+        menu.table().sections[0].rows.iter().map(|r| (r.label.clone(), r.detail.clone(), r.dim)).collect()
+    };
+    app.hold_ok();
+    assert_eq!(app.top_name(), "menu");
+    assert_eq!(menu_rows(&app)[1], (sn_platform::i18n::msg::app_menu_add_to_library().into(), String::new(), false), "offered signed in");
+    app.take_effects();
+    app.press(Key::Down);
+    app.press(Key::Ok);
+    let adds: Vec<sn_stremio::library::NewEntry> = app
+        .take_effects()
+        .into_iter()
+        .filter_map(|fx| match fx {
+            AppFx::Library(LibraryCmd::Add(e)) => Some(e),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(adds.len(), 1, "one write asked for");
+    assert_eq!((adds[0].id.as_str(), adds[0].kind.as_str()), ("tt0-0-0", "movie"));
+    assert_ne!(app.top_name(), "menu", "the menu closes");
+    // the rig does not run the store; the application's bridge does — stand in for it
+    let _ = app.rig.library.add(adds[0].clone());
+    app.notify(StoreId::Library, 8);
+    app.frames(2);
+    app.hold_ok();
+    let row = menu_rows(&app)[1].clone();
+    assert_eq!((row.1.as_str(), row.2), (sn_platform::i18n::msg::app_menu_adding(), true), "the write is on its way");
 }
 
 #[test]
@@ -272,7 +319,7 @@ fn a_search_rows_more_opens_its_whole_catalog_seeded_with_the_row() {
     let mut app = boot(false);
     app.press_raw(0, WCODE_BLUE);
     let addons = app.rig.catalog.addons().to_vec();
-    let jobs = app.rig.search.submit("bat", &addons);
+    let jobs = app.rig.search.submit("bat", &addons, &sn_stremio::search::AddonFilter::default());
     app.rig.search.land(SearchLanding { qgen: jobs[0].qgen, row: 0, result: Ok(page("s", 30)) });
     app.frames(4);
     app.take_effects();
@@ -297,13 +344,13 @@ fn the_addon_filter_is_a_chip_and_a_setting() {
     let mut app = boot(true);
     app.press_raw(0, WCODE_BLUE);
     app.press(Key::Down);
-    let settings = app.rig.search.settings_gen();
+    let filter_gen = app.rig.addons.gen();
     app.press(Key::Ok);
     assert!(app.take_effects().iter().any(|fx| matches!(fx, AppFx::Search(SearchCmd::ToggleAddon(id)) if id == "com.linvo.cinemeta")));
-    assert!(!app.rig.search.filter().allows("com.linvo.cinemeta"), "the first chip switched Cinemeta off");
-    assert_ne!(app.rig.search.settings_gen(), settings, "and the filter is persisted with the settings");
+    assert!(!app.rig.addons.filter().allows("com.linvo.cinemeta"), "the first chip switched Cinemeta off");
+    assert_ne!(app.rig.addons.gen(), filter_gen, "and the switch is the addons store's (persisted with the account's files)");
     let addons = app.rig.catalog.addons().to_vec();
-    let jobs = app.rig.search.submit("news", &addons);
+    let jobs = app.rig.search.submit("news", &addons, app.rig.addons.filter());
     assert_eq!(jobs.len(), 1, "only the live addon is asked");
 }
 
@@ -371,9 +418,15 @@ fn a_subtitle_picker_sets_the_setting_and_returns() {
     let mut app = boot(false);
     app.press_raw(0, WCODE_YELLOW);
     assert_eq!(app.top_name(), "settings");
-    if crate::tabs::on_strip(focus_elem(&app).unwrap_or(0)) {
+    // the Account section comes first: walk down to the subtitle size row
+    let size = sn_ui::form::FormId::key(&crate::settings::RootRow::SubtitleSize).0;
+    for _ in 0..4 {
+        if focus_elem(&app) == Some(size) {
+            break;
+        }
         app.press(Key::Down);
     }
+    assert_eq!(focus_elem(&app), Some(size));
     app.press(Key::Ok);
     assert_eq!(app.top_name(), "settings-page", "the subtitle size row opens its picker");
     app.press(Key::Down);

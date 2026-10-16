@@ -1,11 +1,19 @@
-//! **Home** — one shelf per browsable catalog of the installed addons, in install order, each
-//! filled by its catalog's pager as the reader reaches it.
+//! **Home** — signed in, **Continue Watching** first (the account library's items in progress,
+//! most recent first, each poster with its resume bar); then one shelf per browsable catalog of
+//! the addons in use (`AddonsStore::in_use`: the account's collection, in its order, or the
+//! defaults), each filled by its catalog's pager as the reader reaches it.
+//!
+//! OK on a Continue Watching card RESUMES: `LibraryItem::resume_target` names the video (for a
+//! series the EPISODE it stopped on, never the bare series id) and the offset, and that video's
+//! Streams page opens with the offset carried to the play; an item with no recorded video opens
+//! the Resume page, which reads its meta and takes the first episode.
 //!
 //! The page is a `sn_ui::cards::Stack`: a status section (the install list's loading / failure
-//! read-out) and one [`Shelf`](sn_ui::cards::Shelf) per row. The stack owns the layout, the one
-//! scroll, the groups and their seats, placement and focus recovery; this screen owns the row
-//! content ([`RowCards`]), the card element interning, and the two requests it makes of the
-//! catalog store:
+//! read-out), the Continue Watching shelf, and one [`Shelf`](sn_ui::cards::Shelf) per row. The
+//! stack owns the layout, the one scroll, the groups and their seats, placement and focus
+//! recovery; this screen owns the row content ([`RowCards`]), the card element interning (by a
+//! row's identity, so a refreshed collection that keeps a row keeps its cards), and the two
+//! requests it makes of the catalog store:
 //!
 //! - **the rows on screen** (`CatalogCmd::View`), recomputed from the stack's own shelf frames on
 //!   every tick and sent when they change, which is what makes the store load what is in view
@@ -33,12 +41,18 @@ use sn_ui::widgets::{Art, StatusKind, StatusOverlay};
 use sn_ui::{theme, Env, Rect};
 
 use crate::cards::item_ref;
-use crate::registry::{kind_label, word, AppArg, AppFx, Bundle, CatalogCmd, FirstSeat, MenuArg, MenuKind};
+use crate::item_cards::{self, ItemCards};
+use crate::registry::{kind_label, word, AppArg, AppFx, Bundle, CatalogCmd, FirstSeat, ItemRef, MenuArg, MenuKind, VideoRef};
+use crate::stores::account::SessionState;
 use crate::stores::catalog::{AddonsState, CatalogStore, Row, RowId, RowStatus};
 use crate::stores::StoreId;
+use sn_stremio::library::LibraryItem;
 
 /// The first card element; every card of every row is interned above it, never reused.
 const FIRST_CARD_ELEM: u32 = 0x1000;
+/// The first Continue Watching element: far above any catalog card's.
+const FIRST_CW_ELEM: u32 = 0x4000_0000;
+const CW_GROUP: GroupId = GroupId(0x7FFF_0000);
 /// The failed install list's Retry action (a key namespace, not an index).
 const RETRY_ELEM: u32 = sn_ui::geom::NAMESPACE_FLOOR + 1;
 const STATUS_GROUP: GroupId = GroupId(0);
@@ -55,6 +69,8 @@ static POSTER: RowStyle = RowStyle::HOME;
 pub enum Sec {
     /// The top band; the install list's read-out while it has no row to show.
     Status,
+    /// The account library's items in progress.
+    Continue,
     Row(RowId),
     /// A row whose first page failed: its heading and the reason, where the cards would stand.
     /// Not a shelf, because a shelf with no cards and no more to come is out of the flow.
@@ -69,13 +85,24 @@ fn row_group(id: RowId) -> GroupId {
     GroupId(1 + ((u32::from(id.source) << 12) | u32::from(id.catalog)))
 }
 
-/// The card elements of every row, interned as the rows' items land. A pager only ever appends,
-/// so a row's elements are a growing list and an element never changes item.
+/// A row's identity as the interning keys it ([`Row::identity`], owned).
+type RowIdent = (String, String, String);
+
+fn ident(row: &Row) -> RowIdent {
+    let (b, k, i) = row.identity();
+    (b.to_string(), k.to_string(), i.to_string())
+}
+
+/// The card elements of every row, interned as the rows' items land, by the row's IDENTITY (its
+/// addon base and catalog), not its position, so a replaced install list that keeps the row keeps
+/// its elements. A pager only ever appends, so a row's elements are a growing list; a row whose
+/// pager started over (its addon changed) is interned afresh.
 #[derive(Default)]
 struct Interned {
-    rows: HashMap<RowId, Vec<u32>>,
-    at: HashMap<u32, (RowId, usize)>,
+    rows: HashMap<RowIdent, Vec<u32>>,
+    at: HashMap<u32, (RowIdent, usize)>,
     next: u32,
+    epoch: u32,
 }
 
 impl Interned {
@@ -84,12 +111,26 @@ impl Interned {
         if self.next == 0 {
             self.next = FIRST_CARD_ELEM;
         }
+        if self.epoch != store.epoch() {
+            self.epoch = store.epoch();
+            // a row that shrank started over: its old elements name nothing now
+            for row in store.rows() {
+                let key = ident(row);
+                if self.rows.get(&key).is_some_and(|e| e.len() > row.items().len()) {
+                    for e in self.rows.remove(&key).unwrap_or_default() {
+                        self.at.remove(&e);
+                    }
+                }
+            }
+            grew = true;
+        }
         for row in store.rows() {
-            let elems = self.rows.entry(row.id).or_default();
+            let key = ident(row);
+            let elems = self.rows.entry(key.clone()).or_default();
             while elems.len() < row.items().len() {
                 let e = self.next;
                 self.next += 1;
-                self.at.insert(e, (row.id, elems.len()));
+                self.at.insert(e, (key.clone(), elems.len()));
                 elems.push(e);
                 grew = true;
             }
@@ -106,7 +147,7 @@ impl Interned {
 pub struct RowCards<'a> {
     row: &'a Row,
     elems: &'a [u32],
-    at: &'a HashMap<u32, (RowId, usize)>,
+    at: &'a HashMap<u32, (RowIdent, usize)>,
 }
 
 pub use crate::cards::tile_facts;
@@ -119,7 +160,11 @@ impl CardSource<Bundle> for RowCards<'_> {
         self.elems[i]
     }
     fn index_of(&self, e: &u32) -> Option<usize> {
-        self.at.get(e).filter(|(row, i)| *row == self.row.id && *i < self.len()).map(|(_, i)| *i)
+        let (b, k, id) = self.row.identity();
+        self.at
+            .get(e)
+            .filter(|((rb, rk, rid), i)| (rb.as_str(), rk.as_str(), rid.as_str()) == (b, k, id) && *i < self.len())
+            .map(|(_, i)| *i)
     }
     fn art(&self, i: usize) -> Art<'_> {
         Art::Poster(self.row.items().get(i).map(tile_facts))
@@ -135,11 +180,75 @@ impl CardSource<Bundle> for RowCards<'_> {
     }
 }
 
+/// A section's cards: a catalog row's, or Continue Watching's.
+pub enum HomeCards<'a> {
+    Row(RowCards<'a>),
+    Continue(ItemCards<'a>),
+}
+
+macro_rules! both {
+    ($self:expr, $c:ident => $e:expr) => {
+        match $self {
+            HomeCards::Row($c) => $e,
+            HomeCards::Continue($c) => $e,
+        }
+    };
+}
+
+impl CardSource<Bundle> for HomeCards<'_> {
+    fn len(&self) -> usize {
+        both!(self, c => CardSource::<Bundle>::len(c))
+    }
+    fn elem(&self, i: usize) -> u32 {
+        both!(self, c => CardSource::<Bundle>::elem(c, i))
+    }
+    fn index_of(&self, e: &u32) -> Option<usize> {
+        both!(self, c => CardSource::<Bundle>::index_of(c, e))
+    }
+    fn art(&self, i: usize) -> Art<'_> {
+        both!(self, c => CardSource::<Bundle>::art(c, i))
+    }
+    fn label(&self, i: usize) -> TileLabel {
+        both!(self, c => CardSource::<Bundle>::label(c, i))
+    }
+    fn progress(&self, i: usize) -> Option<f32> {
+        both!(self, c => CardSource::<Bundle>::progress(c, i))
+    }
+    fn more(&self) -> bool {
+        both!(self, c => CardSource::<Bundle>::more(c))
+    }
+}
+
 /// The page's content, read by every section. The `Stack` is the screen's other field, so
 /// `self.stack.on(&self.page, ..)` borrows the two apart.
 struct Page {
     entry: EntryId,
     cards: Interned,
+    /// Continue Watching's cards, by library item id.
+    cw: item_cards::Interned,
+}
+
+/// The Continue Watching items Home shows: signed in, in progress, most recent first.
+fn continue_items<'a>(cx: &Cx<'a, Bundle>) -> Vec<&'a LibraryItem> {
+    match cx.views.account.session() {
+        SessionState::SignedIn(_) => cx.views.library.continue_watching(),
+        _ => Vec::new(),
+    }
+}
+
+/// Where a Continue Watching press goes: the resume target's Streams page, with the offset (for a
+/// series the episode it stopped on), or the Resume page for an item with no recorded video.
+pub fn resume_arg(item: &LibraryItem) -> AppArg {
+    match item.resume_target() {
+        Some(t) => AppArg::Streams(VideoRef {
+            kind: t.kind,
+            video_id: t.video_id,
+            show: item.name.clone(),
+            title: item_cards::caption(item),
+            resume_ms: t.offset_ms,
+        }),
+        None => AppArg::Resume(ItemRef { kind: item.kind.clone(), id: item.id.clone(), name: item.name.clone() }),
+    }
 }
 
 impl Page {
@@ -207,22 +316,29 @@ fn loading_more(store: &CatalogStore) -> bool {
 
 impl StackPage<Bundle> for Page {
     type Key = Sec;
-    type Cards<'a> = RowCards<'a>;
+    type Cards<'a> = HomeCards<'a>;
 
     fn revision(&self, cx: &Cx<'_, Bundle>) -> u64 {
-        (u64::from(Self::store(cx).gen()) << 32) | self.cards.cards() as u64
+        let library = u64::from(cx.views.library.gen()) ^ (u64::from(cx.views.account.gen()) << 16);
+        (u64::from(Self::store(cx).gen()) << 32) ^ (library << 20) ^ (self.cards.cards() + self.cw.len()) as u64
     }
 
     fn sections(&self, cx: &Cx<'_, Bundle>, out: &mut Vec<SectionSpec<Sec>>) {
         let store = Self::store(cx);
-        match Self::status_overlay(store, 0).filter(|_| Self::status(store) == Some(StatusKind::Failed)) {
+        let cw = !continue_items(cx).is_empty();
+        match Self::status_overlay(store, 0).filter(|_| Self::status(store) == Some(StatusKind::Failed) && !cw) {
             Some(overlay) => {
                 let rect = overlay.action_frame_measured(cx.measure).unwrap_or(Rect::FULL);
                 out.push(SectionSpec::new(Sec::Status, Kind::Overlay { rect, focusable: true }, STATUS_GROUP));
             }
             None => out.push(SectionSpec::new(Sec::Status, Kind::Custom { height: CONTENT_TOP, focusable: false }, STATUS_GROUP)),
         }
+        let first = u32::from(cw);
+        if cw {
+            out.push(SectionSpec::new(Sec::Continue, Kind::Shelf { style: &POSTER, heading: HEAD_TO_ROW }, CW_GROUP).ranked(0));
+        }
         for (rank, (_, row)) in shown_rows(store).enumerate() {
+            let rank = rank as u32 + first;
             let spec = if failed_empty(row) {
                 SectionSpec::new(
                     Sec::Failed(row.id),
@@ -232,19 +348,28 @@ impl StackPage<Bundle> for Page {
             } else {
                 SectionSpec::new(Sec::Row(row.id), Kind::Shelf { style: &POSTER, heading: HEAD_TO_ROW }, row_group(row.id))
             };
-            out.push(spec.ranked(rank as u32));
+            out.push(spec.ranked(rank));
         }
     }
 
     fn fallback(&self, cx: &Cx<'_, Bundle>, out: &mut Vec<Sec>) {
+        if !continue_items(cx).is_empty() {
+            out.push(Sec::Continue);
+        }
         out.extend(shown_rows(Self::store(cx)).filter(|(_, r)| !failed_empty(r)).map(|(_, r)| Sec::Row(r.id)));
         out.push(Sec::Status);
     }
 
-    fn cards<'a>(&'a self, cx: &'a Cx<'_, Bundle>, k: Sec) -> Option<RowCards<'a>> {
-        let Sec::Row(id) = k else { return None };
-        let row = Self::store(cx).row(id)?;
-        Some(RowCards { row, elems: self.cards.rows.get(&id).map_or(&[], Vec::as_slice), at: &self.cards.at })
+    fn cards<'a>(&'a self, cx: &'a Cx<'_, Bundle>, k: Sec) -> Option<HomeCards<'a>> {
+        match k {
+            Sec::Continue => Some(HomeCards::Continue(ItemCards { items: continue_items(cx), cards: &self.cw })),
+            Sec::Row(id) => {
+                let row = Self::store(cx).row(id)?;
+                let elems = self.cards.rows.get(&ident(row)).map_or(&[][..], Vec::as_slice);
+                Some(HomeCards::Row(RowCards { row, elems, at: &self.cards.at }))
+            }
+            _ => None,
+        }
     }
 
     fn elem_of(&self, k: Sec) -> Option<u32> {
@@ -262,6 +387,11 @@ impl StackPage<Bundle> for Page {
     }
 
     fn draw_heading(&self, k: Sec, f: &mut DrawFrame<'_, '_, Bundle>, r: Rect, lift: f32) {
+        if k == Sec::Continue {
+            let p = f.painter.alpha(f.page_alpha);
+            sn_ui::cards::draw_heading(p, msg::app_home_continue(), "", MARGIN_X, r.y + HEADING_TOP - lift, SCR_W - 2.0 * MARGIN_X, f.measure);
+            return;
+        }
         let Sec::Row(id) = k else { return };
         let store = Self::store(f.cx);
         let Some(row) = store.row(id) else { return };
@@ -312,12 +442,35 @@ impl HomeScreen {
 
     pub fn new(entry: EntryId) -> Self {
         HomeScreen {
-            page: Page { entry, cards: Interned::default() },
+            page: Page { entry, cards: Interned::default(), cw: item_cards::Interned::with_base(FIRST_CW_ELEM) },
             stack: Stack::new(entry).hold_hint(sn_ui::hold_hint::Kind::Library),
             view: None,
             seat: FirstSeat::new(),
             first_row: None,
             chose: false,
+        }
+    }
+
+    /// Intern every Continue Watching item; `true` when one was new.
+    fn sync_continue(&mut self, cx: &Cx<'_, Bundle>) -> bool {
+        let before = self.page.cw.len();
+        for item in continue_items(cx) {
+            self.page.cw.elem(&item.id);
+        }
+        self.page.cw.len() != before
+    }
+
+    /// The Continue Watching item behind a card element.
+    fn continue_item<'a>(&self, cx: &Cx<'a, Bundle>, elem: u32) -> Option<&'a LibraryItem> {
+        continue_items(cx).into_iter().find(|i| self.page.cw.get(&i.id) == Some(elem))
+    }
+
+    /// OK on a card: a Continue Watching card resumes, a catalog card opens its Detail page.
+    fn press(&self, cx: &Cx<'_, Bundle>, elem: u32, fx: &mut Effects<'_, Bundle>) {
+        if let Some(item) = self.continue_item(cx, elem) {
+            fx.push(Fx::Nav(NavOp::Push(resume_arg(item))));
+        } else {
+            self.open(cx, elem, fx);
         }
     }
 
@@ -348,8 +501,8 @@ impl HomeScreen {
 
     /// The item behind a card element.
     fn item<'a>(&self, cx: &Cx<'a, Bundle>, elem: u32) -> Option<&'a MetaPreview> {
-        let (row, i) = *self.page.cards.at.get(&elem)?;
-        cx.views.catalog.row(row)?.items().get(i)
+        let ((b, k, id), i) = self.page.cards.at.get(&elem)?;
+        cx.views.catalog.row_by_identity((b, k, id))?.items().get(*i)
     }
 
     fn open(&self, cx: &Cx<'_, Bundle>, elem: u32, fx: &mut Effects<'_, Bundle>) {
@@ -360,7 +513,16 @@ impl HomeScreen {
 
     /// A held OK on a card: its item menu, anchored beside the card.
     fn menu(&self, cx: &Cx<'_, Bundle>, elem: u32, fx: &mut Effects<'_, Bundle>) {
-        let Some(item) = self.item(cx, elem) else { return };
+        let kind = match self.continue_item(cx, elem) {
+            Some(i) => MenuKind::Item {
+                item: ItemRef { kind: i.kind.clone(), id: i.id.clone(), name: i.name.clone() },
+                poster: i.poster.clone(),
+            },
+            None => {
+                let Some(item) = self.item(cx, elem) else { return };
+                crate::cards::item_menu(item)
+            }
+        };
         let anchor = self.stack.focused_card(&self.page, cx, At::Drawn).map_or_else(crate::menu::fallback_anchor, |(_, at)| at.rect);
         let focus = cx.focus.current.filter(|k| k.entry == self.page.entry);
         fx.push(Fx::Nav(NavOp::Present(AppArg::Menu(MenuArg {
@@ -368,13 +530,16 @@ impl HomeScreen {
             reply: fx.from(),
             focus,
             anchor: MenuArg::anchor_of(anchor),
-            kind: MenuKind::Item(item_ref(item)),
+            kind,
         }))));
     }
 
     /// The group DOWN from the bar enters: the first row with cards, else the failed install
     /// list's Retry.
     fn first_group(&self, cx: &Cx<'_, Bundle>) -> Option<GroupId> {
+        if !continue_items(cx).is_empty() {
+            return Some(CW_GROUP);
+        }
         match first_seat(cx.views.catalog)? {
             sn_ui::screen::FocusTarget::FirstInGroup(g) => Some(g),
             _ => None,
@@ -400,7 +565,9 @@ impl Machine<Bundle> for HomeScreen {
     fn step(&mut self, ev: &Self::Ev, cx: &Cx<'_, Bundle>, fx: &mut Effects<'_, Bundle>) -> Handled {
         // The interning is current before the stack reads the rows for this event.
         let grew = match ev {
-            ScreenEvent::Tick(_) | ScreenEvent::Mount | ScreenEvent::StoreChanged(..) => self.page.cards.sync(cx.views.catalog),
+            ScreenEvent::Tick(_) | ScreenEvent::Mount | ScreenEvent::StoreChanged(..) => {
+                self.page.cards.sync(cx.views.catalog) | self.sync_continue(cx)
+            }
             _ => false,
         };
         let got = self.stack.on(&self.page, ev, cx, fx);
@@ -415,8 +582,9 @@ impl Machine<Bundle> for HomeScreen {
                     fx.push(Fx::App(AppFx::Catalog(CatalogCmd::More(id))));
                 }
                 // Home mounts before anything has landed, with the remote resting on its pill: that
-                // is a seat nobody chose, so the first row that lands takes it
-                let target = first_seat(cx.views.catalog);
+                // is a seat nobody chose, so the first row that lands (Continue Watching first)
+                // takes it
+                let target = self.first_group(cx).map(sn_ui::screen::FocusTarget::FirstInGroup).or_else(|| first_seat(cx.views.catalog));
                 let seated = crate::tabs::rests(self.page.entry, crate::tabs::Tab::Home, cx, self.chose, target.is_some());
                 let target = target.or(Some(sn_ui::screen::FocusTarget::Elem(sn_machine::machine::FocusKey {
                     entry: self.page.entry,
@@ -429,13 +597,15 @@ impl Machine<Bundle> for HomeScreen {
                 }
                 Handled::Yes
             }
-            ScreenEvent::StoreChanged(ord, _) if *ord == StoreId::Catalog.ord() => {
+            ScreenEvent::StoreChanged(ord, _)
+                if [StoreId::Catalog.ord(), StoreId::Library.ord(), StoreId::Account.ord()].contains(ord) =>
+            {
                 fx.invalidate(Provenance::Landing(fx.from()));
                 Handled::Yes
             }
             ScreenEvent::PressCommit(_) => {
                 if let Some(StackEvent::Card(_, CardEvent::Activate(elem))) = got {
-                    self.open(cx, elem, fx);
+                    self.press(cx, elem, fx);
                 } else if let Some(k) = cx.focus.current.filter(|k| k.entry == self.page.entry && crate::tabs::on_strip(k.elem)) {
                     crate::tabs::on_pill(k.elem, crate::tabs::Tab::Home, self.first_group(cx), fx);
                 }
@@ -463,8 +633,8 @@ impl Machine<Bundle> for HomeScreen {
             }
             ScreenEvent::Activate(elem) => {
                 // a card activated without a press (the pointer's direct activation)
-                if self.page.cards.at.contains_key(elem) {
-                    self.open(cx, *elem, fx);
+                if self.page.cards.at.contains_key(elem) || self.page.cw.contains(*elem) {
+                    self.press(cx, *elem, fx);
                 }
                 Handled::Yes
             }

@@ -132,7 +132,8 @@ pub unsafe fn construct(mt: MainThread) -> Result<App, c_int> {
     // The viewer's settings, read once before the loop (a frame never waits on storage).
     let settings_path = super::prefs::path();
     let loaded = super::prefs::load(&settings_path);
-    // Signed out: the default addons (Cinemeta). Their manifests are the first requests.
+    // The default addons (Cinemeta) until the stored session says otherwise: their manifests are
+    // the first requests, beside the session's read and the account's addons once it is known.
     let mut bridge = Bridge::new(
         sn_screens::stores::catalog::CatalogStore::signed_out(),
         playback,
@@ -140,7 +141,7 @@ pub unsafe fn construct(mt: MainThread) -> Result<App, c_int> {
         Some(art),
     )
     .with_settings(loaded, settings_path);
-    bridge.start_catalog_jobs();
+    bridge.boot();
     log("boot: Home requested");
     let glass = sn_ui::frame::glass::GlassPlan::new();
     Ok(App { win, pages, bridge, glass, running: true, backgrounded: false, ev: [0; 64] })

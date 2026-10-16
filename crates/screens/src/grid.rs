@@ -19,7 +19,7 @@ use sn_ui::widgets::{StatusKind, StatusOverlay};
 use sn_ui::{theme, Env, Rect};
 
 use crate::cards::{item_ref, ItemCards};
-use crate::registry::{kind_label, word, AppArg, AppFx, Bundle, CatalogRef, FirstSeat, GridCmd, MenuArg, MenuKind};
+use crate::registry::{kind_label, word, AppArg, AppFx, Bundle, CatalogRef, FirstSeat, GridCmd, MenuArg};
 use crate::stores::grid::{GridKey, GridState, GridStore};
 use crate::stores::StoreId;
 
@@ -223,7 +223,7 @@ impl Machine<Bundle> for GridScreen {
                             reply: fx.from(),
                             focus: cx.focus.current,
                             anchor: MenuArg::anchor_of(anchor),
-                            kind: MenuKind::Item(item_ref(item)),
+                            kind: crate::cards::item_menu(item),
                         }))));
                     }
                 }

@@ -8,9 +8,15 @@ The crate `sn_screens`: every screen the dispatcher mounts, the [`Bundle`] host 
 | module | may name |
 |---|---|
 | `stores/` | `sn_stremio`, `sn_machine::machine` — never a screen, never `sn_ui` |
-| a screen (`home.rs`, `search.rs`, `livetv.rs`, `library.rs`, `addons.rs`, `settings.rs`, `grid.rs`, `menu.rs`, `detail.rs`, `player.rs`) | `sn_ui`, `stores/`, `sn_stremio` types, `registry`, `tabs`, `cards` — never a sibling screen, never the app |
-| `tabs.rs`, `cards.rs`, `chrome.rs` (shared, not screens) | `sn_ui`, `stores/`, `registry` |
+| a screen (`home.rs`, `search.rs`, `livetv.rs`, `library.rs`, `addons.rs`, `settings.rs`, `grid.rs`, `menu.rs`, `detail.rs`, `player.rs`, `signin.rs`) | `sn_ui`, `stores/`, `sn_stremio` types, `registry`, `tabs`, `cards`, `item_cards` — never a sibling screen, never the app |
+| `tabs.rs`, `cards.rs`, `chrome.rs`, `item_cards.rs` (shared, not screens) | `sn_ui`, `stores/`, `registry` |
 | `registry.rs` | the screens (it is the one `mount` match) |
+
+**The addons the app uses** are ONE answer: `stores::addons::AddonsStore::in_use()` (the account's
+collection signed in, `DEFAULT_ADDONS` otherwise), and their loaded manifests are
+`registry::Views::addons()` (the catalog store the application rebuilds from `in_use`). Nothing
+here reads `sn_stremio::account::DEFAULT_ADDONS` itself; a search plans against `Views::addons()`
+filtered by `AddonsStore::filter()` (the per-addon switch the Addons page toggles).
 
 Nothing here fetches, spawns or blocks. A screen says what it wants as an `AppFx` (`registry.rs`);
 the application's rig (`crates/app/src/app/bridge.rs`) changes the store, runs the store's jobs on
@@ -39,10 +45,13 @@ and BACK all read it. Home is the root of the shared stack and every other tab i
 Adding a destination (the account page, say) is one `TABS` line, its `AppArg` variant and its
 `mount` arm. The Search pill must stay LAST: the strip draws its last pill as the magnifier.
 
-The installed addons every page plans against are `Views::addons()` (and `Bridge::addons()` on
-the rig side) — today the catalog store's signed-out defaults; the sign-in work switches them by
-building the catalog store over the user's collection. `Views::session` says whether the user is
-signed in (the item menu's Add to library reads it).
+The addons every page plans against are `Views::addons()` (and `Bridge::addons()` on the rig
+side): the catalog store the application builds from `AddonsStore::in_use()` — the account's
+collection signed in, the defaults otherwise. Search's chips and the Addons page's *Include in
+search* toggle the same `AddonsStore::filter()`. `Views::account` is the session (Settings' and the
+Addons page's account rows, sign-out through `AccountCmd::SignOut`); `Views::session` is its
+signed-in bit (the item menu's Add to library reads it, with `LibraryStore::add_state`; the press
+is `LibraryCmd::Add`, the account's `datastorePut`).
 
 ## Adding a screen
 

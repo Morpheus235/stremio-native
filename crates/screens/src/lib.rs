@@ -9,13 +9,15 @@
 //! reaching the application is an `AppFx`. Read `CLAUDE.md` beside this file before adding a
 //! screen.
 
-pub mod addons; // a top-bar destination: the addons in use (the sign-in work fills it)
+pub mod addons; // the addons in use and the account they come from; one addon's catalogs and search switch
+pub mod detail; // one item: episodes or per-addon streams; in its second mode, one episode's streams
+pub mod home; // Continue Watching, then a shelf per browsable catalog of the addons in use, viewport-first
+pub mod item_cards; // library items as cards: shared by Home's Continue Watching and the Library (not a screen)
+pub mod library; // the account's library, a shelf per type
+pub mod signin; // sign in: the device link (QR) or email and password, or continue without
 pub mod cards; // the CardSource over a run of catalog items that Search, the grid and Live TV share
 pub mod chrome; // the shared top bar's owner: labels, strip motion, the members the container focuses
-pub mod detail; // one item: episodes or per-addon streams; in its second mode, one episode's streams
 pub mod grid; // one catalog whole: the paginated grid a search row's MORE opens
-pub mod home; // a top-bar destination: a shelf per browsable catalog of the installed addons
-pub mod library; // a top-bar destination: the user's library (signed out: how to get one)
 pub mod livetv; // a top-bar destination: the tv/channel catalogs by genre
 pub mod menu; // the popover menu: a card's item menu, a chip's choice
 pub mod player; // the hardware video plane's page: working / failure read-outs, remote transport
@@ -28,6 +30,8 @@ pub mod tabs; // the top bar's destinations, BACK to the bar, and the remote's h
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support; // a rig over the real stores and the dispatcher, for driving screens with no SDL
 
+#[cfg(test)]
+mod account_tests;
 #[cfg(test)]
 mod home_tests;
 #[cfg(test)]

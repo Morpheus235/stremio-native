@@ -10,8 +10,12 @@
 //!   its reason, or Results with "more" when the addon holds more than the row shows.
 //! - **A newer query retires the older one.** Its requests are cancelled and a late landing for a
 //!   query generation that is no longer current is dropped.
-//! - **The filter and the recents are the user's settings.** Both are seeded by the application
-//!   from the settings file and its persistence watches [`SearchStore::settings_gen`].
+//! - **The addon filter is not kept here.** It is THE per-addon switch of the addons store
+//!   (`AddonsStore::filter`, also the Addons page's *Include in search*), handed to every plan
+//!   as an argument; a change to it (or to the addons in use) asks the shown query again
+//!   ([`SearchStore::replan`]).
+//! - **The recents are the user's setting**, seeded by the application from the settings file;
+//!   its persistence watches [`SearchStore::settings_gen`].
 //!
 //! Pure like every store here: time arrives as an argument and requests leave as [`SearchJob`]s.
 
@@ -66,7 +70,6 @@ pub struct SearchStore {
     qgen: u32,
     rows: Vec<SearchRow>,
     out: Vec<Option<Cancel>>,
-    filter: AddonFilter,
     recents: Vec<String>,
     gen: u32,
     settings_gen: u32,
@@ -74,12 +77,12 @@ pub struct SearchStore {
 
 impl Default for SearchStore {
     fn default() -> Self {
-        Self::new(AddonFilter::default(), Vec::new())
+        Self::new(Vec::new())
     }
 }
 
 impl SearchStore {
-    pub fn new(filter: AddonFilter, recents: Vec<String>) -> Self {
+    pub fn new(recents: Vec<String>) -> Self {
         let mut recents = recents;
         recents.truncate(MAX_RECENTS);
         SearchStore {
@@ -89,7 +92,6 @@ impl SearchStore {
             qgen: 0,
             rows: Vec::new(),
             out: Vec::new(),
-            filter,
             recents,
             gen: 0,
             settings_gen: 0,
@@ -124,10 +126,6 @@ impl SearchStore {
             return Some(RowState::Loading);
         }
         Some(r.state())
-    }
-
-    pub fn filter(&self) -> &AddonFilter {
-        &self.filter
     }
 
     pub fn recents(&self) -> &[String] {
@@ -167,7 +165,7 @@ impl SearchStore {
     }
 
     /// Ask `text` now, without waiting for typing to pause.
-    pub fn submit(&mut self, text: &str, addons: &[Addon]) -> Vec<SearchJob> {
+    pub fn submit(&mut self, text: &str, addons: &[Addon], filter: &AddonFilter) -> Vec<SearchJob> {
         self.typed = text.to_string();
         self.due = None;
         let query = text.trim().to_string();
@@ -175,28 +173,30 @@ impl SearchStore {
             self.bump();
             return Vec::new();
         }
-        let rows = plan(addons, &query, &self.filter);
+        let rows = plan(addons, &query, filter);
         self.replace(query, rows)
     }
 
     /// The frame's clock: plan the typed query once its deadline has passed.
-    pub fn tick(&mut self, now: u32, addons: &[Addon]) -> Vec<SearchJob> {
+    pub fn tick(&mut self, now: u32, addons: &[Addon], filter: &AddonFilter) -> Vec<SearchJob> {
         match self.due {
             // wrapping-safe "now >= due"
             Some(due) if now.wrapping_sub(due) < u32::MAX / 2 => {
                 let typed = self.typed.clone();
-                self.submit(&typed, addons)
+                self.submit(&typed, addons, filter)
             }
             _ => Vec::new(),
         }
     }
 
-    /// Switch an addon in or out, and ask the current query again over the new set.
-    pub fn toggle_addon(&mut self, addon_id: &str, addons: &[Addon]) -> Vec<SearchJob> {
-        self.filter.toggle(addon_id);
-        self.settings_gen = self.settings_gen.wrapping_add(1);
+    /// The filter or the addons in use changed: ask the shown query again over the new set.
+    /// Nothing when no query is shown.
+    pub fn replan(&mut self, addons: &[Addon], filter: &AddonFilter) -> Vec<SearchJob> {
+        if self.query.chars().count() < MIN_QUERY {
+            return Vec::new();
+        }
         let query = self.query.clone();
-        let rows = plan(addons, &query, &self.filter);
+        let rows = plan(addons, &query, filter);
         self.replace(query, rows)
     }
 
@@ -320,18 +320,18 @@ mod tests {
         s.type_query("ba", 100);
         s.type_query("bat", 200);
         assert_eq!(s.phase(), Phase::Typing);
-        assert!(s.tick(200 + DEBOUNCE_MS - 1, &a).is_empty(), "not before typing pauses");
-        let jobs = s.tick(200 + DEBOUNCE_MS, &a);
+        assert!(s.tick(200 + DEBOUNCE_MS - 1, &a, &AddonFilter::default()).is_empty(), "not before typing pauses");
+        let jobs = s.tick(200 + DEBOUNCE_MS, &a, &AddonFilter::default());
         assert_eq!(jobs.len(), 3, "one request per searchable catalog, of every type");
         assert_eq!(jobs[2].url, "https://live.example/catalog/tv/ch/search=bat.json");
         assert_eq!(s.phase(), Phase::Rows);
-        assert!(s.tick(10_000, &a).is_empty(), "a planned query is asked once");
+        assert!(s.tick(10_000, &a, &AddonFilter::default()).is_empty(), "a planned query is asked once");
     }
 
     #[test]
     fn every_row_moves_through_its_own_states() {
         let mut s = SearchStore::default();
-        let jobs = s.submit("batman", &addons());
+        let jobs = s.submit("batman", &addons(), &AddonFilter::default());
         assert!((0..3).all(|r| s.row_state(r) == Some(RowState::Loading)));
         let qgen = jobs[0].qgen;
         assert!(s.land(SearchLanding { qgen, row: 0, result: Ok(page(30)) }));
@@ -348,8 +348,8 @@ mod tests {
     #[test]
     fn a_newer_query_cancels_and_drops_the_older_ones_rows() {
         let mut s = SearchStore::default();
-        let old = s.submit("batman", &addons());
-        let new = s.submit("superman", &addons());
+        let old = s.submit("batman", &addons(), &AddonFilter::default());
+        let new = s.submit("superman", &addons(), &AddonFilter::default());
         assert!(old.iter().all(|j| j.cancel.is_cancelled()));
         assert!(!s.land(SearchLanding { qgen: old[0].qgen, row: 0, result: Ok(page(3)) }), "a stale landing is dropped");
         assert!(s.land(SearchLanding { qgen: new[0].qgen, row: 0, result: Ok(page(3)) }));
@@ -357,15 +357,16 @@ mod tests {
     }
 
     #[test]
-    fn a_disabled_addon_is_not_asked_and_the_change_is_a_setting() {
+    fn a_disabled_addon_is_not_asked_and_the_shown_query_follows_the_filter() {
         let mut s = SearchStore::default();
-        s.submit("news", &addons());
-        let settings = s.settings_gen();
-        let jobs = s.toggle_addon("cinemeta", &addons());
+        let mut filter = AddonFilter::default();
+        assert!(s.replan(&addons(), &filter).is_empty(), "no query shown, nothing asked");
+        s.submit("news", &addons(), &filter);
+        filter.toggle("cinemeta");
+        let jobs = s.replan(&addons(), &filter);
         assert_eq!(jobs.len(), 1, "only the live addon's catalog is asked");
-        assert!(!s.filter().allows("cinemeta"));
-        assert_ne!(s.settings_gen(), settings, "the filter is persisted");
-        assert_eq!(s.toggle_addon("live", &addons()).len(), 0);
+        filter.toggle("live");
+        assert_eq!(s.replan(&addons(), &filter).len(), 0);
         assert_eq!(s.phase(), Phase::NoCatalogs, "every addon off reads as such, not as no results");
     }
 

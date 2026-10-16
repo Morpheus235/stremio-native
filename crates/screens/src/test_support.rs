@@ -17,7 +17,10 @@ use sn_ui::frame::Budget;
 use crate::chrome::ChromeBar;
 use crate::registry::{AppArg, AppFx, AppMounter, AppMsg, Bundle, GridCmd, PlaybackView, SearchCmd, SessionView, SettingsCmd, Views};
 use crate::stores::catalog::CatalogStore;
+use crate::stores::account::AccountStore;
+use crate::stores::addons::AddonsStore;
 use crate::stores::detail::DetailStore;
+use crate::stores::library::LibraryStore;
 use crate::stores::grid::{GridJob, GridStore};
 use crate::stores::search::{SearchJob, SearchStore};
 use crate::stores::settings::SettingsStore;
@@ -27,12 +30,14 @@ use crate::tabs::{route_hotkey, HotkeyRoute};
 pub struct TestRig {
     mounter: AppMounter,
     pub catalog: CatalogStore,
+    pub account: AccountStore,
+    pub addons: AddonsStore,
+    pub library: LibraryStore,
     pub detail: DetailStore,
     pub playback: PlaybackView,
     pub search: SearchStore,
     pub grid: GridStore,
     pub settings: SettingsStore,
-    pub session: SessionView,
     pub chrome: ChromeBar,
     /// Every application effect the screens emitted, in order.
     pub effects: Vec<AppFx>,
@@ -41,7 +46,8 @@ pub struct TestRig {
     pub grid_jobs: Vec<GridJob>,
     pub log: Vec<String>,
     pub back_at_root: u32,
-    /// The keyboard requests the dispatcher passed on (`Rig::system_keyboard`).
+    /// The keyboard requests the dispatcher passed on (`Rig::system_keyboard`): every raise
+    /// (`true`) and dismissal (`false`), in order.
     pub keyboard: Vec<bool>,
     now: u32,
     measure: FixtureMeasure,
@@ -53,11 +59,14 @@ impl TestRig {
             mounter: AppMounter,
             catalog,
             detail: DetailStore::new(),
+            // a rig is a returning, signed-out viewer unless a test says otherwise
+            account: AccountStore::signed_out(true),
+            addons: AddonsStore::new(),
+            library: LibraryStore::new(),
             playback: PlaybackView::IDLE,
             search: SearchStore::default(),
             grid: GridStore::new(),
             settings: SettingsStore::default(),
-            session: SessionView::default(),
             chrome: ChromeBar::new(),
             effects: Vec::new(),
             search_jobs: Vec::new(),
@@ -80,8 +89,12 @@ impl TestRig {
                         self.search.type_query(t, self.now);
                         Vec::new()
                     }
-                    SearchCmd::Submit(t) => self.search.submit(t, &addons),
-                    SearchCmd::ToggleAddon(id) => self.search.toggle_addon(id, &addons),
+                    SearchCmd::Submit(t) => self.search.submit(t, &addons, self.addons.filter()),
+                    // THE filter is the addons store's (as the bridge applies it)
+                    SearchCmd::ToggleAddon(id) => {
+                        self.addons.toggle_search(id);
+                        self.search.replan(&addons, self.addons.filter())
+                    }
                     SearchCmd::Retry(r) => self.search.retry(*r),
                     SearchCmd::Remember(t) => {
                         self.search.remember(t);
@@ -125,10 +138,13 @@ impl Rig<Bundle> for TestRig {
                 catalog: &self.catalog,
                 detail: &self.detail,
                 playback: &self.playback,
+                account: &self.account,
+                addons: &self.addons,
+                library: &self.library,
                 search: &self.search,
                 grid: &self.grid,
                 settings: &self.settings,
-                session: self.session,
+                session: SessionView { signed_in: self.account.account().is_some() },
             },
             measure: &self.measure,
         }
@@ -169,12 +185,12 @@ pub struct TestApp {
     pub rig: TestRig,
     ms: u32,
     /// The generation each network-free store last announced.
-    told: [Option<u32>; 3],
+    told: [Option<u32>; 4],
 }
 
 impl TestApp {
     pub fn boot(catalog: CatalogStore) -> Self {
-        let mut app = TestApp { d: Dispatcher::new(), rig: TestRig::new(catalog), ms: 0, told: [None; 3] };
+        let mut app = TestApp { d: Dispatcher::new(), rig: TestRig::new(catalog), ms: 0, told: [None; 4] };
         app.d.request(MachineId::Nav, NavOp::Root(AppArg::Home));
         app.frame();
         app
@@ -199,7 +215,7 @@ impl TestApp {
         sn_machine::idle::frame_begin(1.0 / 60.0);
         // the search store's debounce runs on the frame clock, as the application's loop runs it
         let addons = self.rig.catalog.addons().to_vec();
-        let jobs = self.rig.search.tick(t.ms, &addons);
+        let jobs = self.rig.search.tick(t.ms, &addons, self.rig.addons.filter());
         self.rig.search_jobs.extend(jobs);
         self.notify_stores();
         self.rig.chrome.capture(&mut self.d, &self.rig.measure);
@@ -219,6 +235,7 @@ impl TestApp {
             (StoreId::Search, self.rig.search.gen()),
             (StoreId::Grid, self.rig.grid.gen()),
             (StoreId::Settings, self.rig.settings.gen()),
+            (StoreId::Addons, self.rig.addons.gen()),
         ];
         for (i, (id, gen)) in gens.into_iter().enumerate() {
             if self.told[i] != Some(gen) {

@@ -51,6 +51,8 @@ impl Playback {
         };
         let mut start = PlaybackStart::new(req.url.clone());
         start.headers = headers;
+        // a resume starts where the account says the viewer stopped
+        start.start_ns = i64::try_from(req.start_ms).unwrap_or(i64::MAX / 1_000_000).saturating_mul(1_000_000);
         match player::begin_playback(&mut self.player.session, &mut self.adapter, start) {
             Ok(outcome) => log(&format!("play: start {outcome:?}")),
             Err(refusal) => log(&format!("play: refused before the pipeline ({refusal:?})")),
@@ -182,6 +184,7 @@ mod tests {
             url: "https://cdn.example/v.m3u8".into(),
             headers: vec![("Referer".into(), "a\r\nInjected: 1".into())],
             title: "T".into(),
+            start_ms: 0,
         });
         assert!(!pb.adapter.is_live(), "nothing reached the native pipeline");
         assert_eq!(pb.view.phase, PlayPhase::Failed);

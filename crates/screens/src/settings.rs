@@ -2,8 +2,9 @@
 //! idiom: a route header beside a `FormTable`, every row focused by identity, every drill-down a
 //! push on the shared stack whose crumb names where BACK returns.
 //!
-//! - **The root** (a tab page, under the top bar): *Playback* — subtitle size and position, each
-//!   a picker; *Remote* — the key map; *About* — About StremioNative, Legal notices, Privacy, and
+//! - **The root** (a tab page, under the top bar): *Account* — who is signed in and *Sign out*
+//!   (`AccountCmd::SignOut`: the stored session is removed), or *Sign in*; *Playback* — subtitle
+//!   size and position, each a picker; *Remote* — the key map; *About* — About StremioNative, Legal notices, Privacy, and
 //!   the version line.
 //! - **A picker** ([`SettingsPage::Picker`]): one checked row per rung; OK sets it (the
 //!   application persists it and publishes it to the player) and returns.
@@ -37,6 +38,7 @@ use sn_ui::table_screen::{DocumentFocus, DocumentScreen, Header, TableScreen};
 use sn_ui::{theme, Rect};
 
 use crate::registry::{word, AppArg, AppFx, Bundle, Doc, SettingsCmd, SettingsPage};
+use crate::stores::account::{AccountCmd, AccountStore, SessionState};
 use crate::stores::settings::{Pref, SettingsStore};
 use crate::stores::StoreId;
 use crate::tabs::Tab;
@@ -85,6 +87,13 @@ pub enum RootRow {
     About,
     Legal,
     Privacy,
+    /// Signed out: opens the sign-in page.
+    SignIn,
+    /// Signed in: who it is. A stop so the remote can rest on it (and a long address scroll);
+    /// OK does nothing.
+    Account,
+    /// Signed in: ends the session and removes it from the television.
+    SignOut,
 }
 
 impl FormId for RootRow {
@@ -146,10 +155,32 @@ fn pref_copy(pref: Pref) -> &'static str {
     }
 }
 
-/// The root's form, from the settings as they stand.
-pub fn root_form(settings: &SettingsStore) -> Form<RootRow, RootRow, SettingsPage> {
+/// The root's Account section: the session as the account store holds it.
+fn account_section(account: &AccountStore) -> FormSection<RootRow, RootRow, SettingsPage> {
+    let s = FormSection::new(msg::app_addons_account());
+    match account.session() {
+        SessionState::Restoring => s.note(msg::app_addons_restoring()),
+        SessionState::SignedOut { .. } => s.item(
+            RootRow::SignIn,
+            RowKind::Button,
+            RootRow::SignIn,
+            Row::new(msg::app_addons_sign_in()).detail(msg::app_addons_sign_in_detail()).chevron(true),
+        ),
+        SessionState::SignedIn(a) => {
+            // the account is user text: a long address elides, the label never does
+            let who = if a.email.is_empty() { a.user_id.clone() } else { a.email.clone() };
+            let s = s.item(RootRow::Account, RowKind::Button, RootRow::Account, Row::new(msg::app_addons_signed_in()).value(who).server_value());
+            let s = if account.save_failed() { s.note(msg::app_addons_not_kept()) } else { s };
+            s.item(RootRow::SignOut, RowKind::Button, RootRow::SignOut, Row::new(msg::app_addons_sign_out()).destructive(true))
+        }
+    }
+}
+
+/// The root's form, from the settings and the session as they stand.
+pub fn root_form(settings: &SettingsStore, account: &AccountStore) -> Form<RootRow, RootRow, SettingsPage> {
     let nav = |p: SettingsPage| RowKind::Nav(p);
     Form::new()
+        .section(account_section(account))
         .section(
             FormSection::new(msg::app_settings_playback())
                 .item(
@@ -311,8 +342,8 @@ enum Mode {
 pub struct SettingsScreen {
     entry: EntryId,
     mode: Mode,
-    /// The settings generation the root and the picker were built from.
-    built: Option<u32>,
+    /// The settings and account generations the root and the picker were built from.
+    built: Option<(u32, u32)>,
 }
 
 impl SettingsScreen {
@@ -395,19 +426,20 @@ impl SettingsScreen {
         self.layout().document(self.crumb().is_some())
     }
 
-    /// Rebuild the root / the picker when the settings moved.
-    fn sync(&mut self, store: &SettingsStore) {
-        if self.built == Some(store.gen()) {
+    /// Rebuild the root / the picker when the settings or the session moved.
+    fn sync(&mut self, store: &SettingsStore, account: &AccountStore) {
+        let gen = (store.gen(), account.gen());
+        if self.built == Some(gen) {
             return;
         }
         let fresh = self.built.is_none();
-        self.built = Some(store.gen());
+        self.built = Some(gen);
         match &mut self.mode {
             Mode::Root(f) => {
                 if fresh {
-                    f.set(root_form(store), None);
+                    f.set(root_form(store, account), None);
                 } else {
-                    f.refresh(root_form(store));
+                    f.refresh(root_form(store, account));
                 }
             }
             Mode::Picker(p, f) => {
@@ -453,11 +485,15 @@ impl SettingsScreen {
     fn activate(&mut self, elem: u32, fx: &mut Effects<'_, Bundle>) {
         let key = RowKey(elem);
         match &self.mode {
-            Mode::Root(f) => {
-                if let Some(Activation::Push(page)) = f.index_of_key(key).and_then(|i| f.activate(i)) {
-                    fx.push(Fx::Nav(NavOp::Push(AppArg::SettingsPage(page))));
+            Mode::Root(f) => match f.index_of_key(key).and_then(|i| f.activate(i)) {
+                Some(Activation::Push(page)) => fx.push(Fx::Nav(NavOp::Push(AppArg::SettingsPage(page)))),
+                Some(Activation::Action(RootRow::SignIn)) => fx.push(Fx::Nav(NavOp::Push(AppArg::SignIn))),
+                Some(Activation::Action(RootRow::SignOut)) => {
+                    fx.push(Fx::App(AppFx::Account(AccountCmd::SignOut)));
+                    fx.invalidate(Provenance::Input);
                 }
-            }
+                Some(Activation::Action(_)) | None => {}
+            },
             Mode::Legal(f) => {
                 if let Some(Activation::Push(page)) = f.index_of_key(key).and_then(|i| f.activate(i)) {
                     fx.push(Fx::Nav(NavOp::Push(AppArg::SettingsPage(page))));
@@ -519,7 +555,7 @@ impl Machine<Bundle> for SettingsScreen {
     fn step(&mut self, ev: &Self::Ev, cx: &Cx<'_, Bundle>, fx: &mut Effects<'_, Bundle>) -> Handled {
         match ev {
             ScreenEvent::Mount => {
-                self.sync(cx.views.settings);
+                self.sync(cx.views.settings, cx.views.account);
                 // a picker opens on the rung in force, not on its first row
                 if let Mode::Picker(p, _) = &self.mode {
                     let key = Rung(cx.views.settings.get(*p)).key();
@@ -527,13 +563,13 @@ impl Machine<Bundle> for SettingsScreen {
                 }
                 Handled::Yes
             }
-            ScreenEvent::StoreChanged(ord, _) if *ord == StoreId::Settings.ord() => {
-                self.sync(cx.views.settings);
+            ScreenEvent::StoreChanged(ord, _) if *ord == StoreId::Settings.ord() || *ord == StoreId::Account.ord() => {
+                self.sync(cx.views.settings, cx.views.account);
                 fx.invalidate(Provenance::Landing(fx.from()));
                 Handled::Yes
             }
             ScreenEvent::Tick(t) => {
-                self.sync(cx.views.settings);
+                self.sync(cx.views.settings, cx.views.account);
                 self.tick(t.dt());
                 Handled::Yes
             }
@@ -667,6 +703,23 @@ mod tests {
     use super::*;
     use sn_platform::i18n::{language_on_this_thread_for_test, SHIPPED};
 
+    fn signed_in(email: &str) -> AccountStore {
+        use crate::stores::account::{Account, AccountLanding, Secret, Stored};
+        let mut a = AccountStore::new();
+        let account = Account { user_id: "u1".into(), email: email.into(), auth_key: Secret::new("k") };
+        let _ = a.land(AccountLanding::Restored(Stored::Session(account)), 0);
+        a
+    }
+
+    /// The root's account section in each of its states.
+    fn accounts() -> Vec<(&'static str, AccountStore)> {
+        vec![
+            ("restoring", AccountStore::new()),
+            ("signed-out", AccountStore::signed_out(true)),
+            ("signed-in", signed_in("someone.with.a.long.address@example.com")),
+        ]
+    }
+
     fn fit(tag: &str, table: &sn_ui::table::TableView, layout: RouteLayout, out: &mut Vec<String>) {
         out.extend(table.app_fit_failures(layout.sectioned_table().w, tag));
     }
@@ -681,9 +734,12 @@ mod tests {
             let tag = language.tag();
             for size in 0..Pref::SubtitleSize.rungs() {
                 for position in 0..Pref::SubtitlePosition.rungs() {
-                    let mut f = FormTable::<RootRow, RootRow, SettingsPage>::new(KEY_BAND);
-                    f.set(root_form(&SettingsStore::with(size, position)), None);
-                    fit(&format!("{tag} root size={size} position={position}"), &f.table, RouteLayout::below_top_bar(), &mut out);
+                    for (who, account) in accounts() {
+                        let mut f = FormTable::<RootRow, RootRow, SettingsPage>::new(KEY_BAND);
+                        f.set(root_form(&SettingsStore::with(size, position), &account), None);
+                        let tag = format!("{tag} root {who} size={size} position={position}");
+                        fit(&tag, &f.table, RouteLayout::below_top_bar(), &mut out);
+                    }
                 }
             }
             for pref in Pref::ALL {
@@ -730,7 +786,7 @@ mod tests {
     #[test]
     fn every_root_row_opens_its_own_page() {
         let mut f = FormTable::<RootRow, RootRow, SettingsPage>::new(KEY_BAND);
-        f.set(root_form(&SettingsStore::default()), None);
+        f.set(root_form(&SettingsStore::default(), &AccountStore::signed_out(true)), None);
         let pushed: Vec<SettingsPage> = (0..f.table.n_rows() as usize)
             .filter_map(|i| match f.activate(i) {
                 Some(Activation::Push(p)) => Some(p),
@@ -748,5 +804,26 @@ mod tests {
                 SettingsPage::Doc(Doc::Privacy),
             ]
         );
+    }
+
+    #[test]
+    fn the_account_section_signs_in_or_out() {
+        let actions = |account: &AccountStore| -> Vec<RootRow> {
+            let mut f = FormTable::<RootRow, RootRow, SettingsPage>::new(KEY_BAND);
+            f.set(root_form(&SettingsStore::default(), account), None);
+            (0..f.table.n_rows() as usize)
+                .filter_map(|i| match f.activate(i) {
+                    Some(Activation::Action(a)) => Some(a),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(actions(&AccountStore::signed_out(false)), vec![RootRow::SignIn]);
+        assert_eq!(actions(&signed_in("a@b.c")), vec![RootRow::Account, RootRow::SignOut]);
+        assert_eq!(actions(&AccountStore::new()), Vec::<RootRow>::new(), "nothing to press while the session is read");
+        let mut f = FormTable::<RootRow, RootRow, SettingsPage>::new(KEY_BAND);
+        f.set(root_form(&SettingsStore::default(), &signed_in("a@b.c")), None);
+        let rows: Vec<&sn_ui::table::Row> = f.table.sections.iter().flat_map(|s| s.rows.iter()).collect();
+        assert!(rows.iter().any(|r| r.value.as_deref() == Some("a@b.c")), "the account is shown");
     }
 }

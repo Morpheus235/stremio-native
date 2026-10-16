@@ -113,6 +113,17 @@ pub fn check_wire_block(block: &str) -> Result<Vec<&str>, Refusal> {
     Ok(lines)
 }
 
+/// Headers that say what the CLIENT can take and nothing about who it is: safe to send on to any
+/// host a redirect names, so a request carrying only these may still follow redirects.
+pub const FORWARDABLE: &[&str] = &["Accept", "Accept-Language"];
+
+/// Whether every one of `lines` (already [`check_block`]ed) is a [`FORWARDABLE`] header.
+pub fn all_forwardable<S: AsRef<str>>(lines: &[S]) -> bool {
+    lines.iter().all(|line| {
+        line.as_ref().split_once(':').is_some_and(|(n, _)| FORWARDABLE.iter().any(|f| n.trim().eq_ignore_ascii_case(f)))
+    })
+}
+
 /// Whether any of `lines` is a header called `name` (an exact, case-insensitive name; `X-Accept:` is
 /// not `Accept:`). `lines` have passed [`check_block`].
 pub fn names_header<S: AsRef<str>>(lines: &[S], name: &str) -> bool {
@@ -211,5 +222,14 @@ mod tests {
         let secret = "Authorization: Bearer s3cret\r\nHost: evil";
         let refusal = check_line(secret).unwrap_err();
         assert!(!format!("{refusal} {refusal:?}").contains("s3cret"));
+    }
+
+    #[test]
+    fn only_capability_headers_may_ride_a_followed_redirect() {
+        assert!(all_forwardable(&["Accept: image/webp,image/*;q=0.8"]));
+        assert!(all_forwardable(&["accept-language: en"]));
+        assert!(!all_forwardable(&["Accept: */*", "Authorization: Bearer t"]), "one credential line refuses the block");
+        assert!(!all_forwardable(&["X-Accept: image/webp"]), "an exact name, not a suffix");
+        assert!(!all_forwardable(&["Referer: https://addon.example/"]));
     }
 }

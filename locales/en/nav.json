@@ -35,32 +35,17 @@
     "value": "Sign in to use your library",
     "description": "A card's options menu: why Add to library is unavailable."
   },
-  "app.library.sign_in": {
-    "value": "Sign in to see your library",
-    "description": "Library page, signed out: the read-out's verdict."
+  "app.menu.in_library": {
+    "value": "In your library",
+    "description": "A card's options menu: the item is already in the user's Stremio library (not pressable)."
   },
-  "app.library.sign_in_reason": {
-    "value": "Your Stremio library and what you were watching appear here once you sign in.",
-    "description": "Library page, signed out: the line under the verdict."
+  "app.menu.adding": {
+    "value": "Adding…",
+    "description": "A card's options menu, under Add to library: the item is being added."
   },
-  "app.addons.copy": {
-    "value": "The addons StremioNative browses, searches and plays from. Signing in brings your own collection.",
-    "description": "Addons page: the line under the title."
-  },
-  "app.addons.installed": {
-    "value": "In use",
-    "description": "Addons page: the list's section header."
-  },
-  "app.addons.loading": {
-    "value": "Loading an addon…",
-    "description": "Addons page: an addon whose manifest is still loading."
-  },
-  "app.addons.failed": {
-    "value": "An addon could not be loaded ({reason})",
-    "description": "Addons page: an addon whose manifest failed, with the cause.",
-    "args": {
-      "reason": "str"
-    }
+  "app.menu.add_failed": {
+    "value": "Couldn't add it. Try again.",
+    "description": "A card's options menu, under Add to library: the last attempt failed; pressing tries again."
   },
   "app.grid.loading": {
     "value": "Loading…",

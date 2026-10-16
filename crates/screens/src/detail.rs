@@ -89,11 +89,14 @@ impl RowKeys for Built {
     }
 }
 
-/// The page's two modes.
+/// The page's modes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Mode {
     Item(ItemRef),
     Video(VideoRef),
+    /// A Continue Watching item with no recorded video, until its meta names the first episode
+    /// ([`resume_video`]); the page is then that episode's Streams page.
+    Resume(ItemRef),
 }
 
 impl Mode {
@@ -105,7 +108,7 @@ impl Mode {
 
     fn meta_key(&self) -> Option<MetaKey> {
         match self {
-            Mode::Item(i) => Some(MetaKey { kind: i.kind.clone(), id: i.id.clone() }),
+            Mode::Item(i) | Mode::Resume(i) => Some(MetaKey { kind: i.kind.clone(), id: i.id.clone() }),
             Mode::Video(_) => None,
         }
     }
@@ -116,13 +119,41 @@ impl Mode {
             Mode::Item(i) if Self::lists_episodes(&i.kind) => None,
             Mode::Item(i) => Some(StreamKey { kind: i.kind.clone(), video_id: i.id.clone() }),
             Mode::Video(v) => Some(StreamKey { kind: v.kind.clone(), video_id: v.video_id.clone() }),
+            Mode::Resume(_) => None,
         }
+    }
+}
+
+/// What a resume with no recorded video opens once `meta` is in: the first episode
+/// (`sn_stremio::library::first_episode`), or the item's own id when the meta lists no video.
+/// Never the bare series id while the meta has episodes.
+pub fn resume_video(item: &ItemRef, meta: &Meta) -> VideoRef {
+    let show = if meta.preview.name.is_empty() { item.name.clone() } else { meta.preview.name.clone() };
+    match sn_stremio::library::first_episode(&meta.videos) {
+        Some(v) => {
+            let address = msg::core_episode_ordinal(i64::from(v.season.unwrap_or(0)), i64::from(v.episode.unwrap_or(0)));
+            let title = if v.title.trim().is_empty() { address } else { format!("{address} {}", v.title) };
+            VideoRef { kind: item.kind.clone(), video_id: v.id.clone(), show, title, resume_ms: 0 }
+        }
+        None => VideoRef { kind: item.kind.clone(), video_id: item.id.clone(), show, title: String::new(), resume_ms: 0 },
     }
 }
 
 /// The table for `mode`, from what the store holds.
 pub fn build(mode: &Mode, meta: Option<&MetaState>, streams: Option<&[StreamGroup]>) -> Built {
     let mut out = Built::default();
+    if let Mode::Resume(_) = mode {
+        // until the meta names the episode: its state, as the episodes section reads it
+        let note = match meta {
+            Some(MetaState::Failed(e)) => msg::app_detail_episodes_failed(&e.to_string()),
+            Some(MetaState::NoSource) => msg::app_detail_no_meta().to_string(),
+            _ => msg::app_detail_episodes_loading().to_string(),
+        };
+        let mut s = Section::new(msg::app_detail_episodes());
+        out.note(&mut s, note);
+        out.sections.push(s);
+        return out;
+    }
     if let Mode::Item(item) = mode {
         if Mode::lists_episodes(&item.kind) {
             match meta {
@@ -161,7 +192,7 @@ pub fn build(mode: &Mode, meta: Option<&MetaState>, streams: Option<&[StreamGrou
 /// The play title for `mode`: what the player page shows.
 fn play_title(mode: &Mode) -> String {
     match mode {
-        Mode::Item(i) => i.name.clone(),
+        Mode::Item(i) | Mode::Resume(i) => i.name.clone(),
         Mode::Video(v) if v.title.is_empty() => v.show.clone(),
         Mode::Video(v) => format!("{} \u{2014} {}", v.show, v.title),
     }
@@ -187,7 +218,8 @@ fn stream_sections(out: &mut Built, groups: &[StreamGroup], mode: &Mode) {
                     let mut row = Row::new(label).server_label().detail(one_line(&detail)).server_detail();
                     let action = match stream.playable() {
                         Some(Playable::Http { url, headers }) => {
-                            Some(Action::Play(PlayRequest { url, headers, title: play_title(mode) }))
+                            let start_ms = if let Mode::Video(v) = mode { v.resume_ms } else { 0 };
+                            Some(Action::Play(PlayRequest { url, headers, title: play_title(mode), start_ms }))
                         }
                         _ => {
                             row = row.value(msg::app_detail_not_playable()).dim(true);
@@ -230,6 +262,7 @@ fn episodes(out: &mut Built, item: &ItemRef, meta: &Meta) {
                 video_id: v.id.clone(),
                 show: show.clone(),
                 title: if v.title.trim().is_empty() { address } else { format!("{address} {title}") },
+                resume_ms: 0,
             });
             out.row(&mut s, row, EPISODE_KEY + (i as u32).min(0x00FF_FFFF), Some(action));
         }
@@ -268,9 +301,14 @@ impl DetailScreen {
         Self::new(entry, Mode::Video(video))
     }
 
+    /// A resume with no recorded video: the first episode's streams once the meta names it.
+    pub fn resume(entry: EntryId, item: ItemRef) -> Self {
+        Self::new(entry, Mode::Resume(item))
+    }
+
     fn new(entry: EntryId, mode: Mode) -> Self {
         let (title, crumb) = match &mode {
-            Mode::Item(i) => (i.name.clone(), msg::app_nav_home().to_string()),
+            Mode::Item(i) | Mode::Resume(i) => (i.name.clone(), msg::app_nav_home().to_string()),
             Mode::Video(v) => (if v.title.is_empty() { v.show.clone() } else { v.title.clone() }, v.show.clone()),
         };
         let mut table = TableView::new();
@@ -343,6 +381,20 @@ impl DetailScreen {
     /// Rebuild the table from the store when it moved; keep the focused row by identity.
     fn sync(&mut self, cx: &Cx<'_, Bundle>, fx: &mut Effects<'_, Bundle>) {
         let store = cx.views.detail;
+        // a resume's meta landed: this is now the first episode's Streams page
+        if let (Mode::Resume(item), Some(MetaState::Ready(m))) = (&self.mode, self.meta.as_ref().and_then(|k| store.meta(k))) {
+            if !self.closed {
+                let video = resume_video(item, m);
+                let key = StreamKey { kind: video.kind.clone(), video_id: video.video_id.clone() };
+                fx.push(Fx::App(AppFx::Detail(DetailCmd::OpenStreams(key.clone()))));
+                self.streams = Some(key);
+                if !video.title.is_empty() {
+                    self.title = video.title.clone();
+                }
+                self.mode = Mode::Video(video);
+                self.built_gen = None;
+            }
+        }
         // a series whose meta lists no video plays its own id
         let no_videos = matches!(self.meta.as_ref().and_then(|k| store.meta(k)), Some(MetaState::Ready(m)) if m.videos.is_empty());
         if no_videos && self.streams.is_none() && !self.closed {
@@ -461,6 +513,7 @@ impl Screen<Bundle> for DetailScreen {
         match self.mode {
             Mode::Item(_) => word::DETAIL,
             Mode::Video(_) => word::STREAMS,
+            Mode::Resume(_) => word::RESUME,
         }
     }
     fn state(&self) -> &dyn LogicalState {

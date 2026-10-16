@@ -160,8 +160,9 @@ fn a_header_line_that_would_split_the_request_is_refused() {
 /// **A credential never rides a redirect.** libcurl re-sends a custom header line to whatever
 /// host a `Location:` names (it strips only `Authorization` and `Cookie`, and the television's 7.53.1
 /// does not strip even those across hosts), so a request that follows redirects may carry no header of
-/// the caller's at all: it is refused whole, nothing dialled. The same block on a redirect-free
-/// request is sent.
+/// the caller's but the capability ones (`headers::FORWARDABLE`: `Accept`, `Accept-Language`, which
+/// say nothing about who asks — an artwork request's WebP-first `Accept`): anything else is refused
+/// whole, nothing dialled, even beside an `Accept`. The same block on a redirect-free request is sent.
 #[test]
 fn a_request_that_follows_redirects_is_refused_when_it_carries_a_caller_header() {
     let _serial = sn_base::testlock::serial();
@@ -169,7 +170,10 @@ fn a_request_that_follows_redirects_is_refused_when_it_carries_a_caller_header()
     install_wire_user_agent();
     let token = vec!["X-Api-Key: t".to_string()];
     assert!(refused_without_dialling(&token, true));
-    assert!(refused_without_dialling(&["Accept: application/json".to_string()], true));
+    assert!(refused_without_dialling(&["Accept: image/webp".to_string(), "X-Api-Key: t".to_string()], true));
+    // The allowed case (an `Accept` alone, followed across a 302 and sent on both hops) is
+    // graded end to end by the app's `fetch::tests::an_artwork_request_asks_for_webp_and_still_follows_a_redirect`.
+    assert!(headers::all_forwardable(&["Accept: image/webp,image/*;q=0.8"]));
     let got = sent("GET", &token, None);
     assert!(got.contains("X-Api-Key: t"), "{got:?}");
 }

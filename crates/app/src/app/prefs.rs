@@ -1,6 +1,7 @@
 //! **The settings file** — the viewer's preferences, kept across launches: the subtitle size and
-//! position (published to the player through `sn_media::prefs`), the search addon filter and the
-//! recent searches.
+//! position (published to the player through `sn_media::prefs`) and the recent searches. (The
+//! search addon filter is THE addons store's, persisted beside the account's other files,
+//! `account::SEARCH_FILE`; a `search_disabled` an earlier build wrote here is ignored.)
 //!
 //! One small JSON document, `settings.json` under the persistent state root. It is read ONCE at
 //! boot, before the frame loop (the boot's synchronous loads run outside the frame scope), and
@@ -19,7 +20,6 @@ use sn_base::eventlog::log;
 use sn_media::prefs::{SubtitlePosition, SubtitleSize};
 use sn_screens::stores::search::SearchStore;
 use sn_screens::stores::settings::{Pref, SettingsStore};
-use sn_stremio::search::AddonFilter;
 
 /// The file's shape. Field names are a file-format contract.
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq)]
@@ -28,9 +28,6 @@ struct File {
     subtitle_size: SubtitleSize,
     #[serde(default)]
     subtitle_position: SubtitlePosition,
-    /// Addon manifest ids the search leaves out.
-    #[serde(default)]
-    search_disabled: Vec<String>,
     /// Newest first.
     #[serde(default)]
     recent_searches: Vec<String>,
@@ -66,7 +63,7 @@ pub fn load(path: &Path) -> Loaded {
 fn of(file: File) -> Loaded {
     Loaded {
         settings: SettingsStore::with(file.subtitle_size.index(), file.subtitle_position.index()),
-        search: SearchStore::new(AddonFilter { disabled: file.search_disabled.into_iter().collect() }, file.recent_searches),
+        search: SearchStore::new(file.recent_searches),
     }
 }
 
@@ -75,7 +72,6 @@ pub fn snapshot(settings: &SettingsStore, search: &SearchStore) -> Vec<u8> {
     let file = File {
         subtitle_size: SubtitleSize::from_index(settings.get(Pref::SubtitleSize)),
         subtitle_position: SubtitlePosition::from_index(settings.get(Pref::SubtitlePosition)),
-        search_disabled: search.filter().disabled.iter().cloned().collect(),
         recent_searches: search.recents().to_vec(),
     };
     serde_json::to_vec_pretty(&file).unwrap_or_default()
@@ -122,22 +118,23 @@ mod tests {
     }
 
     #[test]
-    fn the_file_round_trips_the_filter_the_recents_and_the_subtitles() {
+    fn the_file_round_trips_the_recents_and_the_subtitles() {
         let dir = sn_base::testscratch::process_dir("settings-file");
         let path = dir.join("settings.json");
         let mut settings = SettingsStore::default();
         settings.set(Pref::SubtitleSize, 3);
         settings.set(Pref::SubtitlePosition, 2);
         let mut search = SearchStore::default();
-        search.toggle_addon("com.linvo.cinemeta", &[]);
         search.remember("batman");
         search.remember("news");
         write_atomic(&path, &snapshot(&settings, &search)).unwrap();
         let back = load(&path);
         assert_eq!(back.settings.get(Pref::SubtitleSize), 3);
         assert_eq!(back.settings.get(Pref::SubtitlePosition), 2);
-        assert!(!back.search.filter().allows("com.linvo.cinemeta"), "the filter is persisted");
         assert_eq!(back.search.recents(), ["news", "batman"]);
+        // an earlier build's filter in this file is read past (the addons store holds it now)
+        std::fs::write(&path, br#"{"search_disabled":["x"],"recent_searches":["old"]}"#).unwrap();
+        assert_eq!(load(&path).search.recents(), ["old"]);
     }
 
     #[test]

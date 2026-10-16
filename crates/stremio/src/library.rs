@@ -11,6 +11,13 @@
 //!
 //! A series with none of those has no target until its meta is loaded and the first episode is
 //! chosen ([`first_episode`]).
+//!
+//! **Adding an item** ([`add_to_library`]) is stremio-core's `AddToLibrary` over the wire: the
+//! entry the account already holds (a removed or temporary one keeps its play state and its
+//! creation time) or a fresh one shaped like core's `LibraryItem::from(&MetaItemPreview)`, with
+//! `removed` and `temp` cleared and `_mtime` now, written back with `datastorePut`
+//! (`{"authKey", "collection": "libraryItem", "changes": [item]}`, answered by core's
+//! `SuccessResponse`).
 
 use crate::account::ApiError;
 use crate::types::Video;
@@ -37,6 +44,9 @@ pub struct LibraryItem {
     pub state: PlayState,
     #[serde(default)]
     pub behavior_hints: ItemHints,
+    /// When the entry last changed (RFC 3339).
+    #[serde(rename = "_mtime", default, deserialize_with = "blank_is_none")]
+    pub mtime: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -51,6 +61,9 @@ pub struct PlayState {
     pub video_id: Option<String>,
     #[serde(rename = "timesWatched", default)]
     pub times_watched: u32,
+    /// When it was last played (an RFC 3339 time, which orders as text), if ever.
+    #[serde(rename = "lastWatched", default, deserialize_with = "blank_is_none")]
+    pub last_watched: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -95,6 +108,11 @@ impl LibraryItem {
         Some(ResumeTarget { kind: self.kind.clone(), video_id, offset_ms })
     }
 
+    /// What orders Continue Watching, most recent first: the last play, else the last change.
+    pub fn recency(&self) -> &str {
+        self.state.last_watched.as_deref().or(self.mtime.as_deref()).unwrap_or("")
+    }
+
     /// Progress through the last-played video, 0.0–1.0, for a progress bar.
     pub fn progress(&self) -> f32 {
         if self.state.duration == 0 {
@@ -129,6 +147,97 @@ pub fn fetch_library(fetch: &dyn Fetch, auth_key: &str) -> Result<Vec<LibraryIte
         .filter_map(|v| serde_json::from_value::<LibraryItem>(v).ok())
         .filter(|i| !i.removed)
         .collect())
+}
+
+/// What an item menu knows of the item it adds: the catalog's preview.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NewEntry {
+    pub id: String,
+    pub kind: String,
+    pub name: String,
+    pub poster: Option<String>,
+}
+
+/// The entry `datastorePut` is given for `entry`: `existing` (the account's raw entry, every field
+/// it holds kept) with `removed`/`temp` cleared and `_mtime` set to `now`, or a new entry in core's
+/// shape. `now` is an RFC 3339 time ([`rfc3339_ms`]).
+pub fn added_entry(existing: Option<serde_json::Value>, entry: &NewEntry, now: &str) -> serde_json::Value {
+    match existing {
+        Some(serde_json::Value::Object(mut item)) => {
+            item.insert("removed".into(), false.into());
+            item.insert("temp".into(), false.into());
+            item.insert("_mtime".into(), now.into());
+            serde_json::Value::Object(item)
+        }
+        _ => json!({
+            "_id": entry.id,
+            "name": entry.name,
+            "type": entry.kind,
+            "poster": entry.poster,
+            "posterShape": "poster",
+            "removed": false,
+            "temp": false,
+            "_ctime": now,
+            "_mtime": now,
+            "state": {
+                "lastWatched": now,
+                "timeWatched": 0,
+                "timeOffset": 0,
+                "overallTimeWatched": 0,
+                "timesWatched": 0,
+                "flaggedWatched": 0,
+                "duration": 0,
+                "video_id": null,
+                "watched": null,
+                "noNotif": false
+            },
+            "behaviorHints": {}
+        }),
+    }
+}
+
+/// Add `entry` to the account's library (see the module docs). `now` is an RFC 3339 time.
+pub fn add_to_library(fetch: &dyn Fetch, auth_key: &str, entry: &NewEntry, now: &str) -> Result<(), ApiError> {
+    let headers = [("Content-Type".to_string(), "application/json".to_string())];
+    let raw = fetch.post(
+        &format!("{}/api/datastoreGet", crate::account::API),
+        &headers,
+        json!({"authKey": auth_key, "collection": "libraryItem", "ids": [entry.id], "all": false}).to_string().as_bytes(),
+    )?;
+    let existing: Vec<serde_json::Value> = crate::account::parse(&raw)?;
+    let existing = existing.into_iter().find(|v| v.get("_id").and_then(|i| i.as_str()) == Some(entry.id.as_str()));
+    let item = added_entry(existing, entry, now);
+    let raw = fetch.post(
+        &format!("{}/api/datastorePut", crate::account::API),
+        &headers,
+        json!({"authKey": auth_key, "collection": "libraryItem", "changes": [item]}).to_string().as_bytes(),
+    )?;
+    let _: serde_json::Value = crate::account::parse(&raw)?;
+    Ok(())
+}
+
+/// `unix_ms` as RFC 3339 in UTC with milliseconds (`2026-10-16T09:05:00.250Z`), the form core's
+/// `DateTime<Utc>` reads.
+pub fn rfc3339_ms(unix_ms: u64) -> String {
+    let secs = unix_ms / 1000;
+    let (days, rem) = (secs / 86_400, secs % 86_400);
+    // Howard Hinnant's civil_from_days
+    let z = days as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{:03}Z",
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60,
+        unix_ms % 1000
+    )
 }
 
 fn blank_is_none<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
@@ -192,5 +301,77 @@ mod tests {
         assert_eq!(first_episode(&videos).unwrap().id, "s:1:1");
         let only_specials: Vec<Video> = serde_json::from_str(r#"[{"id":"s:0:1","season":0,"episode":1}]"#).unwrap();
         assert_eq!(first_episode(&only_specials).unwrap().id, "s:0:1");
+    }
+
+    #[test]
+    fn the_clock_text_is_rfc3339_utc() {
+        assert_eq!(rfc3339_ms(0), "1970-01-01T00:00:00.000Z");
+        assert_eq!(rfc3339_ms(951_782_400_000), "2000-02-29T00:00:00.000Z", "a leap day");
+        assert_eq!(rfc3339_ms(1_792_141_500_250), "2026-10-16T09:05:00.250Z");
+    }
+
+    fn entry() -> NewEntry {
+        NewEntry { id: "tt1".into(), kind: "movie".into(), name: "Film".into(), poster: Some("https://p/x.jpg".into()) }
+    }
+
+    #[test]
+    fn a_new_entry_has_core_s_shape_and_reads_back_as_a_library_item() {
+        let v = added_entry(None, &entry(), "2026-10-16T09:05:00.250Z");
+        let i: LibraryItem = serde_json::from_value(v.clone()).unwrap();
+        assert_eq!((i.id.as_str(), i.kind.as_str(), i.removed, i.temp), ("tt1", "movie", false, false));
+        assert_eq!(i.poster.as_deref(), Some("https://p/x.jpg"));
+        assert_eq!(v["_ctime"], "2026-10-16T09:05:00.250Z");
+        assert_eq!(v["state"]["timeOffset"], 0);
+        assert!(!i.is_continue_watching());
+    }
+
+    #[test]
+    fn re_adding_a_removed_entry_keeps_its_play_state_and_fields() {
+        let old = serde_json::json!({"_id":"tt1","type":"movie","name":"Film","removed":true,"temp":true,
+            "_ctime":"2020-01-01T00:00:00Z","_mtime":"2020-01-02T00:00:00Z","state":{"timeOffset":5000,"duration":9000},"x":1});
+        let v = added_entry(Some(old), &entry(), "2026-10-16T09:05:00.250Z");
+        assert_eq!(v["removed"], false);
+        assert_eq!(v["temp"], false);
+        assert_eq!(v["_mtime"], "2026-10-16T09:05:00.250Z");
+        assert_eq!(v["_ctime"], "2020-01-01T00:00:00Z");
+        assert_eq!(v["state"]["timeOffset"], 5000);
+        assert_eq!(v["x"], 1, "a field this client does not know is written back as it was");
+    }
+
+    /// Answers each API path from a table and records every body.
+    struct Api {
+        answers: std::collections::HashMap<&'static str, &'static str>,
+        bodies: std::cell::RefCell<Vec<(String, serde_json::Value)>>,
+    }
+    impl Fetch for Api {
+        fn get(&self, _url: &str, _h: &[(String, String)]) -> Result<Vec<u8>, crate::FetchError> {
+            Err(crate::FetchError::Status(405))
+        }
+        fn post(&self, url: &str, _h: &[(String, String)], body: &[u8]) -> Result<Vec<u8>, crate::FetchError> {
+            let path = url.rsplit('/').next().unwrap_or("").to_string();
+            self.bodies.borrow_mut().push((path.clone(), serde_json::from_slice(body).unwrap()));
+            self.answers.get(path.as_str()).map(|a| a.as_bytes().to_vec()).ok_or(crate::FetchError::Status(404))
+        }
+    }
+
+    #[test]
+    fn adding_reads_the_entry_then_puts_it_with_the_key() {
+        let api = Api {
+            answers: [("datastoreGet", r#"{"result":[]}"#), ("datastorePut", r#"{"result":{"success":true}}"#)].into(),
+            bodies: Default::default(),
+        };
+        add_to_library(&api, "KEY", &entry(), "2026-10-16T09:05:00.250Z").unwrap();
+        let bodies = api.bodies.borrow();
+        assert_eq!(bodies[0].0, "datastoreGet");
+        assert_eq!(bodies[0].1["ids"], serde_json::json!(["tt1"]));
+        assert_eq!(bodies[1].0, "datastorePut");
+        assert_eq!(bodies[1].1["authKey"], "KEY");
+        assert_eq!(bodies[1].1["collection"], "libraryItem");
+        assert_eq!(bodies[1].1["changes"][0]["_id"], "tt1");
+        let refused = Api {
+            answers: [("datastoreGet", r#"{"result":[]}"#), ("datastorePut", r#"{"error":{"code":1,"message":"Session does not exist"}}"#)].into(),
+            bodies: Default::default(),
+        };
+        assert!(add_to_library(&refused, "KEY", &entry(), "t").is_err(), "an API refusal is a failure");
     }
 }

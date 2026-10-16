@@ -16,9 +16,12 @@ use sn_machine::machine::{
 };
 use sn_ui::screen::{Mounter, ReturnState, Screen};
 
+use crate::stores::account::{AccountCmd, AccountStore};
+use crate::stores::addons::AddonsStore;
 use crate::stores::catalog::{CatalogStore, RowId};
 use crate::stores::detail::{DetailStore, MetaKey, StreamKey};
 use crate::stores::grid::{GridKey, GridStore};
+use crate::stores::library::LibraryStore;
 use crate::stores::search::SearchStore;
 use crate::stores::settings::{Pref, SettingsStore};
 
@@ -50,6 +53,9 @@ pub mod word {
     pub const DETAIL: &str = "detail";
     pub const STREAMS: &str = "streams";
     pub const PLAYER: &str = "player";
+    pub const SIGN_IN: &str = "signin";
+    pub const ADDON: &str = "addon";
+    pub const RESUME: &str = "resume";
 }
 
 /// An item a catalog showed, as a Detail page opens it.
@@ -71,6 +77,9 @@ pub struct VideoRef {
     pub show: String,
     /// The page's title (the episode's own title, or its address). Server text.
     pub title: String,
+    /// Where a play from this page starts, in milliseconds (a Continue Watching resume); 0 from
+    /// the beginning.
+    pub resume_ms: u64,
 }
 
 /// One catalog of one addon, opened as a full paginated grid: a search row's MORE. The addon is
@@ -127,8 +136,10 @@ impl SettingsPage {
 /// A popover menu's content (`crate::menu`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MenuKind {
-    /// A card's item menu: Open, and Add to library (disabled until signed in).
-    Item(ItemRef),
+    /// A card's item menu: Open, and Add to library (`LibraryCmd::Add`; disabled while signed
+    /// out). `poster` is the
+    /// card's artwork, which a new library entry carries.
+    Item { item: ItemRef, poster: Option<String> },
     /// Pick one of `options` (the current one checked); the pick goes back to the presenting page
     /// as [`AppMsg::Chose`] with `target`. Options are server text (catalog names, genres).
     Choice { title: String, options: Vec<String>, current: usize, target: ChoiceTarget },
@@ -178,9 +189,9 @@ pub enum AppArg {
     Search,
     /// The installed addons' `tv` and `channel` catalogs, by genre.
     LiveTv,
-    /// The user's Stremio library. Until sign-in lands it says how to get one.
+    /// The account's library, by type (signed out: how to get one).
     Library,
-    /// The installed addons.
+    /// The addons in use, and the account they come from.
     Addons,
     /// The Settings root.
     Settings,
@@ -196,6 +207,13 @@ pub enum AppArg {
     Streams(VideoRef),
     /// The playing video, on the hardware plane. The title is server text.
     Player(String),
+    /// Sign in to a Stremio account (the device link, or email and password).
+    SignIn,
+    /// One addon: what it serves, its catalogs, its search switch. The addon's manifest id.
+    Addon(String),
+    /// A Continue Watching item with no recorded video: its meta is read, the first episode
+    /// chosen, and that episode's streams shown.
+    Resume(ItemRef),
 }
 
 impl ScreenArg for AppArg {
@@ -221,6 +239,9 @@ impl ScreenArg for AppArg {
             AppArg::SettingsPage(_) => 10,
             AppArg::Catalog(_) => 11,
             AppArg::Menu(_) => 12,
+            AppArg::SignIn => 13,
+            AppArg::Addon(_) => 14,
+            AppArg::Resume(_) => 15,
         })
     }
     fn title(&self) -> Option<&str> {
@@ -241,10 +262,19 @@ impl LogicalState for AppArg {
                 c.u32(1).str(&i.kind).str(&i.id).str(&i.name);
             }
             AppArg::Streams(v) => {
-                c.u32(2).str(&v.kind).str(&v.video_id).str(&v.show).str(&v.title);
+                c.u32(2).str(&v.kind).str(&v.video_id).str(&v.show).str(&v.title).u64(v.resume_ms);
             }
             AppArg::Player(t) => {
                 c.u32(3).str(t);
+            }
+            AppArg::SignIn => {
+                c.u32(12);
+            }
+            AppArg::Addon(id) => {
+                c.u32(13).str(id);
+            }
+            AppArg::Resume(i) => {
+                c.u32(14).str(&i.kind).str(&i.id).str(&i.name);
             }
             AppArg::Search => {
                 c.u32(4);
@@ -278,8 +308,11 @@ impl LogicalState for AppArg {
                     c.u32(v);
                 }
                 match &m.kind {
-                    MenuKind::Item(i) => {
+                    MenuKind::Item { item: i, poster } => {
                         c.u32(0).str(&i.kind).str(&i.id).str(&i.name);
+                        c.option(poster.as_ref(), |c, p| {
+                            c.str(p);
+                        });
                     }
                     MenuKind::Choice { title, options, current, target } => {
                         c.u32(1).str(title).u32(*current as u32).u32(*target as u32).seq(options.len());
@@ -305,8 +338,28 @@ impl LogicalState for AppArg {
             AppArg::Detail(_) => word::DETAIL,
             AppArg::Streams(_) => word::STREAMS,
             AppArg::Player(_) => word::PLAYER,
+            AppArg::SignIn => word::SIGN_IN,
+            AppArg::Addon(_) => word::ADDON,
+            AppArg::Resume(_) => word::RESUME,
         });
     }
+}
+
+/// A page's word to the addons store.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AddonsCmd {
+    /// Switch search off (or on again) for this addon id.
+    ToggleSearch(String),
+    /// Ask the account for its collection again.
+    Retry,
+}
+
+/// A page's word to the library store.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LibraryCmd {
+    Reload,
+    /// The item menu's *Add to library*.
+    Add(sn_stremio::library::NewEntry),
 }
 
 /// A Home page's word to the catalog store.
@@ -373,12 +426,14 @@ pub struct PlayRequest {
     pub headers: Vec<(String, String)>,
     /// The player page's title. Server text.
     pub title: String,
+    /// Where to start, in milliseconds (a resume); 0 from the beginning.
+    pub start_ms: u64,
 }
 
 impl std::fmt::Debug for PlayRequest {
     /// Never the URL or a header value: an addon may put a credential in either.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PlayRequest").field("headers", &self.headers.len()).finish()
+        f.debug_struct("PlayRequest").field("headers", &self.headers.len()).field("start_ms", &self.start_ms).finish()
     }
 }
 
@@ -402,6 +457,9 @@ pub enum AppFx {
     /// Start a playback; the application pushes the player page when the start is accepted.
     Play(PlayRequest),
     Player(PlayerCmd),
+    Account(AccountCmd),
+    Addons(AddonsCmd),
+    Library(LibraryCmd),
 }
 
 /// The application's payloads to a screen. Every store landing reaches a screen as its store's
@@ -443,8 +501,8 @@ impl PartialEq for PlaybackView {
     }
 }
 
-/// What the pages know of the account. Signed out until the sign-in work lands; a page that
-/// offers an account action (the item menu's Add to library) reads it here.
+/// Whether an account is signed in, derived from `Views::account`. A page that offers an account
+/// action (the item menu's Add to library) reads it here.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SessionView {
     pub signed_in: bool,
@@ -456,17 +514,23 @@ pub struct Views<'a> {
     pub catalog: &'a CatalogStore,
     pub detail: &'a DetailStore,
     pub playback: &'a PlaybackView,
+    pub account: &'a AccountStore,
+    /// Which addons are in use (`AddonsStore::in_use`) and search's per-addon switch
+    /// (`AddonsStore::filter`).
+    pub addons: &'a AddonsStore,
+    pub library: &'a LibraryStore,
     pub search: &'a SearchStore,
     pub grid: &'a GridStore,
     pub settings: &'a SettingsStore,
+    /// Signed in or not (the item menu's Add to library reads it); the account is `account`.
     pub session: SessionView,
 }
 
 impl<'a> Views<'a> {
-    /// **The installed addons every page plans against** — Home's rows come from them, Search
-    /// asks their searchable catalogs, Live TV lists their `tv`/`channel` catalogs. ONE accessor,
-    /// so the sign-in work switches every page to the user's own collection by changing what this
-    /// answers (the application's `Bridge::addons` is its rig-side twin).
+    /// **The addons the app uses**, manifests loaded, in install order — Home's rows, Search's
+    /// catalogs and chips, Live TV's `tv`/`channel` catalogs, the grids, a Detail page's meta and
+    /// streams all plan against it. Signed in, the account's collection; signed out, the defaults
+    /// (`AddonsStore::in_use` says which). The application's `Bridge::addons` is its rig-side twin.
     pub fn addons(&self) -> &'a [sn_stremio::manifest::Addon] {
         self.catalog.addons()
     }
@@ -504,15 +568,24 @@ impl Mounter<Bundle> for AppMounter {
             AppArg::Home => Box::new(crate::home::HomeScreen::new(entry)),
             AppArg::Search => Box::new(crate::search::SearchScreen::new(entry, id, cx.views.search)),
             AppArg::LiveTv => Box::new(crate::livetv::LiveTvScreen::new(entry)),
-            AppArg::Library => Box::new(crate::library::LibraryScreen::new(entry)),
-            AppArg::Addons => Box::new(crate::addons::AddonsScreen::new(entry)),
             AppArg::Settings => Box::new(crate::settings::SettingsScreen::root(entry)),
             AppArg::SettingsPage(page) => Box::new(crate::settings::SettingsScreen::page(entry, *page)),
             AppArg::Catalog(r) => Box::new(crate::grid::GridScreen::new(entry, r.clone())),
-            AppArg::Menu(m) => Box::new(crate::menu::MenuScreen::new(entry, m.clone(), cx.views.session)),
+            AppArg::Menu(m) => {
+                let add = match &m.kind {
+                    MenuKind::Item { item, .. } => cx.views.library.add_state(&item.id),
+                    MenuKind::Choice { .. } => crate::stores::library::AddState::Absent,
+                };
+                Box::new(crate::menu::MenuScreen::new(entry, m.clone(), cx.views.session, add))
+            }
             AppArg::Detail(item) => Box::new(crate::detail::DetailScreen::item(entry, item.clone())),
             AppArg::Streams(video) => Box::new(crate::detail::DetailScreen::video(entry, video.clone())),
             AppArg::Player(title) => Box::new(crate::player::PlayerScreen::new(entry, title.clone())),
+            AppArg::SignIn => Box::new(crate::signin::SignInScreen::new(entry)),
+            AppArg::Addons => Box::new(crate::addons::AddonsScreen::list(entry)),
+            AppArg::Addon(id) => Box::new(crate::addons::AddonsScreen::addon(entry, id.clone())),
+            AppArg::Library => Box::new(crate::library::LibraryScreen::new(entry)),
+            AppArg::Resume(item) => Box::new(crate::detail::DetailScreen::resume(entry, item.clone())),
         }
     }
 }

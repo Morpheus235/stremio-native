@@ -642,6 +642,34 @@ pub fn image_cache_candidates() -> Vec<PathBuf> {
     v
 }
 
+/// Where the app's small private files live (the account's addon collection, the per-addon search
+/// switches, the first-run sign-in choice), best first: the image cache's search order as sibling
+/// `-data` directories, then the runtime root last (writable on every jail, but swept on reboot).
+/// Every one is created owner-only: an addon's transport URL can carry the user's configuration.
+/// Test builds resolve under the per-process persistent-state scratch root instead.
+pub fn private_data_candidates() -> Vec<PathBuf> {
+    #[cfg(any(test, feature = "test-support"))]
+    {
+        return vec![persistent_state_root().join("data")];
+    }
+    #[cfg(not(any(test, feature = "test-support")))]
+    {
+        let mut v = Vec::new();
+        if ENV_STEERABLE {
+            v.push(in_runtime_dir("data"));
+        }
+        let id = app_id();
+        v.extend([
+            PathBuf::from(format!("/media/developer/{id}-data")),
+            PathBuf::from(format!("/media/internal/.{id}-data")),
+            PathBuf::from(format!("/media/developer/temp/{id}-data")),
+            in_app_dir("data"),
+            in_runtime_dir("data"),
+        ]);
+        v
+    }
+}
+
 /// Whether `imgcache` must create this candidate owner-only: it sits directly in the world-writable
 /// `/media/developer/temp`. The other candidates keep the mode they are given.
 pub fn image_cache_dir_is_private(path: &Path) -> bool {

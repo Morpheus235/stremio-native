@@ -34,6 +34,11 @@ pub fn item_ref(item: &MetaPreview) -> ItemRef {
     ItemRef { kind: item.kind.clone(), id: item.id.clone(), name: item.name.clone() }
 }
 
+/// A card's item menu content: the item, and its poster for a new library entry.
+pub fn item_menu(item: &MetaPreview) -> crate::registry::MenuKind {
+    crate::registry::MenuKind::Item { item: item_ref(item), poster: item.poster.clone() }
+}
+
 pub struct ItemCards<'a> {
     pub items: &'a [MetaPreview],
     pub base: u32,

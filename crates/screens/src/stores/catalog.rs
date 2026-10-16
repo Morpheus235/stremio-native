@@ -85,6 +85,11 @@ pub enum RowStatus {
 }
 
 impl Row {
+    /// What names the row across install lists: its addon's base, its catalog's type and id.
+    pub fn identity(&self) -> (&str, &str, &str) {
+        (&self.pager.base, &self.pager.catalog.kind, &self.pager.catalog.id)
+    }
+
     pub fn kind(&self) -> &str {
         &self.pager.catalog.kind
     }
@@ -151,9 +156,57 @@ pub struct CatalogStore {
     /// The rows the screen shows, as indices into [`Self::rows`].
     view: Range<usize>,
     gen: u32,
+    /// Moves when the install list is replaced: every `RowId` before it names nothing now.
+    epoch: u32,
 }
 
 impl CatalogStore {
+    /// A store over addons whose manifests are already known (the account's collection carries
+    /// them), in install order: rows exist at once and nothing but their pages is asked.
+    pub fn from_addons(addons: Vec<Addon>) -> Self {
+        let mut s = Self::new(Vec::<String>::new());
+        s.sources = addons
+            .into_iter()
+            .map(|a| Source { transport_url: format!("{}/manifest.json", a.base), state: SourceState::Ready(a) })
+            .collect();
+        s.rebuild();
+        s
+    }
+
+    /// Replace the install list (the addons in use changed). A row of the new list that the old one
+    /// also had (the same addon base and catalog, [`Row::identity`]) keeps what it loaded, so a
+    /// refresh that changes nothing a row shows does not reload it; everything else starts over.
+    /// Requests in flight belong to the old list ([`Self::epoch`] moves): the application drops
+    /// their landings. The window on screen carries over.
+    pub fn replace(&mut self, mut next: CatalogStore) {
+        let view = self.view.clone();
+        let epoch = self.epoch.wrapping_add(1);
+        let gen = self.gen.wrapping_add(1);
+        let mut old: Vec<Row> = std::mem::take(&mut self.rows);
+        for row in &mut next.rows {
+            if let Some(at) = old.iter().position(|o| o.identity() == row.identity() && !o.items().is_empty()) {
+                let kept = old.swap_remove(at);
+                if !matches!(kept.pager.more, More::Failed { .. }) {
+                    row.pager = kept.pager;
+                }
+            }
+        }
+        *self = next;
+        self.epoch = epoch;
+        self.gen = gen;
+        self.view = 0..0;
+        self.set_view(view);
+    }
+
+    /// The row with this identity, in the current list.
+    pub fn row_by_identity(&self, identity: (&str, &str, &str)) -> Option<&Row> {
+        self.rows.iter().find(|r| r.identity() == identity)
+    }
+
+    /// Which install list the rows belong to (see [`Self::replace`]).
+    pub fn epoch(&self) -> u32 {
+        self.epoch
+    }
     /// A store over these transport URLs, in install order. Nothing is asked until [`take_jobs`].
     ///
     /// [`take_jobs`]: Self::take_jobs
@@ -168,12 +221,22 @@ impl CatalogStore {
             sched: Scheduler::new(PAGE_SLOTS, LOOKAHEAD_ROWS),
             view: 0..0,
             gen: 0,
+            epoch: 0,
         }
     }
 
     /// Signed out: the addons every Stremio install starts with (Cinemeta).
     pub fn signed_out() -> Self {
-        Self::new(sn_stremio::account::DEFAULT_ADDONS.iter().copied())
+        Self::for_in_use(super::addons::AddonsStore::new().in_use())
+    }
+
+    /// The store over the addons in use (`AddonsStore::in_use`, the one answer to which addons
+    /// the app uses): the defaults' manifests to fetch, or the collection's, already known.
+    pub fn for_in_use(in_use: super::addons::InUse<'_>) -> Self {
+        match in_use {
+            super::addons::InUse::Defaults(urls) => Self::new(urls.iter().copied()),
+            super::addons::InUse::Installed(addons) => Self::from_addons(addons.to_vec()),
+        }
     }
 
     /// Moves whenever anything a screen reads here changes.
@@ -558,6 +621,23 @@ mod tests {
         s.set_view(0..2);
         let order: Vec<RowId> = page_jobs(&s.take_jobs()).iter().map(|(r, _)| *r).collect();
         assert!(order.contains(&rid(0)), "the failed row is asked again when it is back in view: {order:?}");
+    }
+
+    #[test]
+    fn a_replaced_install_list_keeps_the_rows_it_shares_and_moves_its_epoch() {
+        let mut s = many_rows(3);
+        s.take_jobs();
+        s.land(Landing::Page { row: rid(0), result: Ok(page(0..20)) });
+        let epoch = s.epoch();
+        let kept = s.sources()[0].state.clone();
+        let SourceState::Ready(a0) = kept else { panic!() };
+        // the account's collection: a new addon first, then the first of the old list
+        let fresh: Manifest = serde_json::from_str(LIVE).unwrap();
+        s.replace(CatalogStore::from_addons(vec![Addon::new(LIVE_URL, fresh), a0]));
+        assert_ne!(s.epoch(), epoch, "landings planned against the old list are dropped by the epoch");
+        let titles: Vec<(&str, usize)> = s.rows().iter().map(|r| (r.addon_name.as_str(), r.items().len())).collect();
+        assert_eq!(titles, [("Live TV", 0), ("A0", 20)], "the shared row keeps what it loaded, at its new place");
+        assert!(s.take_jobs().iter().all(|j| !matches!(j, Job::Manifest { .. })), "a collection's manifests are not fetched again");
     }
 
     #[test]

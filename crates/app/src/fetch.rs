@@ -56,11 +56,26 @@ pub struct NetFetch<'a> {
     profile: Profile,
     cancel: Option<Cancel>,
     body_max: usize,
+    /// Headers the APPLICATION writes (never an addon's), sent on every request and safe to send
+    /// on to whatever host a redirect names.
+    own: &'static [(&'static str, &'static str)],
 }
+
+/// What an artwork request says it accepts: WebP first, so a host that negotiates (a CDN in front
+/// of an addon's posters) answers the smaller encoding; anything else it has after that.
+pub const ART_ACCEPT: &[(&str, &str)] = &[("Accept", "image/webp,image/*;q=0.8")];
 
 impl<'a> NetFetch<'a> {
     pub fn new(off: &'a OffFrame, profile: Profile) -> Self {
-        NetFetch { _off: off, profile, cancel: None, body_max: profile.body_max() }
+        NetFetch { _off: off, profile, cancel: None, body_max: profile.body_max(), own: &[] }
+    }
+
+    /// Send the application's own `headers` too. Unlike a caller's (an addon's, which may carry a
+    /// credential for its origin), these do not stop a redirect from being followed: they say
+    /// nothing a redirected-to host should not hear.
+    pub fn own_headers(mut self, headers: &'static [(&'static str, &'static str)]) -> Self {
+        self.own = headers;
+        self
     }
 
     /// Answer `Cancelled` instead of starting when `cancel` is set.
@@ -82,11 +97,17 @@ impl<'a> NetFetch<'a> {
         if !(url.starts_with("https://") || url.starts_with("http://")) {
             return Err(FetchError::Transport("not an http(s) url".into()));
         }
-        let lines = header_lines(headers)?;
+        let mut lines = header_lines(headers)?;
         // `sn_net` follows a redirect only for a request that carries no header of the caller's
         // (libcurl would re-send them to whatever host the redirect names), so a request with
-        // headers answers a 3xx as its status instead.
+        // headers answers a 3xx as its status instead. The application's own headers do not
+        // count: an artwork request with only its `Accept` still follows a CDN's redirect.
         let follow = lines.is_empty();
+        for (name, value) in self.own {
+            if !headers.iter().any(|(n, _)| n.eq_ignore_ascii_case(name)) {
+                lines.push(format!("{name}: {value}"));
+            }
+        }
         let resp = sn_net::net::request_result_evidence(
             url,
             &lines,
@@ -197,7 +218,13 @@ mod tests {
                     .find(|(p, _, _)| *p == path)
                     .map(|(_, s, b)| (*s, b.clone()))
                     .unwrap_or((404, Vec::new()));
-                let head = format!("HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+                // a 3xx route's "body" is where it redirects to
+                let (location, body) = if (300..400).contains(&status) {
+                    (format!("Location: {}\r\n", String::from_utf8_lossy(&body)), Vec::new())
+                } else {
+                    (String::new(), body)
+                };
+                let head = format!("HTTP/1.1 {status} X\r\n{location}Content-Length: {}\r\nConnection: close\r\n\r\n", body.len());
                 let _ = sock.write_all(head.as_bytes());
                 let _ = sock.write_all(&body);
             }
@@ -272,6 +299,27 @@ mod tests {
         assert!(seen.starts_with("POST /api/addonCollectionGet"), "{seen}");
         assert!(seen.contains("Content-Type: application/json"), "{seen}");
         assert!(seen.ends_with(r#"{"type":"AddonCollectionGet"}"#), "{seen}");
+    }
+
+    #[test]
+    fn an_artwork_request_asks_for_webp_and_still_follows_a_redirect() {
+        if !ready() {
+            return;
+        }
+        let s = serve(vec![("/poster.jpg", 302, b"/cdn/poster.webp".to_vec()), ("/cdn/poster.webp", 200, b"RIFFwebp".to_vec())]);
+        let off = OffFrame::for_test();
+        let f = NetFetch::new(&off, Profile::Art).own_headers(ART_ACCEPT);
+        let body = f.get(&format!("http://127.0.0.1:{}/poster.jpg", s.port), &[]).expect("the redirect is followed");
+        assert_eq!(body, b"RIFFwebp");
+        let seen = s.seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 2, "two hops");
+        assert!(seen.iter().all(|r| r.contains("Accept: image/webp,image/*;q=0.8")), "every hop asks for WebP first: {seen:?}");
+        // an addon's own header still stops the redirect (it could be a credential)
+        let f = NetFetch::new(&off, Profile::Art).own_headers(ART_ACCEPT);
+        assert_eq!(
+            f.get(&format!("http://127.0.0.1:{}/poster.jpg", s.port), &[("Referer".into(), "https://addon.example/".into())]),
+            Err(FetchError::Status(302))
+        );
     }
 
     #[test]

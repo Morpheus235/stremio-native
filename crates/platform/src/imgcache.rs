@@ -150,6 +150,24 @@ pub fn classify_baked(
     })
 }
 
+/// The durable key of an addon image AS THE APP KEEPS IT: the absolute URL it was fetched from
+/// (after the app's size rewrite) and the box it was scaled to cover. The stored bytes are the
+/// scaled pixels, not the response, so a hit costs neither a fetch nor a decode; a different box
+/// is a different key. Its own versioned domain beside the transcodes and the baked images; the
+/// URL is hashed, never written out (an addon may put its configuration in it).
+pub fn classify_pixels(url: &str, w: u32, h: u32) -> Option<DiskKey> {
+    if url.is_empty() || w == 0 || h == 0 || !(url.starts_with("https://") || url.starts_with("http://")) {
+        return None;
+    }
+    let dims = format!("{w}x{h}");
+    let mut identity = Vec::new();
+    for field in ["sn-pixels-v1", url, &dims] {
+        identity.extend_from_slice(&(field.len() as u64).to_le_bytes());
+        identity.extend_from_slice(field.as_bytes());
+    }
+    Some(DiskKey { name: format!("image-{}.img", hex_digest(&identity)), legacy: None })
+}
+
 fn hex_digest(bytes: &[u8]) -> String {
     sn_base::sha256::sha256(bytes)
         .iter()

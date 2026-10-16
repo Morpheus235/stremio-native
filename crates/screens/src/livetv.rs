@@ -534,7 +534,7 @@ impl Machine<Bundle> for LiveTvScreen {
                             reply: fx.from(),
                             focus: cx.focus.current,
                             anchor: MenuArg::anchor_of(anchor),
-                            kind: MenuKind::Item(item_ref(item)),
+                            kind: crate::cards::item_menu(item),
                         }))));
                     }
                 }

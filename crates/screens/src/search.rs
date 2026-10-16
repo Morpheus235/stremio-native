@@ -43,7 +43,7 @@ use sn_ui::widgets::{Button, StatusKind, StatusOverlay};
 use sn_ui::{theme, Env, Rect, Spring, View};
 
 use crate::cards::{item_ref, ItemCards};
-use crate::registry::{reseat, word, AppArg, AppFx, Bundle, CatalogRef, MenuArg, MenuKind, SearchCmd};
+use crate::registry::{reseat, word, AppArg, AppFx, Bundle, CatalogRef, MenuArg, SearchCmd};
 use crate::stores::grid::GridKey;
 use crate::stores::search::{Phase, SearchStore};
 use crate::stores::StoreId;
@@ -171,7 +171,7 @@ impl Page {
 
     fn chip_text(cx: &Cx<'_, Bundle>, i: usize) -> Option<(CString, CString, bool)> {
         let (id, name) = *Self::chips(cx).get(i)?;
-        let on = Self::store(cx).filter().allows(id);
+        let on = cx.views.addons.filter().allows(id);
         let name = if name.is_empty() { id } else { name };
         let value = if on { msg::app_search_addon_on() } else { msg::app_search_addon_off() };
         Some((CString::new(name.replace('\0', "")).unwrap_or_default(), CString::new(format!(" \u{b7} {value}")).unwrap_or_default(), on))
@@ -713,7 +713,7 @@ impl Machine<Bundle> for SearchScreen {
                 }
                 Handled::Yes
             }
-            ScreenEvent::StoreChanged(ord, _) if *ord == StoreId::Search.ord() || *ord == StoreId::Catalog.ord() => {
+            ScreenEvent::StoreChanged(ord, _) if *ord == StoreId::Search.ord() || *ord == StoreId::Catalog.ord() || *ord == StoreId::Addons.ord() => {
                 fx.invalidate(Provenance::Landing(fx.from()));
                 Handled::Yes
             }
@@ -794,7 +794,7 @@ impl Machine<Bundle> for SearchScreen {
                             reply: fx.from(),
                             focus: cx.focus.current,
                             anchor: MenuArg::anchor_of(anchor),
-                            kind: MenuKind::Item(item_ref(item)),
+                            kind: crate::cards::item_menu(item),
                         }))));
                     }
                 }

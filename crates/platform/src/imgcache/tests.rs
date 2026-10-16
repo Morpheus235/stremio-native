@@ -94,6 +94,26 @@ fn keys_include_namespace_source_version_and_every_transform() {
 }
 
 #[test]
+fn addon_pixels_are_keyed_by_url_and_box_and_survive_a_reopen() {
+    let url = "https://images.metahub.space/poster/medium/tt0903747/img";
+    let name = classify_pixels(url, 250, 375).unwrap().name;
+    assert_eq!(Some(name.clone()), classify_pixels(url, 250, 375).map(|k| k.name), "stable across boots");
+    assert!(cache_name(&name), "kept by the startup scan: {name}");
+    assert!(!name.contains("metahub"), "the URL is hashed, never written out");
+    assert_ne!(Some(name.clone()), classify_pixels(url, 420, 236).map(|k| k.name), "another box is another file");
+    assert_ne!(Some(name), classify_pixels(&url.replace("medium", "large"), 250, 375).map(|k| k.name));
+    for bad in [("", 250, 375), ("file:///etc/passwd", 250, 375), (url, 0, 375)] {
+        assert!(classify_pixels(bad.0, bad.1, bad.2).is_none(), "{bad:?}");
+    }
+    let dir = TestDir::new();
+    let cache = dir.cache(16, 1 << 20);
+    let key = classify_pixels(url, 250, 375).unwrap();
+    assert!(cache.write_at(0, &key, b"pixels"));
+    let reopened = dir.cache(16, 1 << 20);
+    assert_eq!(reopened.read_at(0, &key).unwrap().bytes, b"pixels");
+}
+
+#[test]
 fn baked_keys_are_stable_versioned_by_stamp_and_carry_no_request() {
     let key = |ns: &str, kind: &str, rk: &str, stamp: &str, w: u32, h: u32| {
         classify_baked(ns, kind, rk, stamp, w, h).map(|k| k.name)

@@ -1901,7 +1901,9 @@ fn request_tls_sink(
     // when the host changes, and the television's 7.53.1 predates even that), so a credential line
     // on a request that follows `Location:` would reach whatever host the answer names. A request
     // that needs both a credential and redirects must follow them itself, one hop at a time.
-    if follow_redirects && !headers.is_empty() {
+    // A block of only `headers::FORWARDABLE` lines (an artwork request's `Accept`) says nothing a
+    // redirected-to host should not hear, so it may follow.
+    if follow_redirects && !headers.is_empty() && !headers::all_forwardable(headers) {
         sn_base::eventlog::log("net: request refused: a request that follows redirects carries no caller headers");
         return Err(RequestError::Transport.into());
     }
