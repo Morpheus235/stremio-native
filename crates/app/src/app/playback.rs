@@ -65,6 +65,7 @@ impl Playback {
         if self.adapter.is_live() {
             player::stop_bufferfeed(&mut self.player.session, &mut self.adapter);
         }
+        self.adapter.cancel_probe();
         self.player.session.clear();
         self.paused = false;
         self.refused = false;
@@ -89,7 +90,9 @@ impl Playback {
     /// The frame's pump: advance the pipeline, re-read the view. Returns the video plane's edge
     /// (`Some(bound)` when it changed), which the loop forwards to the present gate.
     pub fn tick(&mut self, now_ms: u32) -> (bool, Option<bool>) {
-        if self.adapter.is_live() {
+        // A probing start has no engine yet; the pump is what collects the probe's answer and
+        // launches the Load, so it runs for either.
+        if self.adapter.is_live() || self.adapter.has_probe() {
             player::pump(&mut self.player.session, &mut self.adapter, now_ms);
         }
         let edge = player::observe_video_plane(&mut self.player, &mut self.adapter);
@@ -191,5 +194,28 @@ mod tests {
         assert_eq!(pb.view.caption, msg::app_player_refused_c());
         pb.stop();
         assert_eq!(pb.view, PlaybackView::IDLE, "a stop clears the read-out");
+    }
+
+    /// Every Stremio stream starts with a probe and no engine yet. The frame pump must run while
+    /// the probe does, or its answer is never collected and the start sits on "connecting"
+    /// forever (the first beta on the television: `probe: v=h264 …` and then nothing). Without
+    /// FFmpeg on the host the probe answers at once, so the start must reach its refusal.
+    #[test]
+    fn a_probed_start_is_pumped_to_its_outcome() {
+        let _g = sn_base::testlock::serial();
+        // SAFETY: the test thread stands in for the main thread; no FFmpeg, so no native start.
+        let mut pb = Playback::new(unsafe { MainThread::assume() });
+        pb.start(&PlayRequest { url: "https://cdn.example/film.mkv".into(), headers: vec![], title: "T".into(), start_ms: 0 });
+        assert_eq!(pb.view.phase, PlayPhase::Working, "the probe runs");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut now = 0u32;
+        while pb.view.phase == PlayPhase::Working && std::time::Instant::now() < deadline {
+            now += 16;
+            pb.tick(now);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(pb.view.phase, PlayPhase::Failed, "the probe's answer reached the page");
+        pb.stop();
+        assert!(!pb.adapter.has_probe());
     }
 }

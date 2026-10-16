@@ -85,9 +85,11 @@ pub struct ResumeTarget {
 }
 
 impl LibraryItem {
-    /// Shown in Continue Watching: in progress, not removed, not a temporary entry.
+    /// Shown in Continue Watching (stremio-core's `is_in_continue_watching`): in progress, and
+    /// kept or temporary. A title watched without being added to the library is a temporary
+    /// entry, flagged removed too, and it is most of what a viewer continues.
     pub fn is_continue_watching(&self) -> bool {
-        !self.removed && !self.temp && self.state.time_offset > 0
+        self.kind != "other" && (!self.removed || self.temp) && self.state.time_offset > 0
     }
 
     /// The video a resume opens. `None` for a series with no recorded or default video: the
@@ -145,7 +147,7 @@ pub fn fetch_library(fetch: &dyn Fetch, auth_key: &str) -> Result<Vec<LibraryIte
     Ok(items
         .into_iter()
         .filter_map(|v| serde_json::from_value::<LibraryItem>(v).ok())
-        .filter(|i| !i.removed)
+        .filter(|i| !i.removed || i.temp)
         .collect())
 }
 
@@ -284,11 +286,31 @@ mod tests {
         assert!((i.progress() - 0.0704).abs() < 0.001);
     }
 
+    /// Stremio keeps a title watched without adding it to the library as a TEMPORARY entry,
+    /// which is also flagged removed; it is still continued (stremio-core's
+    /// `is_in_continue_watching`: type not "other", not removed or temporary, a position).
     #[test]
-    fn removed_and_temporary_items_are_not_continue_watching() {
+    fn a_temporary_entry_in_progress_is_continued_and_a_removed_one_is_not() {
+        assert!(item(r#"{"_id":"a","type":"movie","removed":true,"temp":true,"state":{"timeOffset":5}}"#).is_continue_watching());
+        assert!(item(r#"{"_id":"a","type":"series","temp":true,"state":{"timeOffset":5}}"#).is_continue_watching());
+        assert!(item(r#"{"_id":"a","type":"movie","state":{"timeOffset":5}}"#).is_continue_watching());
         assert!(!item(r#"{"_id":"a","type":"movie","removed":true,"state":{"timeOffset":5}}"#).is_continue_watching());
-        assert!(!item(r#"{"_id":"a","type":"movie","temp":true,"state":{"timeOffset":5}}"#).is_continue_watching());
         assert!(!item(r#"{"_id":"a","type":"movie","state":{"timeOffset":0}}"#).is_continue_watching());
+        assert!(!item(r#"{"_id":"a","type":"other","state":{"timeOffset":5}}"#).is_continue_watching());
+    }
+
+    /// The fetch keeps temporary entries: they ARE most of Continue Watching.
+    #[test]
+    fn the_fetch_keeps_temporary_entries_and_drops_removed_ones() {
+        let fetch = crate::fake::FakeFetch::default().with(
+            "https://api.strem.io/api/datastoreGet",
+            r#"{"result":[
+                {"_id":"keep","type":"movie","removed":false,"temp":false,"state":{"timeOffset":0}},
+                {"_id":"temp","type":"series","removed":true,"temp":true,"state":{"timeOffset":7,"video_id":"temp:1:2"}},
+                {"_id":"gone","type":"movie","removed":true,"temp":false,"state":{"timeOffset":9}}]}"#,
+        );
+        let ids: Vec<String> = fetch_library(&fetch, "k").unwrap().into_iter().map(|i| i.id).collect();
+        assert_eq!(ids, ["keep", "temp"]);
     }
 
     #[test]

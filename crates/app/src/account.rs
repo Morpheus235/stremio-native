@@ -216,7 +216,7 @@ impl DataDir {
     }
 }
 
-fn private_dir(path: &Path) -> bool {
+pub(crate) fn private_dir(path: &Path) -> bool {
     use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
     let made = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(path).is_ok();
     if !made {

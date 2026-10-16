@@ -33,9 +33,14 @@ struct File {
     recent_searches: Vec<String>,
 }
 
-/// Where the settings live.
+/// Where the settings live: the first private data directory that is writable (the same choice
+/// the account cache makes), else the state root.
 pub fn path() -> PathBuf {
-    sn_base::paths::persistent_state_root().join("settings.json")
+    sn_base::paths::private_data_candidates()
+        .into_iter()
+        .find(|dir| crate::account::private_dir(dir))
+        .unwrap_or_else(sn_base::paths::persistent_state_root)
+        .join("settings.json")
 }
 
 /// The stores the file seeds.
@@ -115,6 +120,17 @@ mod tests {
         assert_eq!(usize::from(Pref::SubtitlePosition.rungs()), SubtitlePosition::LADDER.len());
         assert_eq!(Pref::SubtitleSize.default_rung(), SubtitleSize::default().index());
         assert_eq!(Pref::SubtitlePosition.default_rung(), SubtitlePosition::default().index());
+    }
+
+    /// The install directory is read-only to the running app on a Homebrew Channel install
+    /// (`settings: not saved (Permission denied)` on the first beta), so the settings live in the
+    /// private data directory the account cache already proved writable.
+    #[test]
+    fn the_settings_live_in_the_writable_private_data_directory() {
+        let p = path();
+        assert_eq!(p.file_name().unwrap(), "settings.json");
+        let root = sn_base::paths::private_data_candidates().remove(0);
+        assert_eq!(p.parent().unwrap(), root, "{p:?}");
     }
 
     #[test]
