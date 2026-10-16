@@ -1497,8 +1497,9 @@ const SEEK_CUR: c_int = 1;
 const SEEK_END: c_int = 2;
 const AVSEEK_SIZE: c_int = 0x10000;
 
-/// **Which transport is under the AVIO.** The two are not interchangeable and the choice is made
-/// once, at open, from the stream itself: an https URL, or ANY stream that carries request headers
+/// **Which transport is under the AVIO.** They are not interchangeable and the choice is made
+/// once, at open, from the stream itself: an `.m3u8` URL, or a curl open answered with an HLS
+/// media type, is [`Src::Hls`]; an https URL, or ANY stream that carries request headers
 /// ([`crate::headers::RequestHeaders`]), is pulled through curl; a header-less plaintext URL reads
 /// through the socket, unless its open is redirected to https (`stream::redirect`), in which case
 /// the socket open hands over to curl. Never guessed per call.
@@ -1521,6 +1522,11 @@ enum Src {
     /// `curlio`'s registry instead of a pointer the engine holds. `curlio`'s module doc says why
     /// that is not the accident it looks like.
     Curl(Box<crate::curlio::CurlSource>),
+    /// An HLS playlist ([`crate::hls`]): the segments of the variant this set decodes, decrypted and
+    /// concatenated (init section first for fMP4) into one byte stream. It has no byte addresses,
+    /// so its AVIO is UNSEEKABLE (no `seek_cb`); a VOD seek reopens it at a segment instead
+    /// (`demux`'s read loop) and a live one at its edge.
+    Hls(Box<crate::hls::CurlHls>),
 }
 
 #[path = "ff_subs.rs"]
@@ -1598,6 +1604,8 @@ impl AvioState {
         match &self.src {
             Src::Socket { hs, .. } => sn_net::stream::http_body_done(*hs),
             Src::Curl(cs) => cs.body_complete(),
+            // Nothing to drain between two segment reads: a parked HLS stream waits on its queue.
+            Src::Hls(_) => true,
         }
     }
 
@@ -1637,6 +1645,7 @@ impl AvioState {
                     sn_net::stream::http_drain_available(*hs, &mut self.bounce[start..])
                 }
                 Src::Curl(cs) => cs.drain_available(&mut self.bounce[start..]),
+                Src::Hls(_) => 0,
             };
             if n > 0 {
                 self.bounce.truncate(start + n as usize);
@@ -1709,6 +1718,16 @@ extern "C" fn read_cb(op: *mut c_void, dst: *mut u8, n: c_int) -> c_int {
                 // The null/length guard `stream::http_read` does for itself.
                 Src::Curl(_) if dst.is_null() || n <= 0 => 0,
                 Src::Curl(cs) => cs.read(std::slice::from_raw_parts_mut(dst, n as usize)),
+                Src::Hls(_) if dst.is_null() || n <= 0 => 0,
+                // Retries, skips and the live wait are the HLS source's own; what reaches here is
+                // bytes, the end of a VOD stream, or a failure it has already named in the log.
+                Src::Hls(h) => match h.read(std::slice::from_raw_parts_mut(dst, n as usize)) {
+                    Ok(got) => got as c_int,
+                    Err(e) => {
+                        hls_failed(&e);
+                        -1
+                    }
+                },
             };
             // Teardown may have arrived while the transport was blocked. Its wake commonly
             // surfaces as socket EOF or curl failure; classify from the owning AU abort flag
@@ -1862,6 +1881,8 @@ extern "C" fn seek_cb(op: *mut c_void, offset: i64, whence: c_int) -> i64 {
             // deliberate: bytes from the head of the file, delivered as though they were the bytes
             // at `target`, are corruption that looks like success.
             Src::Curl(cs) => cs.seek(target),
+            // Never reached: an HLS AVIO is allocated without a seek callback.
+            Src::Hls(_) => false,
         };
         if let Some(cs) = hopped_to_tls {
             s.src = Src::Curl(cs);
@@ -2638,6 +2659,65 @@ fn open_curl_hop(
     crate::curlio::CurlSource::open_reserved(url, at, headers, reservation)
 }
 
+/// Record an HLS failure where the read-out and the diagnostics find it: the HTTP status behind it
+/// (`dg_http_status`) and the failure itself (`hls::last_failure`). Aborts are teardown's, not the
+/// stream's, and leave both alone.
+fn hls_failed(e: &crate::hls::HlsError) {
+    if *e == crate::hls::HlsError::Aborted {
+        return;
+    }
+    if let Some(st) = e.http_status() {
+        SHARED.dg_http_status.store(c_int::from(st), Ordering::Relaxed);
+    }
+    crate::hls::note_failure(Some(e.clone()));
+}
+
+/// Open the HLS source for `url` ([`crate::hls`]): the playlist resolved, a variant chosen against
+/// this set's codec table, and the stream positioned. A VOD stream starts at the segment holding
+/// the armed seek target (`SHARED.seek_to_ns`, consumed here: the unseekable AVIO could not serve
+/// `av_seek_frame`), a live one three target durations behind its edge whatever was armed.
+/// Publishes the same diagnostics the progressive opens do, and a VOD stream's duration from its
+/// playlist (libavformat cannot know it without a file size).
+fn open_hls(
+    url: &str,
+    headers: &crate::headers::RequestHeaders,
+    aq_p: *mut AuQueue,
+) -> Result<(Src, i64), MediaOpenFail> {
+    // The lane's abort flag is the teardown signal every other transport checks too; the source
+    // lives and dies on this (the demux) thread, as the lane outlives it.
+    let cancel = Box::new(move || unsafe { crate::aq::aq_is_aborted(aq_p) });
+    let transport = crate::hls::CurlTransport::new(headers.clone(), cancel);
+    let armed = SHARED.seek_to_ns.swap(-1, Ordering::AcqRel);
+    let at_us = (armed >= 0).then(|| (armed / 1000) as u64);
+    crate::hls::note_failure(None);
+    match crate::hls::CurlHls::open(transport, crate::hls::SystemClock::new(), url, at_us, sn_platform::devcaps::caps()) {
+        Ok(h) => {
+            SHARED.file_size.store(-1, Ordering::Release);
+            SHARED.dg_http_status.store(200, Ordering::Relaxed);
+            if !h.is_live() {
+                let dur_ns = i64::try_from(h.duration_us()).unwrap_or(i64::MAX / 1000).saturating_mul(1000);
+                SHARED.duration_ns.store(dur_ns, Ordering::Relaxed);
+            }
+            crate::player::log(&format!(
+                "ff: open hls {}{}",
+                if h.is_live() { "live" } else { "vod" },
+                if armed >= 0 && !h.is_live() {
+                    format!(" at segment start {}ms (asked {}ms)", h.start_us() / 1000, armed / 1_000_000)
+                } else {
+                    String::new()
+                }
+            ));
+            Ok((Src::Hls(Box::new(h)), -1))
+        }
+        Err(crate::hls::HlsError::Aborted) => Err(MediaOpenFail::Aborted),
+        Err(e) => {
+            crate::player::log(&format!("ff: hls open FAILED: {e}"));
+            hls_failed(&e);
+            Err(MediaOpenFail::Failed)
+        }
+    }
+}
+
 /// The socket path's credential authority (`stream::redirect::CredentialGate`): it carries no
 /// credential, ever. A stream with request headers is pulled through curl from its first byte
 /// (`Src`), so a plaintext hop with a header block on it is refused rather than sent.
@@ -3098,7 +3178,11 @@ pub fn demux(
     let path = path.to_owned();
     // ONE transport decision, here: curl for TLS and for any stream whose requests must carry the
     // stream's own headers (the socket path cannot carry them; see `Src`).
-    let via_curl = origin.is_tls() || !headers.is_empty();
+    // An `.m3u8` is HLS ([`crate::hls`]), which fetches through curl too, one request per playlist,
+    // key and segment, each reserving its own abort handle. A playlist served from a URL that does
+    // not say so is recognised by its Content-Type after the curl open below.
+    let hls_url = crate::hls::is_playlist_url(&url);
+    let via_curl = origin.is_tls() || !headers.is_empty() || hls_url;
 
     // PANIC BARRIER around the whole producer body. Not about the unwind itself — this thread is
     // started by `task::spawn`, so std already catches a panic at the thread boundary and turns it
@@ -3129,13 +3213,16 @@ pub fn demux(
         // audio-track switch each `reload_at`, which spawns a new demux thread. So the reopen had no
         // live writer and no live caller.
         loop {
+            // An HLS seek reopens the stream at a segment (see the read loop's seek): set there,
+            // read after this pass's cleanup.
+            let mut hls_reopen = false;
             unsafe {
                 // Publish curl's wake target BEFORE the final AU-abort check. These two operations
                 // close each other's race: teardown either sees and signals the reservation, or it
                 // aborts the lane first and this check refuses to start I/O. Creating/registering the
                 // source only after the check leaves a window where teardown's one wake sees nothing
                 // and the demuxer then opens a fresh connection under the main thread's join.
-                let mut curl_open = if via_curl {
+                let mut curl_open = if via_curl && !hls_url {
                     match crate::curlio::CurlSource::reserve_open() {
                         Ok(r) => Some(r),
                         Err(e) => {
@@ -3159,11 +3246,40 @@ pub fn demux(
                 // before anything else can fail, because the read-out panel is the first thing anybody
                 // looks at when a part will not play and it must mean the same thing either way.
                 let open_began = std::time::Instant::now();
-                let (src, size) = if via_curl {
+                let (src, size) = if hls_url {
+                    match open_hls(&url, &headers, aq_p) {
+                        Ok(opened) => opened,
+                        Err(MediaOpenFail::Aborted) => {
+                            crate::player::log("ff: aborted during open");
+                            break;
+                        }
+                        Err(MediaOpenFail::Failed) => {
+                            SHARED.demux_failed.store(true, Ordering::Release);
+                            break;
+                        }
+                    }
+                } else if via_curl {
                     let reservation = curl_open
                         .take()
                         .expect("the curl path reserved its abort handle above");
                     match crate::curlio::CurlSource::open_reserved(&url, 0, &headers, reservation) {
+                        Ok(cs) if cs.content_type().is_some_and(crate::hls::is_playlist_content_type) => {
+                            // A playlist the URL did not name: hand the stream to the HLS client,
+                            // which requests it again on its own transfer.
+                            crate::player::log("ff: the stream answered with an HLS playlist (Content-Type)");
+                            drop(cs);
+                            match open_hls(&url, &headers, aq_p) {
+                                Ok(opened) => opened,
+                                Err(MediaOpenFail::Aborted) => {
+                                    crate::player::log("ff: aborted during open");
+                                    break;
+                                }
+                                Err(MediaOpenFail::Failed) => {
+                                    SHARED.demux_failed.store(true, Ordering::Release);
+                                    break;
+                                }
+                            }
+                        }
                         Ok(cs) => {
                             let (st, size) = (cs.status(), cs.size());
                             SHARED.file_size.store(size, Ordering::Release);
@@ -3217,6 +3333,10 @@ pub fn demux(
                     crate::player::log("ff: av_malloc failed");
                     break;
                 }
+                // No seek callback for HLS: an unseekable AVIO makes libavformat skip forward by
+                // reading (mov's sample positions inside a fragment) and never ask for a byte
+                // address the concatenated stream does not have.
+                let is_hls = matches!(state.src, Src::Hls(_));
                 let avio = avio_alloc_context(
                     buf,
                     65536,
@@ -3224,7 +3344,7 @@ pub fn demux(
                     &mut *state as *mut AvioState as *mut c_void,
                     Some(read_cb),
                     None,
-                    Some(seek_cb),
+                    if is_hls { None } else { Some(seek_cb) },
                 );
                 if avio.is_null() {
                     crate::player::log("ff: avio_alloc_context failed");
@@ -3535,6 +3655,18 @@ pub fn demux(
                     // (`rebase: dropping stale kf` at the old position) and escalated to a full
                     // reload. Seeking here needs no interrupt at all, so nothing can race it.
                     let seek_ns = SHARED.seek_to_ns.swap(-1, Ordering::Acquire);
+                    if seek_ns >= 0 && is_hls {
+                        // HLS has no byte addresses to seek in: re-arm the target and reopen the
+                        // stream at the segment holding it (live: at its edge), after this pass's
+                        // cleanup. The pump has already flushed the lanes for the seek.
+                        SHARED.video_tail_ns.store(-1, Ordering::Release);
+                        SHARED.audio_tail_ns.store(-1, Ordering::Release);
+                        crate::player::ass_source::seek(ass_generation);
+                        crate::player::log(&format!("ff: hls seek {}s: reopening at its segment", seek_ns / 1_000_000_000));
+                        SHARED.seek_to_ns.store(seek_ns, Ordering::Release);
+                        hls_reopen = true;
+                        break;
+                    }
                     if seek_ns >= 0 {
                         // These are content from the old seek epoch until the first new packets land.
                         SHARED.video_tail_ns.store(-1, Ordering::Release);
@@ -3769,6 +3901,9 @@ pub fn demux(
             if unsafe { crate::aq::aq_is_aborted(aq_p) } {
                 break;
             }
+            if hls_reopen {
+                continue;
+            }
             break;
         }
     })); // end panic barrier. The body above is deliberately NOT re-indented into the closure: a
@@ -3851,3 +3986,7 @@ mod late_audio_tests;
 #[cfg(test)]
 #[path = "ff_eof_seek_tests.rs"]
 mod eof_seek_tests;
+
+#[cfg(test)]
+#[path = "ff_hls_tests.rs"]
+mod hls_tests;

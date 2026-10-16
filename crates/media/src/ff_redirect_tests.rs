@@ -116,6 +116,7 @@ fn progressive_open(port: u16, path: &str) -> Result<(String, i64), String> {
     let outcome = match opened {
         Ok((Src::Socket { path, .. }, size)) => Ok((path.to_string_lossy().into_owned(), size)),
         Ok((Src::Curl(_), size)) => Ok(("<curl>".into(), size)),
+        Ok((Src::Hls(_), _)) => unreachable!("a progressive open never yields an HLS source"),
         Err(e) => Err(format!("{e:?}")),
     };
     sn_net::stream::http_close(&mut *hs);

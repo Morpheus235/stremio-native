@@ -532,6 +532,10 @@ struct Xfer {
     /// when it was too long to keep ([`LOCATION_CAP`], so that a truncated URL is never requested) or
     /// when no response has begun. Cleared by each status line.
     location: Vec<u8>,
+    /// The `Content-Type` of the response being read, as the server wrote it (parameters and
+    /// all), empty when it sent none. Cleared by each status line. Read by the HLS detection
+    /// (`crate::hls::is_playlist_content_type`): a playlist URL need not end in `.m3u8`.
+    content_type: Vec<u8>,
     /// The response's header block is complete: the point at which an open may return, or, for a
     /// `3xx`, the point at which the next hop can be chosen. A `1xx` block is not that.
     headers_done: bool,
@@ -547,6 +551,7 @@ impl Xfer {
             range_total: -1,
             range_start: -1,
             location: Vec::new(),
+            content_type: Vec::new(),
             headers_done: false,
         }
     }
@@ -558,6 +563,7 @@ impl Xfer {
         self.range_total = -1;
         self.range_start = -1;
         self.location.clear();
+        self.content_type.clear();
         self.headers_done = false;
     }
     fn pending(&self) -> usize {
@@ -728,6 +734,21 @@ impl CurlSource {
         reservation: OpenReservation,
     ) -> Result<Box<CurlSource>, OpenErr> {
         Self::open_with_reservation(url, at, headers, reservation)
+    }
+
+    /// [`open_reserved`](Self::open_reserved) whose DNS, TLS and response headers must complete by
+    /// `deadline` ([`OpenErr::Deadline`] otherwise). The body is not bounded by it: a caller that
+    /// wants that passes its own deadline to [`read_until`](Self::read_until). What the HLS client
+    /// (`crate::hls`) opens its playlists, keys and segments with, so a server that accepts and
+    /// never answers is an explicit failure rather than a wait.
+    pub fn open_reserved_until(
+        url: &str,
+        at: i64,
+        headers: &RequestHeaders,
+        reservation: OpenReservation,
+        deadline: std::time::Instant,
+    ) -> Result<Box<CurlSource>, OpenErr> {
+        Self::open_with_reservation_until(url, at, headers, reservation, Some(deadline), &mut NoCheckpoint)
     }
 
     /// [`open`](Self::open) with the availability verdict injected, so the host suite can grade
@@ -1702,6 +1723,19 @@ impl CurlSource {
         self.xfer.status
     }
 
+    /// The last response's `Content-Type`, as the server wrote it; `None` when it sent none (or
+    /// one that is not text).
+    pub fn content_type(&self) -> Option<&str> {
+        std::str::from_utf8(&self.xfer.content_type).ok().filter(|t| !t.is_empty())
+    }
+
+    /// The URL the current transfer was answered from: the opened URL, or the last hop of the
+    /// redirect chain it followed. What a relative reference in the body resolves against (an
+    /// HLS playlist's segment URIs). Carries the URL's query — never log it.
+    pub fn effective_url(&self) -> String {
+        self.hop_url.to_string_lossy().into_owned()
+    }
+
     /// What this transfer holds of the body beyond what the reader has taken. With nothing
     /// buffered, it first takes the one non-blocking transfer step [`read_until`](Self::read_until)
     /// would take next, so bytes already in the socket count as received here exactly as they
@@ -2016,6 +2050,7 @@ fn parse_header_line(x: &mut Xfer, line: &[u8]) {
         x.range_total = -1;
         x.range_start = -1;
         x.location.clear();
+        x.content_type.clear();
         x.headers_done = false;
         return;
     }
@@ -2028,6 +2063,9 @@ fn parse_header_line(x: &mut Xfer, line: &[u8]) {
     } else if let Some(v) = header_value(t, b"location:") {
         // Too long to keep is as good as absent: the open fails rather than request a truncated URL.
         x.location = if v.len() <= LOCATION_CAP { v.to_vec() } else { Vec::new() };
+    } else if let Some(v) = header_value(t, b"content-type:") {
+        // A media type is short; anything longer than this is not one worth reading.
+        x.content_type = if v.len() <= 256 { v.to_vec() } else { Vec::new() };
     }
 }
 

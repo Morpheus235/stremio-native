@@ -1,6 +1,6 @@
 //! sn_media: the media layer of the StremioNative application core.
 //!
-//! Demux (`ff`, the bundled FFmpeg), the HTTPS media pull source (`curlio`), the access-unit
+//! Demux (`ff`, the bundled FFmpeg), the HTTPS media pull source (`curlio`), HLS (`hls`), the access-unit
 //! queues (`aq`), the stream's request headers (`headers`), what a stream is and how it is fed
 //! (`stream`), the seam the layer above starts a playback through (`session`), the subtitle
 //! preferences the renderers read (`prefs`) and the buffer-feed engine (`player`). It uses `base`,
@@ -20,6 +20,7 @@ pub mod aq;
 pub mod curlio; // the HTTPS media plane: a remote file pulled by byte range over libcurl-multi (stream.rs is the plaintext-socket twin)
 #[macro_use]
 pub mod ff; // THE demuxer -- the FFmpeg 9.0 this app BUNDLES and pins (majors 63/63/61), dlopen'd by absolute path beside the binary, never the television's
+pub mod hls; // HLS in Rust (the bundled FFmpeg has no hls demuxer): playlists, variant choice, live reload, AES-128, one byte stream for the demuxer
 pub mod headers; // a stream's request headers (Stremio `behaviorHints.proxyHeaders.request`), checked once
 pub mod player; // buffer-feed video engine
 pub mod prefs; // the viewer's subtitle preferences, as the renderers read them
