@@ -17,23 +17,21 @@ pub mod scrub;
 #[cfg(feature = "lab-diagnostics")]
 pub mod ring;
 
-/// Strip any PMS/plex.tv token from a line bound for the event log.
+/// Strip a Stremio session key from a line bound for the event log.
 ///
 /// **This is a backstop, not the policy.** The policy is that no call site formats a URL into a log
-/// line at all — but that policy was violated for months by one `-> {url}` in `route::retranscode`,
-/// reached by an ordinary audio-track switch, and the app's whole support channel is "send us
-/// `/tmp/stremionative-events.log`". So the class is closed HERE, where every line passes, rather than
-/// at the call sites, where the next one is one `format!` away from re-opening it.
+/// line at all, and the support channel is "send us `/tmp/stremionative-events.log`". So the class is
+/// closed HERE, where every line passes, rather than at the call sites, where the next one is one
+/// `format!` away from re-opening it. [`scrub::scrub_local`] runs the full set of rewrites after this.
 ///
-/// Matches the parameter name rather than the value: the token is a short unstructured alphanumeric
-/// with no distinguishing shape, so it cannot be recognised on its own — but it only ever reaches a
-/// string as `X-Plex-Token=…`, appended by the single choke point in `plex::client`. The value runs
-/// to the next `&` or whitespace, i.e. the end of that query parameter.
+/// Matches the parameter name rather than the value: the key is an unstructured alphanumeric with
+/// no distinguishing shape, so it cannot be recognised on its own. The value runs to the next `&`
+/// or whitespace, i.e. the end of that query parameter.
 ///
 /// Cheap by construction: the `find` is a no-op scan for the overwhelming majority of lines, and
 /// the log is written a few times a second at most, never per frame.
 pub fn redact_tokens(m: &str) -> std::borrow::Cow<'_, str> {
-    const KEY: &str = "X-Plex-Token=";
+    const KEY: &str = "authKey=";
     if !m.contains(KEY) {
         return std::borrow::Cow::Borrowed(m);
     }
@@ -268,15 +266,15 @@ pub fn log(m: &str) {
 mod redact_tests {
     use super::redact_tokens;
 
-    /// The exact line that shipped: a transcode URL with the token appended last.
+    /// A key appended last to a URL.
     #[test]
     fn a_token_at_the_end_of_a_url_does_not_survive() {
-        let line = "retranscode rk=42 -> http://10.0.0.2:32400/video/:/transcode/universal/start.mkv?protocol=http&X-Plex-Token=aBcD1234xyzQ";
+        let line = "api: retry https://api.example/api/datastoreGet?collection=libraryItem&authKey=aBcD1234xyzQ";
         let out = redact_tokens(line);
         assert!(!out.contains("aBcD1234xyzQ"), "token survived: {out}");
-        assert!(out.contains("X-Plex-Token=<redacted>"));
+        assert!(out.contains("authKey=<redacted>"));
         assert!(
-            out.contains("start.mkv"),
+            out.contains("datastoreGet"),
             "the diagnostic half must survive"
         );
     }
@@ -286,7 +284,7 @@ mod redact_tests {
     /// the line worth logging).
     #[test]
     fn a_token_mid_url_ends_at_the_ampersand() {
-        let out = redact_tokens("GET /x?X-Plex-Token=SECRET&audio=3&sub=1 ok");
+        let out = redact_tokens("GET /x?authKey=SECRET&audio=3&sub=1 ok");
         assert!(!out.contains("SECRET"));
         assert!(out.contains("audio=3") && out.contains("sub=1") && out.ends_with(" ok"));
     }
@@ -294,7 +292,7 @@ mod redact_tests {
     /// More than one occurrence on one line (two URLs logged together).
     #[test]
     fn every_occurrence_is_scrubbed_not_just_the_first() {
-        let out = redact_tokens("a=?X-Plex-Token=AAA b=?X-Plex-Token=BBB");
+        let out = redact_tokens("a=?authKey=AAA b=?authKey=BBB");
         assert!(!out.contains("AAA") && !out.contains("BBB"), "{out}");
         assert_eq!(out.matches("<redacted>").count(), 2);
     }
@@ -302,8 +300,8 @@ mod redact_tests {
     /// A token at the very end of the string (no trailing separator) must not panic or be missed.
     #[test]
     fn a_token_at_end_of_line_is_scrubbed() {
-        let out = redact_tokens("tail X-Plex-Token=ZZZ");
-        assert_eq!(out, "tail X-Plex-Token=<redacted>");
+        let out = redact_tokens("tail authKey=ZZZ");
+        assert_eq!(out, "tail authKey=<redacted>");
     }
 
     /// The common case is untouched and allocation-free.
@@ -317,7 +315,7 @@ mod redact_tests {
     /// Multi-byte content must not panic the slicing (the app logs remote tokens and item titles).
     #[test]
     fn multibyte_text_around_a_token_does_not_panic() {
-        let out = redact_tokens("séance ☃ ?X-Plex-Token=Q1 — après");
+        let out = redact_tokens("séance ☃ ?authKey=Q1 — après");
         assert!(!out.contains("Q1"));
         assert!(out.contains("séance") && out.contains("après"));
     }

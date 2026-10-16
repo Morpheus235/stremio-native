@@ -37,15 +37,15 @@ const CREDENTIAL_HEADERS: [&str; 5] = [
     "authorization:",
     "cookie:",
     "set-cookie:",
-    "x-plex-token:",
+    "x-api-key:",
     "proxy-authorization:",
 ];
 
-/// Query parameters whose value is a secret. `X-Plex-Token` is here too even though
+/// Query parameters whose value is a secret. `authKey` is here too even though
 /// [`crate::eventlog::redact_tokens`] already caught it on the way in — this pass must be correct on its own,
 /// because it is also what protects a record written by a future call site that bypasses the log.
 const CREDENTIAL_PARAMS: [&str; 6] = [
-    "x-plex-token=",
+    "authkey=",
     "token=",
     "access_token=",
     "password=",
@@ -55,9 +55,9 @@ const CREDENTIAL_PARAMS: [&str; 6] = [
 
 /// One record, made safe.
 ///
-/// Four rewrites, in order, each narrower than dropping the line: header values, query-parameter
-/// values, `plex.direct` hostnames (which ENCODE a household's LAN address in their leftmost
-/// label), and any remaining `scheme://host` authority. A record that still contains a credential
+/// The rewrites, in order, each narrower than dropping the line: header values, query-parameter
+/// values, JSON secret fields, addon configuration and opaque keys in URL paths, and any remaining
+/// `scheme://host` authority. A record that still contains a credential
 /// header name after rewriting is refused outright rather than shipped — that can only happen if
 /// the rewrite failed to find the value it was sure was there.
 #[cfg(feature = "lab-diagnostics")]
@@ -85,6 +85,8 @@ pub fn scrub_local_with(line: &str, ids: &[String]) -> String {
     let s = crate::eventlog::redact_tokens(line).into_owned();
     let s = scrub_headers(&s);
     let s = scrub_params(&s);
+    let s = scrub_json_secrets(&s);
+    let s = scrub_paths(&s);
     let s = scrub_authority(&s);
     let s = scrub_host_kv(&s);
     let s = scrub_ipv6(&s);
@@ -100,6 +102,8 @@ pub fn scrub_with(line: &str, ids: &[String]) -> Scrubbed {
     let s = crate::eventlog::redact_tokens(line).into_owned();
     let s = scrub_headers(&s);
     let s = scrub_params(&s);
+    let s = scrub_json_secrets(&s);
+    let s = scrub_paths(&s);
     let s = scrub_authority(&s);
     let s = scrub_host_kv(&s);
     let s = scrub_ipv6(&s);
@@ -117,7 +121,7 @@ pub fn scrub_with(line: &str, ids: &[String]) -> Scrubbed {
 /// the probe diagnostics.
 ///
 /// [`scrub_authority`] only sees an address that follows `://`, and the device test found the gap
-/// immediately: `plex: server slot 0 re-pointed to 203.0.113.7:32400` is not a URL, and it puts a
+/// immediately: `player: re-pointed to 203.0.113.7:8080` is not a URL, and it puts a
 /// household's LAN topology in an upload that crosses the public internet. The port goes with the
 /// address, because a port is only diagnostic in company with the address it is on.
 ///
@@ -329,9 +333,6 @@ fn scrub_identities(s: &str, ids: &[String]) -> String {
 /// What is left here is the generic shape a future call site can still leak through, which is
 /// worth catching centrally because it is cheap and mechanical:
 ///
-/// * **`plex://…` GUIDs** — a Plex GUID names the WORK, globally and stably. It is the single
-///   most identifying token that can appear in this log, and it arrives from the server rather
-///   than being typed at a call site, so a new site can pick one up without meaning to.
 /// * **`q='…'`** — the search-field convention. Kept as a shape rather than trusting `search.rs`
 ///   to stay disciplined forever.
 ///
@@ -342,32 +343,7 @@ fn scrub_identities(s: &str, ids: &[String]) -> String {
 /// *"logging ratingKeys instead of titles"*. It is stripped on the way OUT instead, by
 /// [`scrub_remote_ids`], because a ratingKey plus a server identity is viewing history.
 fn scrub_viewing(s: &str) -> String {
-    let s = replace_guids(s);
-    replace_quoted_value(&s, "q='", '\'', "<query>")
-}
-
-/// `plex://episode/5d9c…` → `plex://<guid>`. The scheme survives because "we were resolving a
-/// guid here" is the diagnostic; the identifier does not.
-fn replace_guids(s: &str) -> String {
-    const KEY: &str = "plex://";
-    if !s.contains(KEY) {
-        return s.to_string();
-    }
-    let mut out = String::with_capacity(s.len());
-    let mut rest = s;
-    while let Some(at) = rest.find(KEY) {
-        out.push_str(&rest[..at]);
-        out.push_str("plex://<guid>");
-        let after = &rest[at + KEY.len()..];
-        // a guid runs to the first whitespace or quote — the same terminator set the log's other
-        // value-shaped fields use
-        let end = after
-            .find(|c: char| c.is_whitespace() || c == '\'' || c == '"')
-            .unwrap_or(after.len());
-        rest = &after[end..];
-    }
-    out.push_str(rest);
-    out
+    replace_quoted_value(s, "q='", '\'', "<query>")
 }
 
 /// `key…value<close>` → `key<placeholder><close>`, for a value delimited by a known closer.
@@ -400,13 +376,12 @@ fn replace_quoted_value(s: &str, key: &str, close: char, placeholder: &str) -> S
 ///
 /// # This function is on `crate::eventlog::log`'s hot path, and the obvious implementation deadlocks
 ///
-/// It used to be `plex::session::peek()`, which is correct and was fine while the only
+/// It used to be a session-file read, which is correct and was fine while the only
 /// caller was a once-per-upload snapshot on a worker thread. Putting it under `crate::eventlog::log` made it
 /// two separate disasters at once, both found by the host suite hanging rather than failing:
 ///
 /// * **Deadlock.** `peek()` takes the session I/O mutex. Any code that holds that mutex and then
-///   logs — which is most of `plex::session` and `auth` — waits on itself. The whole `auth::tests`
-///   block hung on this.
+///   logs — which is most of the session and sign-in code — waits on itself.
 /// * **Disk I/O per log line.** `peek()` walks up to five candidate paths and `read`s each. The
 ///   log is written a few times a second, so that is a syscall storm for a string rewrite.
 ///
@@ -500,12 +475,71 @@ fn scrub_params(s: &str) -> String {
     }
 }
 
+/// JSON fields whose value is a secret, as the Stremio API bodies spell them.
+const JSON_SECRETS: [&str; 4] = ["\"authKey\":\"", "\"password\":\"", "\"apiKey\":\"", "\"token\":\""];
+
+/// `"authKey":"abc"` → `"authKey":"<redacted>"`.
+fn scrub_json_secrets(s: &str) -> String {
+    JSON_SECRETS.iter().fold(s.to_string(), |acc, key| replace_quoted_value(&acc, key, '"', "<redacted>"))
+}
+
+/// The resource names a Stremio addon URL routes on. Everything between the host and the first of
+/// these is the addon's transport configuration, which is the user's (a debrid key, a base64
+/// settings blob), so it becomes `<config>`.
+const ADDON_RESOURCES: [&str; 6] = ["manifest.json", "catalog", "meta", "stream", "subtitles", "addon_catalog"];
+
+/// URL paths, made safe: addon configuration becomes `<config>`, and any remaining path segment
+/// that looks like a key (20+ characters of letters, digits, `-` or `_`, with both letters and
+/// digits) becomes `<redacted>` — resolver links carry an API key mid-path. Ids such as
+/// `tt0111161` are too short to be mistaken for one, and the rest of the path stays.
+fn scrub_paths(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(at) = rest.find("://") {
+        let after = at + 3;
+        let Some(slash) = rest[after..].find(|c: char| c == '/' || c == '?' || c.is_whitespace()) else {
+            break;
+        };
+        let path_at = after + slash;
+        out.push_str(&rest[..path_at]);
+        rest = &rest[path_at..];
+        if !rest.starts_with('/') {
+            continue;
+        }
+        let end = rest
+            .find(|c: char| c == '?' || c == '#' || c == '"' || c == '\'' || c.is_whitespace())
+            .unwrap_or(rest.len());
+        let segments: Vec<&str> = rest[1..end].split('/').collect();
+        let config = segments.iter().position(|seg| ADDON_RESOURCES.contains(seg)).filter(|&i| i > 0);
+        let mut kept: Vec<&str> = Vec::with_capacity(segments.len());
+        if let Some(i) = config {
+            kept.push("<config>");
+            kept.extend_from_slice(&segments[i..]);
+        } else {
+            kept.extend_from_slice(&segments);
+        }
+        for seg in kept {
+            out.push('/');
+            out.push_str(if looks_like_key(seg) { "<redacted>" } else { seg });
+        }
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+fn looks_like_key(seg: &str) -> bool {
+    seg.len() >= 20
+        && seg.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        && seg.bytes().any(|b| b.is_ascii_digit())
+        && seg.bytes().any(|b| b.is_ascii_alphabetic())
+}
+
 /// Any `scheme://authority` becomes `scheme://<host>`, keeping the path.
 ///
-/// This is the clause that covers what no parameter list can: a PMS address, a `plex.direct` name
-/// (whose leftmost label is a hex-encoded LAN address, i.e. a household fingerprint), a friend's
-/// shared server, a port that identifies a deployment. The PATH is what makes a line diagnostic —
-/// `/video/:/transcode/universal/start.mkv` — and it stays.
+/// This is the clause that covers what no parameter list can: a LAN address, a self-hosted addon's
+/// name, a port that identifies a deployment. The PATH is what makes a line diagnostic —
+/// `/catalog/movie/top.json` — and it stays ([`scrub_paths`] has already made it safe).
 fn scrub_authority(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
@@ -531,7 +565,7 @@ fn scrub_authority(s: &str) -> String {
 /// no `scheme://` here for it to anchor on.
 ///
 /// This is the gap the device found: `stream.rs`'s DNS-failure line spells the unresolved name as
-/// bare `host=<fqdn>`, several `plex::servers`/`player::engine` re-point lines do the same for an
+/// bare `host=<fqdn>`, and re-point lines do the same for an
 /// address, and none of those go through a URL. Rather than teach every such call site its own
 /// redaction, this is keyed the same way [`scrub_params`] is keyed on its credential parameters —
 /// the literal `host=` is the signal, not a guess at what a hostname looks like, so it cannot
@@ -585,12 +619,52 @@ mod tests {
         scrub_local(s)
     }
 
-    /// The exact shape the log's own backstop was written for still cannot survive this one.
+    /// A token query parameter cannot survive, and the diagnostic half of the line does.
     #[test]
-    fn a_plex_token_never_survives_either_pass() {
-        let out = kept("retranscode rk=42 -> http://10.0.0.2:32400/video/:/transcode/universal/start.mkv?protocol=http&X-Plex-Token=aBcD1234xyzQ");
+    fn a_token_parameter_never_survives_either_pass() {
+        let out = kept("player: open http://10.0.0.2:8080/live/play.m3u8?quality=hd&token=aBcD1234xyzQ");
         assert!(!out.contains("aBcD1234xyzQ"));
-        assert!(out.contains("start.mkv"), "the diagnostic half survives");
+        assert!(out.contains("play.m3u8"), "the diagnostic half survives");
+    }
+
+    /// An addon's transport URL carries the user's configuration for it (a debrid key, a
+    /// base64 settings blob) in the path segments before the resource name.
+    #[test]
+    fn an_addon_configuration_path_never_survives() {
+        let out = kept("addon: GET https://addon.example/realdebrid=AbCdEf0123456789/stream/movie/tt0111161.json -> 200");
+        assert!(!out.contains("AbCdEf0123456789") && !out.contains("realdebrid="), "{out}");
+        assert_eq!(out, "addon: GET https://<host>/<config>/stream/movie/tt0111161.json -> 200");
+        let out = kept("addon: manifest https://addon.example/eyJwcm92aWRlcnMiOlsiYSJdfQ/manifest.json");
+        assert_eq!(out, "addon: manifest https://<host>/<config>/manifest.json");
+        let out = kept("addon: https://a.example/cfg/x%7Cy/catalog/movie/top/skip=100.json");
+        assert_eq!(out, "addon: https://<host>/<config>/catalog/movie/top/skip=100.json");
+    }
+
+    /// A plain addon URL is diagnostic as it is: resource, type, id and extras stay.
+    #[test]
+    fn an_unconfigured_addon_path_is_kept() {
+        let out = kept("addon: https://v3-cinemeta.strem.io/catalog/series/top/genre=Drama&skip=20.json");
+        assert_eq!(out, "addon: https://<host>/catalog/series/top/genre=Drama&skip=20.json");
+    }
+
+    /// Resolver links put an API key in the middle of a stream URL's path.
+    #[test]
+    fn an_opaque_key_in_a_stream_path_never_survives() {
+        let out = kept("player: open https://dl.example/resolve/realdebrid/Q1w2E3r4T5y6U7i8O9p0/abc/1/file.mkv");
+        assert!(!out.contains("Q1w2E3r4T5y6U7i8O9p0"), "{out}");
+        assert!(out.ends_with("/resolve/realdebrid/<redacted>/abc/1/file.mkv"), "{out}");
+    }
+
+    /// The Stremio session key, in the API's JSON bodies and in query form.
+    #[test]
+    fn a_stremio_auth_key_never_survives() {
+        let out = kept(r#"api: POST {"type":"AddonCollectionGet","authKey":"5f3c9a0b7d1e","update":true}"#);
+        assert!(!out.contains("5f3c9a0b7d1e"), "{out}");
+        assert!(out.contains(r#""authKey":"<redacted>","update":true"#), "{out}");
+        let out = kept("api: retry ?authKey=5f3c9a0b7d1e&x=1");
+        assert!(!out.contains("5f3c9a0b7d1e"), "{out}");
+        let out = kept(r#"api: login {"email":"a@b.c","password":"hunter22"}"#);
+        assert!(!out.contains("hunter22"), "{out}");
     }
 
     /// A header value is a credential to END OF LINE — half a bearer token is still one.
@@ -628,11 +702,11 @@ mod tests {
     /// reached `stremionative-events.log` unredacted this way. Reproduces the exact shape.
     #[test]
     fn a_dns_failure_does_not_leak_the_bare_hostname() {
-        let out = kept("stream: GET /identity DNS FAILED host=plex.main.example.net");
+        let out = kept("stream: GET /identity DNS FAILED host=addon.main.example.net");
         assert!(
-            !out.contains("plex.main.example.net")
+            !out.contains("addon.main.example.net")
                 && !out.contains("example.net")
-                && !out.contains("plex.main"),
+                && !out.contains("addon.main"),
             "the hostname survived: {out}"
         );
         assert!(
@@ -647,7 +721,7 @@ mod tests {
     #[test]
     fn a_bare_host_kv_is_redacted_but_a_hex_dump_reusing_the_key_is_not() {
         assert_eq!(
-            kept("net: nowan — refused name host=plex.main.example.net"),
+            kept("net: nowan — refused name host=addon.main.example.net"),
             "net: nowan — refused name host=<host>"
         );
         assert_eq!(
@@ -656,16 +730,16 @@ mod tests {
         );
     }
 
-    /// The address clause: a `plex.direct` name encodes a LAN address in its leftmost label, and a
-    /// PMS host is a household's location. The path is the diagnostic half and stays.
+    /// The address clause: a self-hosted addon's name says where a household is. The path is the
+    /// diagnostic half and stays.
     #[test]
     fn a_host_is_replaced_and_the_path_is_kept() {
-        let out = kept("open https://10-0-0-2.abc123.plex.direct:32400/library/sections?x=1");
+        let out = kept("open https://10-0-0-2.home.example:7000/catalog/movie/top.json?x=1");
         assert!(
-            !out.contains("plex.direct") && !out.contains("10-0-0-2"),
+            !out.contains("home.example") && !out.contains("10-0-0-2"),
             "{out}"
         );
-        assert!(out.contains("/library/sections"), "{out}");
+        assert!(out.contains("/catalog/movie/top.json"), "{out}");
         assert!(out.starts_with("open https://<host>"), "{out}");
     }
 
@@ -867,13 +941,12 @@ mod tests {
 
     /// **The generic shapes the backstop owns**, quoted from the call sites that produce them:
     ///
-    /// * `viewstate.rs:524` / `metadata.rs:2102` — a Plex GUID names the WORK, globally and stably
     /// * `search.rs` — the `q='…'` convention
     ///
     /// This is LG's "Content Viewing Information" category, which the app's Data Safety
     /// declaration has to be able to answer **Not collected** to. None of the other four passes
     /// touches it: they hunt credentials, hosts, bare addresses and names taken from the SESSION,
-    /// and a Plex GUID is none of those. Every case passes an EMPTY identity list, the state the
+    /// and a search query is none of those. Every case passes an EMPTY identity list, the state the
     /// app is in for the whole of boot.
     ///
     /// **`rk=` is deliberately not banned.** A ratingKey is server-local, this file is 0640 (the
@@ -885,14 +958,6 @@ mod tests {
     #[test]
     fn the_generic_viewing_identity_shapes_are_neutralised() {
         let cases: &[(&str, &str)] = &[
-            (
-                "viewstate: fanout plex://episode/5d9c085e6afb3d server 3f2a: holds 2",
-                "5d9c085e6afb3d",
-            ),
-            (
-                "altsrc: asked 3 source(s) for plex://movie/5d7768 -> 2 copy(ies)",
-                "5d7768",
-            ),
             ("search: q='breaking bad' state=Results", "breaking bad"),
             ("search: q='unterminated at end of line", "unterminated"),
         ];
@@ -910,18 +975,6 @@ mod tests {
     /// passes the test above and destroys the file it is protecting.
     #[test]
     fn the_diagnostic_half_of_those_lines_survives() {
-        let out = scrub_local_with(
-            "viewstate: fanout plex://episode/5d9c08 server 3f2a: holds 2",
-            &[],
-        );
-        assert!(
-            out.starts_with("viewstate: fanout plex://"),
-            "the SHAPE says what happened: {out}"
-        );
-        assert!(
-            out.contains("holds 2"),
-            "the outcome is the diagnostic: {out}"
-        );
         let out = scrub_local_with("search: q='breaking bad' state=Results", &[]);
         assert!(
             out.contains("state=Results"),
@@ -1072,13 +1125,15 @@ mod tests {
     /// are exempt.
     #[test]
     fn no_log_call_site_interpolates_viewing_content() {
-        // Walk the source of EVERY crate that logs: this one and the application crate beside it
-        // (`rust-modules/src`, where nearly every log call lives). Resolved from the manifest dir
-        // so it is independent of the working directory the test runner happens to have. A layer
-        // crate split out of `rust-modules/src` later must be added here, or its log calls stop
-        // being read (`../machine/src`, `../net/src`, `../platform/src`, `../gfx/src`, `../ui/src`, `../plex/src`, `../telemetry/src`, `../data/src` and `../session/src` are the machine, net, platform, gfx, ui, plex, telemetry, data and session layers').
+        // Walk the source of EVERY crate that logs. Resolved from the manifest dir so it is
+        // independent of the working directory the test runner happens to have. A new crate must
+        // be added here, or its log calls stop being read; crates not ported yet are skipped.
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let roots = [manifest.join("src"), manifest.join("../src"), manifest.join("../machine/src"), manifest.join("../net/src"), manifest.join("../platform/src"), manifest.join("../gfx/src"), manifest.join("../ui/src"), manifest.join("../plex/src"), manifest.join("../telemetry/src"), manifest.join("../data/src"), manifest.join("../session/src"), manifest.join("../media/src"), manifest.join("../appkit/src"), manifest.join("../screens/src")];
+        let roots: Vec<_> = ["src", "../machine/src", "../net/src", "../platform/src", "../gfx/src", "../ui/src", "../stremio/src", "../media/src", "../app/src", "../screens/src"]
+            .iter()
+            .map(|d| manifest.join(d))
+            .filter(|d| d.is_dir())
+            .collect();
         let mut offences: Vec<String> = Vec::new();
         let mut files = 0usize;
         for src in &roots {
