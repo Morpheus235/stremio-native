@@ -34,4 +34,4 @@ pins the codegen flags that keep the binary from SIGILL-ing on the TV.
 
 ## License
 
-GPL-3.0-or-later. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+GPL-3.0-or-later. See [LICENSE](LICENSE), [NOTICE](NOTICE), [docs/legal.md](docs/legal.md) and [PRIVACY.md](PRIVACY.md). Not affiliated with Stremio.
