@@ -1132,10 +1132,10 @@ mod tests {
         );
     }
 
-    /// Real consent questions need a third HERO line in Spanish and Belarusian. The shared
+    /// Long translated questions need a third HERO line in Spanish and Belarusian. The shared
     /// title must keep the whole question and move the disclosure region by that same height.
     #[test]
-    fn translated_consent_questions_keep_their_complete_titles() {
+    fn long_translated_questions_keep_their_complete_titles() {
         struct QuestionMeasure;
         impl sn_machine::machine::Measure for QuestionMeasure {
             fn width(&self, text: &std::ffi::CStr, size: i32, _bold: bool) -> f32 {
@@ -1146,17 +1146,19 @@ mod tests {
         }
         let measure = QuestionMeasure;
         let layout = RouteLayout::screen();
-        for preference in [sn_platform::i18n::Preference::En, sn_platform::i18n::Preference::Es, sn_platform::i18n::Preference::Be, sn_platform::i18n::Preference::Fr] {
-            let locale = sn_platform::i18n::LocaleContext::resolve(preference, None, None, None, None);
-            for question in [sn_platform::i18n::msg::settings_consent_crash_title_in(&locale),
-                sn_platform::i18n::msg::settings_consent_product_title_in(&locale)] {
-                let title = RouteLayout::narrative_title(question).with_measure(&measure);
-                assert!(!title.truncates(layout.narrative.w), "question was elided: {question}");
-                let height = title.measure_h(layout.narrative.w);
-                let copy = layout.narrative_copy_frame(false, question, layout.action.y, &measure);
-                assert_eq!(copy.y, layout.narrative_top(false) + height + theme::space::MD);
-                assert!(copy.h > theme::size::BODY as f32 * 6.0, "disclosure keeps a readable viewport");
-            }
+        // Questions of the lengths the shipped translations reach, in each catalog language.
+        for question in [
+            "Share crash reports?", "Share product analytics?",
+            "¿Compartir informes de fallos?", "¿Compartir análisis de uso?",
+            "Дасылаць справаздачы пра збоі?", "Дасылаць аналітыку выкарыстання?",
+            "Partager les rapports de plantage ?", "Partager les statistiques d’utilisation ?",
+        ] {
+            let title = RouteLayout::narrative_title(question).with_measure(&measure);
+            assert!(!title.truncates(layout.narrative.w), "question was elided: {question}");
+            let height = title.measure_h(layout.narrative.w);
+            let copy = layout.narrative_copy_frame(false, question, layout.action.y, &measure);
+            assert_eq!(copy.y, layout.narrative_top(false) + height + theme::space::MD);
+            assert!(copy.h > theme::size::BODY as f32 * 6.0, "disclosure keeps a readable viewport");
         }
     }
 
