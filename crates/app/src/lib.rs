@@ -22,6 +22,7 @@ pub mod crash;
 pub mod fetch;
 pub mod port;
 pub mod system;
+pub mod textinput;
 pub mod work;
 
 /// The version this binary reports (`User-Agent`, the boot preamble): the package version for a

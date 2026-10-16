@@ -1,0 +1,462 @@
+{
+  "app.tab.home": {
+    "value": "Home",
+    "description": "Top bar: the Home destination's pill."
+  },
+  "app.tab.live_tv": {
+    "value": "Live TV",
+    "description": "Top bar: the Live TV destination's pill (TV channel catalogs)."
+  },
+  "app.tab.library": {
+    "value": "Library",
+    "description": "Top bar: the Library destination's pill (the user's Stremio library)."
+  },
+  "app.tab.addons": {
+    "value": "Addons",
+    "description": "Top bar: the Addons destination's pill."
+  },
+  "app.tab.settings": {
+    "value": "Settings",
+    "description": "Top bar: the Settings destination's pill; also the Settings page title and the crumb of its sub-pages."
+  },
+  "app.tab.search": {
+    "value": "Search",
+    "description": "The Search destination (its pill is a magnifier; named in the remote key list)."
+  },
+  "app.menu.open": {
+    "value": "Open",
+    "description": "A card's options menu: open the item's page."
+  },
+  "app.menu.add_to_library": {
+    "value": "Add to library",
+    "description": "A card's options menu: add the item to the user's Stremio library."
+  },
+  "app.menu.sign_in_first": {
+    "value": "Sign in to use your library",
+    "description": "A card's options menu: why Add to library is unavailable."
+  },
+  "app.library.sign_in": {
+    "value": "Sign in to see your library",
+    "description": "Library page, signed out: the read-out's verdict."
+  },
+  "app.library.sign_in_reason": {
+    "value": "Your Stremio library and what you were watching appear here once you sign in.",
+    "description": "Library page, signed out: the line under the verdict."
+  },
+  "app.addons.copy": {
+    "value": "The addons StremioNative browses, searches and plays from. Signing in brings your own collection.",
+    "description": "Addons page: the line under the title."
+  },
+  "app.addons.installed": {
+    "value": "In use",
+    "description": "Addons page: the list's section header."
+  },
+  "app.addons.loading": {
+    "value": "Loading an addon…",
+    "description": "Addons page: an addon whose manifest is still loading."
+  },
+  "app.addons.failed": {
+    "value": "An addon could not be loaded ({reason})",
+    "description": "Addons page: an addon whose manifest failed, with the cause.",
+    "args": {
+      "reason": "str"
+    }
+  },
+  "app.grid.loading": {
+    "value": "Loading…",
+    "description": "Catalog grid: caption beside the spinner while the first page loads."
+  },
+  "app.grid.empty": {
+    "value": "Nothing here",
+    "description": "Catalog grid: the catalog holds nothing."
+  },
+  "app.grid.missing": {
+    "value": "This addon is no longer installed",
+    "description": "Catalog grid: the addon the grid belongs to is not installed any more."
+  },
+  "app.grid.failed": {
+    "value": "Couldn’t load this catalog",
+    "description": "Catalog grid: failure verdict when the first page failed."
+  },
+  "app.grid.failed_reason": {
+    "value": "The addon did not answer. Try again in a moment.",
+    "description": "Catalog grid: the line under the failure verdict."
+  },
+  "app.grid.results_for": {
+    "value": "{kind} · results for “{query}”",
+    "description": "Catalog grid opened from a search row: the heading's annotation — the content type and the query.",
+    "args": {
+      "kind": "str",
+      "query": "str"
+    }
+  },
+  "app.live.catalog_chip": {
+    "value": "Catalog",
+    "description": "Live TV: the chip that picks which addon catalog of channels is shown."
+  },
+  "app.live.genre_chip": {
+    "value": "Genre",
+    "description": "Live TV: the chip that picks the channels' genre."
+  },
+  "app.live.all_genres": {
+    "value": "All",
+    "description": "Live TV: the genre option that shows every channel."
+  },
+  "app.live.none": {
+    "value": "No live TV in your addons",
+    "description": "Live TV: no installed addon offers TV channels."
+  },
+  "app.live.none_reason": {
+    "value": "Install an addon that offers TV channels and they appear here.",
+    "description": "Live TV: the line under the no-channels read-out."
+  },
+  "app.search.placeholder": {
+    "value": "Search",
+    "description": "Search field: the placeholder while it is empty."
+  },
+  "app.search.hint": {
+    "value": "Type at least two letters to search your addons.",
+    "description": "Search page with no query and no recent searches."
+  },
+  "app.search.addon_on": {
+    "value": "On",
+    "description": "Search: an addon filter chip's state — the addon is searched."
+  },
+  "app.search.addon_off": {
+    "value": "Off",
+    "description": "Search: an addon filter chip's state — the addon is left out."
+  },
+  "app.search.clear_recents": {
+    "value": "Clear recent searches",
+    "description": "Search: the control under the recent searches that forgets them."
+  },
+  "app.search.no_catalogs": {
+    "value": "No addon is searching",
+    "description": "Search: every addon that can search is switched off."
+  },
+  "app.search.no_catalogs_reason": {
+    "value": "Switch an addon on above, or install one that can search.",
+    "description": "Search: the line under the no-addon read-out."
+  },
+  "app.search.row_loading": {
+    "value": "Searching…",
+    "description": "Search: a result row whose addon has not answered yet."
+  },
+  "app.search.row_empty": {
+    "value": "Nothing found here",
+    "description": "Search: a result row whose catalog found nothing."
+  },
+  "app.search.row_failed": {
+    "value": "This addon’s search failed ({reason})",
+    "description": "Search: a result row whose addon failed, with the cause.",
+    "args": {
+      "reason": "str"
+    }
+  },
+  "app.settings.copy": {
+    "value": "How StremioNative plays, which keys do what, and what it is.",
+    "description": "Settings root: the line under the title."
+  },
+  "app.settings.playback": {
+    "value": "Playback",
+    "description": "Settings root: section header."
+  },
+  "app.settings.subtitle_size": {
+    "value": "Subtitle size",
+    "description": "Settings: row and picker title — how large subtitles are drawn."
+  },
+  "app.settings.subtitle_position": {
+    "value": "Subtitle position",
+    "description": "Settings: row and picker title — where on the picture subtitles sit."
+  },
+  "app.settings.subtitle_size_copy": {
+    "value": "How large the subtitles StremioNative draws are. Image subtitles keep their own size.",
+    "description": "Subtitle size picker: the line under the title."
+  },
+  "app.settings.subtitle_position_copy": {
+    "value": "Where on the picture plain-text subtitles sit. Styled and image subtitles keep their own placement.",
+    "description": "Subtitle position picker: the line under the title."
+  },
+  "app.settings.size.small": {
+    "value": "Small",
+    "description": "Subtitle size rung."
+  },
+  "app.settings.size.medium": {
+    "value": "Medium",
+    "description": "Subtitle size rung (the default)."
+  },
+  "app.settings.size.large": {
+    "value": "Large",
+    "description": "Subtitle size rung."
+  },
+  "app.settings.size.extra_large": {
+    "value": "Extra large",
+    "description": "Subtitle size rung."
+  },
+  "app.settings.size.huge": {
+    "value": "Huge",
+    "description": "Subtitle size rung (the largest)."
+  },
+  "app.settings.position.low": {
+    "value": "Low",
+    "description": "Subtitle position rung (the default: near the bottom)."
+  },
+  "app.settings.position.middle": {
+    "value": "Middle",
+    "description": "Subtitle position rung."
+  },
+  "app.settings.position.high": {
+    "value": "High",
+    "description": "Subtitle position rung."
+  },
+  "app.settings.remote": {
+    "value": "Remote",
+    "description": "Settings root: section header for the remote control."
+  },
+  "app.settings.remote_keys": {
+    "value": "Remote keys",
+    "description": "Settings: the row and page title of the remote key map."
+  },
+  "app.settings.remote_keys_detail": {
+    "value": "Colour and channel key shortcuts",
+    "description": "Settings: the line under the Remote keys row."
+  },
+  "app.settings.about_section": {
+    "value": "About",
+    "description": "Settings root: section header for About, Legal and Privacy."
+  },
+  "app.settings.about": {
+    "value": "About StremioNative",
+    "description": "Settings: the row and page title of About StremioNative."
+  },
+  "app.settings.legal": {
+    "value": "Legal notices",
+    "description": "Settings: the row and page title of the legal notices; the crumb of a licence text."
+  },
+  "app.settings.legal_copy": {
+    "value": "The components StremioNative ships and the licences it and they are under.",
+    "description": "Legal notices page: the line under the title."
+  },
+  "app.settings.privacy": {
+    "value": "Privacy",
+    "description": "Settings: the row and page title of the privacy summary."
+  },
+  "app.settings.version": {
+    "value": "Version {version}",
+    "description": "Settings: the version line (the version is a build string, e.g. 0.1.0).",
+    "args": {
+      "version": "str"
+    }
+  },
+  "app.settings.components": {
+    "value": "Third-party components",
+    "description": "Legal notices: the row and title of the third-party component list."
+  },
+  "app.settings.gpl": {
+    "value": "GNU General Public License v3",
+    "description": "Legal notices: the row and title of the GPL text (keep the licence's own name recognisable)."
+  },
+  "app.settings.ofl": {
+    "value": "Font licence (SIL OFL 1.1)",
+    "description": "Legal notices: the row and title of the fonts' licence text."
+  },
+  "app.settings.notice": {
+    "value": "Copyright notice",
+    "description": "Legal notices: the row and title of the copyright notice."
+  },
+  "app.settings.components_intro": {
+    "value": "StremioNative ships these components, each under its own licence:",
+    "description": "Third-party components page: the line before the list."
+  },
+  "app.settings.components_texts": {
+    "value": "The full licence texts ship in the package and with the source.",
+    "description": "Third-party components page: the line after the list."
+  },
+  "app.about.affiliation_head": {
+    "value": "Not affiliated",
+    "description": "About: heading (shown in capitals)."
+  },
+  "app.about.affiliation": {
+    "value": "StremioNative is an independent, unofficial client. It is not made, endorsed or supported by Stremio, Smart Code OOD, LG Electronics or any addon operator. “Stremio” is used only to say what service the app works with.",
+    "description": "About: the not-affiliated statement (docs/legal.md)."
+  },
+  "app.about.content_head": {
+    "value": "No content",
+    "description": "About: heading (shown in capitals)."
+  },
+  "app.about.content": {
+    "value": "The app ships no catalogs and no media. Everything it lists or plays comes from the addons you install, which decide what they serve. You are responsible for the addons you install.",
+    "description": "About: the no-content statement (docs/legal.md)."
+  },
+  "app.about.licence_head": {
+    "value": "Free software",
+    "description": "About: heading (shown in capitals)."
+  },
+  "app.about.licence": {
+    "value": "StremioNative is free software under the GNU General Public License, version 3 or later. You can get its complete source at:",
+    "description": "About: the licence statement; the source address follows on its own line."
+  },
+  "app.about.plxnative_head": {
+    "value": "Built on PlxNative",
+    "description": "About: heading (shown in capitals) for the credit to the project it is derived from."
+  },
+  "app.about.plxnative": {
+    "value": "StremioNative is derived from PlxNative, the native Plex client for LG televisions, and keeps its licence:",
+    "description": "About: the PlxNative credit; its address follows on its own line."
+  },
+  "app.about.version_head": {
+    "value": "Version",
+    "description": "About: heading (shown in capitals) above the version string."
+  },
+  "app.privacy.copy": {
+    "value": "What StremioNative sends, and to whom.",
+    "description": "Privacy page: the line under the title."
+  },
+  "app.privacy.collects": {
+    "value": "StremioNative collects nothing. It has no analytics, no crash reporting and no usage telemetry, and it sends no data to its authors.",
+    "description": "Privacy: the opening statement (PRIVACY.md)."
+  },
+  "app.privacy.leaves_head": {
+    "value": "What leaves the TV",
+    "description": "Privacy: heading (shown in capitals)."
+  },
+  "app.privacy.sign_in": {
+    "value": "Your Stremio email, password and session key go to api.strem.io, only to sign in and read your addons and library.",
+    "description": "Privacy: one line of what leaves the TV."
+  },
+  "app.privacy.addons": {
+    "value": "Catalog, search, meta, stream and subtitle requests — including your search text and the item you open — go to the addons you installed.",
+    "description": "Privacy: one line of what leaves the TV."
+  },
+  "app.privacy.media": {
+    "value": "Media requests, with any headers an addon asked for, go to the hosts that serve the stream.",
+    "description": "Privacy: one line of what leaves the TV."
+  },
+  "app.privacy.artwork": {
+    "value": "Artwork requests go to the hosts in the addons’ image addresses.",
+    "description": "Privacy: one line of what leaves the TV."
+  },
+  "app.privacy.stays_head": {
+    "value": "What stays on the TV",
+    "description": "Privacy: heading (shown in capitals)."
+  },
+  "app.privacy.stays": {
+    "value": "Your session key and settings are stored on the TV only and removed when you sign out. Logs stay on the TV, scrubbed of keys, passwords, addon configuration and search text.",
+    "description": "Privacy: what is stored locally."
+  },
+  "app.privacy.full": {
+    "value": "The full statement: {url}",
+    "description": "Privacy: where the full statement is; the address is a URL.",
+    "args": {
+      "url": "str"
+    }
+  },
+  "app.remote.copy": {
+    "value": "What each key on the remote does.",
+    "description": "Remote keys page: the line under the title."
+  },
+  "app.remote.navigation_head": {
+    "value": "Moving around",
+    "description": "Remote keys: heading (shown in capitals)."
+  },
+  "app.remote.key_arrows": {
+    "value": "Arrows",
+    "description": "Remote keys: the arrow keys."
+  },
+  "app.remote.move": {
+    "value": "move between items, and up to the top bar",
+    "description": "Remote keys: what the arrows do."
+  },
+  "app.remote.key_ok": {
+    "value": "OK",
+    "description": "Remote keys: the OK key."
+  },
+  "app.remote.select": {
+    "value": "open or choose",
+    "description": "Remote keys: what OK does."
+  },
+  "app.remote.key_hold_ok": {
+    "value": "Hold OK",
+    "description": "Remote keys: holding OK down."
+  },
+  "app.remote.options": {
+    "value": "options for an item",
+    "description": "Remote keys: what holding OK on an item does."
+  },
+  "app.remote.key_back": {
+    "value": "BACK",
+    "description": "Remote keys: the BACK key."
+  },
+  "app.remote.back": {
+    "value": "go back; on the top bar, to Home; on Home’s bar, to the TV’s Home",
+    "description": "Remote keys: what BACK does."
+  },
+  "app.remote.key_exit": {
+    "value": "EXIT",
+    "description": "Remote keys: the EXIT key."
+  },
+  "app.remote.exit": {
+    "value": "close StremioNative",
+    "description": "Remote keys: what EXIT does."
+  },
+  "app.remote.shortcuts_head": {
+    "value": "Shortcuts",
+    "description": "Remote keys: heading (shown in capitals)."
+  },
+  "app.remote.shortcuts_where": {
+    "value": "Everywhere except while typing, in a menu, or during playback:",
+    "description": "Remote keys: where the shortcuts work."
+  },
+  "app.remote.key_red": {
+    "value": "Red",
+    "description": "Remote keys: the red colour key."
+  },
+  "app.remote.key_green": {
+    "value": "Green",
+    "description": "Remote keys: the green colour key."
+  },
+  "app.remote.key_yellow": {
+    "value": "Yellow",
+    "description": "Remote keys: the yellow colour key."
+  },
+  "app.remote.key_blue": {
+    "value": "Blue",
+    "description": "Remote keys: the blue colour key."
+  },
+  "app.remote.key_ch_up": {
+    "value": "CH +",
+    "description": "Remote keys: the channel-up key."
+  },
+  "app.remote.key_ch_down": {
+    "value": "CH −",
+    "description": "Remote keys: the channel-down key."
+  },
+  "app.remote.prev_tab": {
+    "value": "previous tab",
+    "description": "Remote keys: a shortcut's action — the top bar's previous destination."
+  },
+  "app.remote.next_tab": {
+    "value": "next tab",
+    "description": "Remote keys: a shortcut's action — the top bar's next destination."
+  },
+  "app.remote.playback_head": {
+    "value": "During playback",
+    "description": "Remote keys: heading (shown in capitals)."
+  },
+  "app.remote.key_play": {
+    "value": "OK, PLAY, PAUSE",
+    "description": "Remote keys: the play/pause transport keys."
+  },
+  "app.remote.pause": {
+    "value": "pause or resume",
+    "description": "Remote keys: what the play/pause keys do."
+  },
+  "app.remote.key_stop": {
+    "value": "BACK, STOP",
+    "description": "Remote keys: the keys that end playback."
+  },
+  "app.remote.stop": {
+    "value": "stop and go back",
+    "description": "Remote keys: what BACK/STOP do during playback."
+  }
+}

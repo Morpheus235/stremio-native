@@ -13,23 +13,27 @@
 //! - **more of a row** (`CatalogCmd::More`), from the shelf's own `Want` when its window reaches
 //!   past what has loaded.
 //!
-//! OK on a card opens its Detail page. BACK at Home is the application's (the television's Home).
+//! OK on a card opens its Detail page; a held OK opens its item menu (`crate::menu`). The page
+//! wears the shared top bar (`crate::tabs`): UP from the first row reaches it, BACK on a row
+//! returns focus to it, and BACK on the bar is the application's (the television's Home).
 
 use std::collections::HashMap;
 
-use sn_machine::machine::{Canon, Cx, Effects, EntryId, Fx, GroupId, Handled, LogicalState, Machine, NavOp};
+use sn_machine::machine::{
+    Canon, Cx, Edge, Effects, EntryId, Fx, GroupId, Handled, InputEvent, InputKind, Key, LogicalState, Machine, NavOp,
+};
 use sn_machine::present::Provenance;
 use sn_platform::i18n::msg;
 use sn_stremio::types::MetaPreview;
 use sn_ui::cards::{CardEvent, CardSource, Kind, RowStyle, SectionSpec, Stack, StackEvent, StackPage, TileLabel};
 use sn_ui::consts::{CARD_H, MARGIN_X, SCR_H, SCR_W};
 use sn_ui::label::{Label, VAlign};
-use sn_ui::screen::{DrawFrame, FocusSource, Focusable, HitSource, RenderStrategy, Screen, ScreenEvent};
-use sn_ui::tile::{TileFacts, TileKind};
+use sn_ui::screen::{At, DrawFrame, FocusSource, Focusable, HitSource, Link, RenderStrategy, Screen, ScreenEvent};
 use sn_ui::widgets::{Art, StatusKind, StatusOverlay};
 use sn_ui::{theme, Env, Rect};
 
-use crate::registry::{kind_label, word, AppArg, AppFx, Bundle, CatalogCmd, FirstSeat, ItemRef};
+use crate::cards::item_ref;
+use crate::registry::{kind_label, word, AppArg, AppFx, Bundle, CatalogCmd, FirstSeat, MenuArg, MenuKind};
 use crate::stores::catalog::{AddonsState, CatalogStore, Row, RowId, RowStatus};
 use crate::stores::StoreId;
 
@@ -38,8 +42,8 @@ const FIRST_CARD_ELEM: u32 = 0x1000;
 /// The failed install list's Retry action (a key namespace, not an index).
 const RETRY_ELEM: u32 = sn_ui::geom::NAMESPACE_FLOOR + 1;
 const STATUS_GROUP: GroupId = GroupId(0);
-/// The page's top: the first shelf's heading sits this far down.
-pub const CONTENT_TOP: f32 = 64.0;
+/// The page's top: the first shelf's heading sits this far down, clear of the shared top bar.
+pub const CONTENT_TOP: f32 = sn_ui::widgets::TOP_BAR_BOTTOM + theme::space::MD;
 /// From a shelf's top to its cards: the heading's band.
 pub const HEAD_TO_ROW: f32 = 64.0;
 /// The heading's cap top, inside its band.
@@ -105,21 +109,7 @@ pub struct RowCards<'a> {
     at: &'a HashMap<u32, (RowId, usize)>,
 }
 
-/// What a poster tile reads of a catalog item.
-pub fn tile_facts(item: &MetaPreview) -> TileFacts<'_> {
-    TileFacts {
-        owner: std::ptr::from_ref(item) as usize,
-        src: 0,
-        kind: match item.kind.as_str() {
-            "movie" => TileKind::Movie,
-            "series" => TileKind::Show,
-            _ => TileKind::Other,
-        },
-        title: &item.name,
-        thumb: item.poster.as_deref().unwrap_or(""),
-        ..Default::default()
-    }
-}
+pub use crate::cards::tile_facts;
 
 impl CardSource<Bundle> for RowCards<'_> {
     fn len(&self) -> usize {
@@ -261,9 +251,14 @@ impl StackPage<Bundle> for Page {
         (k == Sec::Status).then_some(RETRY_ELEM)
     }
 
-    /// Catalog cards carry no item menu yet.
+    /// Every catalog card opens its item menu on a held OK.
     fn card_has_menu(&self, _cx: &Cx<'_, Bundle>, _k: Sec, _elem: &u32) -> bool {
-        false
+        true
+    }
+
+    /// A shelf scrolled back into view stops under the top bar, not under the screen's edge.
+    fn reveal_margin(&self, _k: Sec) -> f32 {
+        CONTENT_TOP
     }
 
     fn draw_heading(&self, k: Sec, f: &mut DrawFrame<'_, '_, Bundle>, r: Rect, lift: f32) {
@@ -306,13 +301,24 @@ pub struct HomeScreen {
     view: Option<std::ops::Range<usize>>,
     /// Home mounts before its rows land: the first one that does takes focus.
     seat: FirstSeat,
+    /// The group DOWN from the bar enters, as of the last tick (`Screen::links` has no `Cx`).
+    first_row: Option<GroupId>,
+    /// The viewer has moved focus themselves.
+    chose: bool,
 }
 
 impl HomeScreen {
     pub const SHAPE: &'static str = "HomeScreen{entry:u32,cards:u32,view:Option<(u32,u32)>,stack:Stack}";
 
     pub fn new(entry: EntryId) -> Self {
-        HomeScreen { page: Page { entry, cards: Interned::default() }, stack: Stack::new(entry), view: None, seat: FirstSeat::new() }
+        HomeScreen {
+            page: Page { entry, cards: Interned::default() },
+            stack: Stack::new(entry).hold_hint(sn_ui::hold_hint::Kind::Library),
+            view: None,
+            seat: FirstSeat::new(),
+            first_row: None,
+            chose: false,
+        }
     }
 
     fn view(&self) -> impl Focusable<Bundle> + '_ {
@@ -348,11 +354,30 @@ impl HomeScreen {
 
     fn open(&self, cx: &Cx<'_, Bundle>, elem: u32, fx: &mut Effects<'_, Bundle>) {
         if let Some(item) = self.item(cx, elem) {
-            fx.push(Fx::Nav(NavOp::Push(AppArg::Detail(ItemRef {
-                kind: item.kind.clone(),
-                id: item.id.clone(),
-                name: item.name.clone(),
-            }))));
+            fx.push(Fx::Nav(NavOp::Push(AppArg::Detail(item_ref(item)))));
+        }
+    }
+
+    /// A held OK on a card: its item menu, anchored beside the card.
+    fn menu(&self, cx: &Cx<'_, Bundle>, elem: u32, fx: &mut Effects<'_, Bundle>) {
+        let Some(item) = self.item(cx, elem) else { return };
+        let anchor = self.stack.focused_card(&self.page, cx, At::Drawn).map_or_else(crate::menu::fallback_anchor, |(_, at)| at.rect);
+        let focus = cx.focus.current.filter(|k| k.entry == self.page.entry);
+        fx.push(Fx::Nav(NavOp::Present(AppArg::Menu(MenuArg {
+            host: self.page.entry,
+            reply: fx.from(),
+            focus,
+            anchor: MenuArg::anchor_of(anchor),
+            kind: MenuKind::Item(item_ref(item)),
+        }))));
+    }
+
+    /// The group DOWN from the bar enters: the first row with cards, else the failed install
+    /// list's Retry.
+    fn first_group(&self, cx: &Cx<'_, Bundle>) -> Option<GroupId> {
+        match first_seat(cx.views.catalog)? {
+            sn_ui::screen::FocusTarget::FirstInGroup(g) => Some(g),
+            _ => None,
         }
     }
 }
@@ -389,7 +414,16 @@ impl Machine<Bundle> for HomeScreen {
                 if let Some(StackEvent::Card(Sec::Row(id), CardEvent::Want(_))) = got {
                     fx.push(Fx::App(AppFx::Catalog(CatalogCmd::More(id))));
                 }
-                self.seat.tick(cx.focus.current.is_some_and(|k| k.entry == self.page.entry), first_seat(cx.views.catalog), fx);
+                // Home mounts before anything has landed, with the remote resting on its pill: that
+                // is a seat nobody chose, so the first row that lands takes it
+                let target = first_seat(cx.views.catalog);
+                let seated = crate::tabs::rests(self.page.entry, crate::tabs::Tab::Home, cx, self.chose, target.is_some());
+                let target = target.or(Some(sn_ui::screen::FocusTarget::Elem(sn_machine::machine::FocusKey {
+                    entry: self.page.entry,
+                    elem: crate::tabs::Tab::Home.elem(),
+                })));
+                self.seat.tick(seated, target, fx);
+                self.first_row = self.first_group(cx);
                 if grew {
                     fx.invalidate(Provenance::Landing(fx.from()));
                 }
@@ -402,7 +436,24 @@ impl Machine<Bundle> for HomeScreen {
             ScreenEvent::PressCommit(_) => {
                 if let Some(StackEvent::Card(_, CardEvent::Activate(elem))) = got {
                     self.open(cx, elem, fx);
+                } else if let Some(k) = cx.focus.current.filter(|k| k.entry == self.page.entry && crate::tabs::on_strip(k.elem)) {
+                    crate::tabs::on_pill(k.elem, crate::tabs::Tab::Home, self.first_group(cx), fx);
                 }
+                Handled::Yes
+            }
+            ScreenEvent::PressHold(_) => {
+                if let Some(StackEvent::Card(_, CardEvent::Hold(elem))) = got {
+                    self.menu(cx, elem, fx);
+                }
+                Handled::Yes
+            }
+            ScreenEvent::Input(InputEvent { kind: InputKind::Key { key: Key::Back, edge: Edge::Down, .. }, .. }) => {
+                // BACK to the bar is the viewer's seat: no landing takes it back
+                self.chose = true;
+                crate::tabs::on_back(self.page.entry, crate::tabs::Tab::Home, cx, fx)
+            }
+            ScreenEvent::Activate(elem) if crate::tabs::on_strip(*elem) => {
+                crate::tabs::on_pill(*elem, crate::tabs::Tab::Home, self.first_group(cx), fx);
                 Handled::Yes
             }
             ScreenEvent::Activate(elem) if *elem == RETRY_ELEM => {
@@ -417,7 +468,11 @@ impl Machine<Bundle> for HomeScreen {
                 }
                 Handled::Yes
             }
-            ScreenEvent::FocusMoved { .. } => {
+            ScreenEvent::FocusMoved { from, by, .. } => {
+                // a deliberate move is the viewer's seat: no landing re-seats over it (the
+                // arrival seat of a tab press is reported as a direction too, but from nowhere
+                // on this page)
+                self.chose |= crate::tabs::deliberate(self.page.entry, *from, *by);
                 fx.invalidate(Provenance::Input);
                 Handled::Yes
             }
@@ -442,10 +497,18 @@ impl Screen<Bundle> for HomeScreen {
     fn crumb(&self, _cx: &Cx<'_, Bundle>) -> Option<std::borrow::Cow<'_, str>> {
         None
     }
+    fn links(&self, out: &mut Vec<Link>) {
+        // the first row's group is the stack's: a row's group is stable per row identity, so the
+        // door is re-declared as rows land
+        if let Some(first) = self.first_row {
+            crate::tabs::links(first, out);
+        }
+    }
     fn prepare(&mut self, _b: &mut sn_ui::frame::Budget, _cx: &Cx<'_, Bundle>) {}
     fn draw(&mut self, f: &mut DrawFrame<'_, '_, Bundle>) {
         sn_gfx::gfx::frame_clear(theme::CLEAR_RGB.0, theme::CLEAR_RGB.1, theme::CLEAR_RGB.2);
         self.stack.view(&self.page).paint(f);
+        self.stack.draw_hold_hint(f.painter.alpha(f.page_alpha), f.measure);
     }
     fn redraw_focused(&self, f: &mut DrawFrame<'_, '_, Bundle>, focus: Option<sn_machine::machine::FocusKey<u32>>) {
         self.stack.view(&self.page).redraw_focused(f, focus);

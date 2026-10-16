@@ -769,6 +769,21 @@ impl RouteLayout {
         }
     }
 
+    /// The same two columns for a page that WEARS the shared top bar (a tab destination: Settings,
+    /// Addons): both start [`theme::space::LG`] under the bar's track
+    /// ([`crate::widgets::TOP_BAR_BOTTOM`]) instead of at the safe area's top, which the track
+    /// occupies. Widths, the region gap and the action band are [`Self::screen`]'s.
+    pub fn below_top_bar() -> Self {
+        let mut layout = Self::screen();
+        let top = crate::widgets::TOP_BAR_BOTTOM + theme::space::LG;
+        let shift = (top - layout.narrative.y).max(0.0);
+        for r in [&mut layout.narrative, &mut layout.content] {
+            r.y += shift;
+            r.h -= shift;
+        }
+        layout
+    }
+
     /// Allocate enough narrative width for an unbreakable title word at HERO size, while
     /// preserving the caller's minimum content width. Short titles keep the preferred measure.
     /// This is shared layout: tabs, rows, focus and paint must all consume the returned columns.

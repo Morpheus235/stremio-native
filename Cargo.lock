@@ -930,6 +930,7 @@ version = "0.0.0"
 dependencies = [
  "image",
  "libc",
+ "serde",
  "serde_json",
  "sn_base",
  "sn_gfx",

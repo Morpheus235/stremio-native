@@ -15,6 +15,7 @@ pub mod boot;
 pub mod bridge;
 pub mod input;
 pub mod playback;
+pub mod prefs;
 pub mod run;
 
 /// The window asked for: the authored canvas, which a television's panel is.
@@ -27,6 +28,8 @@ pub struct App {
     /// The container tree and its machines (§2.2): navigation, input, the present gate.
     pub pages: sn_ui::dispatch::Dispatcher<sn_screens::registry::Bundle>,
     pub bridge: bridge::Bridge,
+    /// The frame's glass plan: the shared top bar's material (`sn_ui::frame::glass`).
+    pub glass: sn_ui::frame::glass::GlassPlan,
     pub running: bool,
     /// Between a WILL/DID background and the next foreground: nothing is presented.
     pub backgrounded: bool,

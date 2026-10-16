@@ -1,5 +1,5 @@
-//! **The off-frame half of the stores**: the jobs `sn_screens`' catalog and detail stores hand
-//! out, run on small-stack workers over [`NetFetch`], and their outcomes handed back to the frame
+//! **The off-frame half of the stores**: the jobs `sn_screens`' catalog, detail, search and grid
+//! stores hand out, run on small-stack workers over [`NetFetch`], and their outcomes handed back to the frame
 //! thread through one mailbox.
 //!
 //! The stores never block and never fetch: they say what they want (`Job`, `DetailJob`) and fold
@@ -16,6 +16,8 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use sn_base::task::OffFrame;
 use sn_screens::stores::catalog::{Job, Landing};
 use sn_screens::stores::detail::{DetailJob, DetailLanding};
+use sn_screens::stores::grid::{GridJob, GridLanding};
+use sn_screens::stores::search::{SearchJob, SearchLanding};
 use sn_stremio::streams::GroupState;
 use sn_stremio::types::{CatalogPage, MetaResponse};
 use sn_stremio::{get_json, Fetch, FetchError};
@@ -26,6 +28,8 @@ use crate::fetch::{NetFetch, Profile};
 pub enum Done {
     Catalog(Landing),
     Detail(DetailLanding),
+    Search(SearchLanding),
+    Grid(GridLanding),
 }
 
 /// The mailbox: workers post, the frame thread drains.
@@ -89,6 +93,38 @@ impl Work {
                 }
             };
             runner.run(what, Box::new(move |off| Done::Detail(run_detail(off, job))), self.tx.clone(), Done::Detail(fail));
+        }
+    }
+
+    /// Start every search row's first page.
+    pub fn search(&self, runner: &dyn Runner, jobs: Vec<SearchJob>) {
+        for job in jobs {
+            let fail = SearchLanding { qgen: job.qgen, row: job.row, result: Err(refused()) };
+            runner.run(
+                "addon-search",
+                Box::new(move |off| {
+                    let fetch = NetFetch::new(off, Profile::Api).cancelled_by(job.cancel);
+                    Done::Search(SearchLanding { qgen: job.qgen, row: job.row, result: get_json::<CatalogPage>(&fetch, &job.url, &[]) })
+                }),
+                self.tx.clone(),
+                Done::Search(fail),
+            );
+        }
+    }
+
+    /// Start every grid page.
+    pub fn grid(&self, runner: &dyn Runner, jobs: Vec<GridJob>) {
+        for job in jobs {
+            let fail = GridLanding { key: job.key.clone(), result: Err(refused()) };
+            runner.run(
+                "addon-grid",
+                Box::new(move |off| {
+                    let fetch = NetFetch::new(off, Profile::Api).cancelled_by(job.cancel);
+                    Done::Grid(GridLanding { key: job.key, result: get_json::<CatalogPage>(&fetch, &job.url, &[]) })
+                }),
+                self.tx.clone(),
+                Done::Grid(fail),
+            );
         }
     }
 

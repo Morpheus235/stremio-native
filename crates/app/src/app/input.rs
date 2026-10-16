@@ -46,6 +46,22 @@ pub fn key_input(sym: u32, wcode: u32, state: u32, at: Tick) -> InputEvent<u32> 
     InputEvent { at, source: Source::Sdl, kind: InputKind::Key { key, sym, wcode, edge: edge_of(state), at_edge: false } }
 }
 
+/// The television keyboard's commit as the dispatcher's input: the panel's own state edge first
+/// when this firmware has one (a commit is proof the panel is up), then the text. Empty commits
+/// are the IME's bookkeeping and carry nothing.
+pub fn text_inputs(text: &str, panel: bool, at: Tick) -> Vec<InputEvent<u32>> {
+    use sn_machine::machine::TextEdit;
+    if text.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::with_capacity(2);
+    if panel {
+        out.push(InputEvent { at, source: Source::Sdl, kind: InputKind::SystemKeyboard(true) });
+    }
+    out.push(InputEvent { at, source: Source::Sdl, kind: InputKind::Text(TextEdit::Commit(text.into())) });
+    out
+}
+
 /// The remote's EXIT key: the one key that ends the process (BACK at the root hands the screen to
 /// the television's Home and keeps running).
 pub fn is_exit(sym: u32, wcode: u32, state: u32) -> bool {
@@ -83,5 +99,15 @@ mod tests {
             other => panic!("a key: {other:?}"),
         }
         assert!(!is_exit(SDLK_RETURN, 0, 1));
+    }
+
+    #[test]
+    fn a_commit_is_text_and_proves_the_panel_up() {
+        let t = Tick { ms: 1, dt_us: 0 };
+        assert!(text_inputs("", true, t).is_empty(), "an empty commit carries nothing");
+        let ev = text_inputs("bat", true, t);
+        assert!(matches!(ev[0].kind, InputKind::SystemKeyboard(true)));
+        assert!(matches!(&ev[1].kind, InputKind::Text(sn_machine::machine::TextEdit::Commit(s)) if &**s == "bat"));
+        assert_eq!(text_inputs("x", false, t).len(), 1, "no panel, no panel edge");
     }
 }

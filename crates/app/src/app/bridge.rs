@@ -1,6 +1,13 @@
 //! **The bridge**: the application's `Rig` for the dispatcher — the stores the screens read, the
-//! effects they ask for executed against the workers and the player, the render cache's upload
+//! effects they ask for executed against the workers and the player, the shared top bar
+//! (`sn_screens::chrome`), the television keyboard, the settings file, the render cache's upload
 //! step, and the three privileged platform calls.
+//!
+//! **The installed addons are read through ONE accessor, [`Bridge::addons`]** — Search plans
+//! against them, Live TV and the grids resolve against them, Detail asks their meta and streams.
+//! Today they are the catalog store's (the signed-out defaults); the sign-in work switches every
+//! page to the user's own collection by changing what it answers (`Views::addons` is its
+//! screen-side twin).
 //!
 //! The stores are pure (`sn_screens::stores`): a screen's command changes what a store WANTS,
 //! the store hands back jobs, [`Work`] runs them off the frame thread, and their landings are
@@ -8,13 +15,23 @@
 //! [`Bridge::notify`], which tells the tree which store moved (`Dispatcher::store_changed`), and
 //! the mounted screens re-read their views.
 
+use std::path::PathBuf;
+
 use sn_base::eventlog::log;
 use sn_machine::machine::{Effects, Fx, Handled, MachineId, NavOp, PresentHandle, TimerId};
 use sn_machine::present::Present;
-use sn_screens::registry::{AppArg, AppFx, AppMounter, AppMsg, Bundle, CatalogCmd, DetailCmd, PlayerCmd, Views};
+use sn_screens::chrome::ChromeBar;
+use sn_screens::registry::{
+    AppArg, AppFx, AppMounter, AppMsg, Bundle, CatalogCmd, DetailCmd, GridCmd, PlayerCmd, SearchCmd, SessionView, SettingsCmd,
+    Views,
+};
 use sn_screens::stores::catalog::CatalogStore;
 use sn_screens::stores::detail::DetailStore;
+use sn_screens::stores::grid::GridStore;
+use sn_screens::stores::search::SearchStore;
+use sn_screens::stores::settings::SettingsStore;
 use sn_screens::stores::StoreId;
+use sn_stremio::manifest::Addon;
 use sn_ui::dispatch::{CxParts, Dispatcher, Rig, Split};
 use sn_ui::frame::Budget;
 use sn_ui::tex::{self, Decoded, Tex, Uploader};
@@ -27,15 +44,28 @@ pub struct Bridge {
     mounter: AppMounter,
     pub catalog: CatalogStore,
     pub detail: DetailStore,
+    pub search: SearchStore,
+    pub grid: GridStore,
+    pub settings: SettingsStore,
+    /// Signed out until the sign-in work lands.
+    pub session: SessionView,
+    pub chrome: ChromeBar,
     pub playback: Playback,
     measure: Box<dyn sn_machine::machine::Measure>,
     work: Work,
     runner: Box<dyn Runner>,
     art: Option<&'static Art>,
-    /// The generation each store last announced to the tree.
-    told: [Option<u32>; 2],
+    /// The generation each store last announced to the tree: catalog, detail, search, grid,
+    /// settings.
+    told: [Option<u32>; 5],
     /// The playback view changed since the tree was last told.
     playback_moved: bool,
+    /// Where the settings are persisted (`None`: not at all, a host test).
+    settings_path: Option<PathBuf>,
+    /// The `(settings, search settings)` generations last written.
+    saved: (u32, u32),
+    /// The frame clock, for the search store's debounce.
+    now_ms: u32,
 }
 
 impl Bridge {
@@ -54,14 +84,77 @@ impl Bridge {
             mounter: AppMounter,
             catalog,
             detail: DetailStore::new(),
+            search: SearchStore::default(),
+            grid: GridStore::new(),
+            settings: SettingsStore::default(),
+            session: SessionView::default(),
+            chrome: ChromeBar::new(),
             playback,
             measure,
             work: Work::new(),
             runner,
             art,
-            told: [None, None],
+            told: [None; 5],
             playback_moved: false,
+            settings_path: None,
+            saved: (0, 0),
+            now_ms: 0,
         }
+    }
+
+    /// Seed the settings and the search store from the settings file, and persist every later
+    /// change to `path`. The player is handed the subtitle preferences at once.
+    pub fn with_settings(mut self, loaded: super::prefs::Loaded, path: PathBuf) -> Self {
+        self.settings = loaded.settings;
+        self.search = loaded.search;
+        self.saved = (self.settings.gen(), self.search.settings_gen());
+        self.settings_path = Some(path);
+        super::prefs::publish(&self.settings);
+        self
+    }
+
+    /// **The installed addons** — the one accessor every lookup plans against (see the module
+    /// doc).
+    pub fn addons(&self) -> &[Addon] {
+        self.catalog.addons()
+    }
+
+    /// The frame's clock: the search store's debounce, and the settings written when they moved.
+    pub fn tick(&mut self, now_ms: u32) {
+        self.now_ms = now_ms;
+        let jobs = {
+            let addons = self.catalog.addons();
+            self.search.tick(now_ms, addons)
+        };
+        if !jobs.is_empty() {
+            self.work.search(&*self.runner, jobs);
+        }
+        self.persist();
+    }
+
+    /// Write the settings file when the settings or the search filter / recents moved.
+    fn persist(&mut self) {
+        let now = (self.settings.gen(), self.search.settings_gen());
+        if now == self.saved {
+            return;
+        }
+        self.saved = now;
+        if let Some(path) = &self.settings_path {
+            super::prefs::save(path.clone(), super::prefs::snapshot(&self.settings, &self.search));
+        }
+    }
+
+    /// Publish the top bar for the page being shown, before the dispatcher's frame.
+    pub fn capture_chrome(&mut self, pages: &mut Dispatcher<Bundle>) {
+        self.chrome.capture(pages, &*self.measure);
+    }
+
+    /// Step the bar's motion after the frame, and publish the transition's presentation for the
+    /// readers outside a page's own frame (the bar, the popovers).
+    pub fn update_chrome(&mut self, pages: &mut Dispatcher<Bundle>, glass: &mut sn_ui::frame::glass::GlassPlan, dt: f32) {
+        self.chrome.update(pages, Some(glass), dt);
+        let tab = pages.nav.tabs.stack.pending_dest().and_then(sn_screens::tabs::Tab::of_arg).map(sn_screens::tabs::Tab::index);
+        sn_ui::nav::publish(pages.nav.tabs.stack.page_alpha(), pages.nav.tabs.stack.chrome_alpha(), tab);
     }
 
     /// Start whatever the catalog store wants now (its manifests at boot, its pages after a view
@@ -81,6 +174,8 @@ impl Bridge {
             changed |= match done {
                 Done::Catalog(l) => self.catalog.land(l),
                 Done::Detail(l) => self.detail.land(l),
+                Done::Search(l) => self.search.land(l),
+                Done::Grid(l) => self.grid.land(l),
             };
         }
         if let Some(art) = self.art {
@@ -101,8 +196,14 @@ impl Bridge {
 
     /// Tell the tree which stores moved since it was last told.
     pub fn notify(&mut self, pages: &mut Dispatcher<Bundle>) {
-        let gens = [self.catalog.gen(), self.detail.gen()];
-        for (i, (id, gen)) in [(StoreId::Catalog, gens[0]), (StoreId::Detail, gens[1])].into_iter().enumerate() {
+        let gens = [
+            (StoreId::Catalog, self.catalog.gen()),
+            (StoreId::Detail, self.detail.gen()),
+            (StoreId::Search, self.search.gen()),
+            (StoreId::Grid, self.grid.gen()),
+            (StoreId::Settings, self.settings.gen()),
+        ];
+        for (i, (id, gen)) in gens.into_iter().enumerate() {
             if self.told[i] != Some(gen) {
                 self.told[i] = Some(gen);
                 pages.store_changed(id.ord(), gen);
@@ -121,6 +222,63 @@ impl Bridge {
             CatalogCmd::RetryAddons => self.catalog.retry_addons(),
         }
         self.start_catalog_jobs();
+    }
+
+    fn search_cmd(&mut self, cmd: SearchCmd) {
+        let jobs = {
+            let addons = self.catalog.addons();
+            match cmd {
+                SearchCmd::Type(text) => {
+                    self.search.type_query(&text, self.now_ms);
+                    Vec::new()
+                }
+                SearchCmd::Submit(text) => self.search.submit(&text, addons),
+                SearchCmd::ToggleAddon(id) => self.search.toggle_addon(&id, addons),
+                SearchCmd::Retry(row) => self.search.retry(row),
+                SearchCmd::Remember(term) => {
+                    self.search.remember(&term);
+                    Vec::new()
+                }
+                SearchCmd::ClearRecents => {
+                    self.search.clear_recents();
+                    Vec::new()
+                }
+            }
+        };
+        if !jobs.is_empty() {
+            self.work.search(&*self.runner, jobs);
+        }
+        self.persist();
+    }
+
+    fn grid_cmd(&mut self, cmd: GridCmd) {
+        let jobs = match cmd {
+            GridCmd::Open(key) => {
+                // a search row's grid opens on the cards the row already holds
+                let seed = self.search.pager_for(&key).cloned();
+                self.grid.open(self.catalog.addons(), key, seed)
+            }
+            GridCmd::Close(key) => {
+                self.grid.close(&key);
+                Vec::new()
+            }
+            GridCmd::More(key) => self.grid.more(&key),
+            GridCmd::Retry(key) => self.grid.retry(&key),
+        };
+        if !jobs.is_empty() {
+            self.work.grid(&*self.runner, jobs);
+        }
+    }
+
+    fn settings_cmd(&mut self, cmd: SettingsCmd) {
+        match cmd {
+            SettingsCmd::Set(pref, rung) => {
+                if self.settings.set(pref, rung) {
+                    super::prefs::publish(&self.settings);
+                }
+            }
+        }
+        self.persist();
     }
 
     fn detail_cmd(&mut self, cmd: DetailCmd) {
@@ -146,13 +304,22 @@ impl Rig<Bundle> for Bridge {
     fn split(&mut self) -> Split<'_, Bundle> {
         Split {
             mounter: &mut self.mounter,
-            views: Views { catalog: &self.catalog, detail: &self.detail, playback: &self.playback.view },
+            views: Views {
+                catalog: &self.catalog,
+                detail: &self.detail,
+                playback: &self.playback.view,
+                search: &self.search,
+                grid: &self.grid,
+                settings: &self.settings,
+                session: self.session,
+            },
             measure: &*self.measure,
         }
     }
 
-    fn deliver(&mut self, _to: MachineId, msg: &AppMsg, _parts: &CxParts<u32>, _fx: &mut Effects<'_, Bundle>) -> Handled {
-        match *msg {}
+    /// No machine but a screen hears an `AppMsg` (a menu's choice goes to the page that asked).
+    fn deliver(&mut self, _to: MachineId, _msg: &AppMsg, _parts: &CxParts<u32>, _fx: &mut Effects<'_, Bundle>) -> Handled {
+        Handled::No
     }
 
     fn timer(&mut self, _owner: MachineId, _id: TimerId, _parts: &CxParts<u32>, _fx: &mut Effects<'_, Bundle>) {}
@@ -161,6 +328,9 @@ impl Rig<Bundle> for Bridge {
         match fx {
             AppFx::Catalog(cmd) => self.catalog_cmd(cmd),
             AppFx::Detail(cmd) => self.detail_cmd(cmd),
+            AppFx::Search(cmd) => self.search_cmd(cmd),
+            AppFx::Grid(cmd) => self.grid_cmd(cmd),
+            AppFx::Settings(cmd) => self.settings_cmd(cmd),
             AppFx::Play(req) => {
                 self.playback.start(&req);
                 self.playback_moved = true;
@@ -179,6 +349,48 @@ impl Rig<Bundle> for Bridge {
 
     fn log(&mut self, line: &str) {
         log(line);
+    }
+
+    /// The shared top bar over a page that wears it.
+    fn draw_chrome(
+        &mut self,
+        arg: &AppArg,
+        _parts: &CxParts<u32>,
+        nav: sn_ui::screen::NavPresentation,
+        glass: Option<&mut sn_ui::frame::glass::GlassPlan>,
+    ) {
+        self.chrome.draw(arg, nav, glass);
+    }
+
+    fn page_alpha(&self) -> f32 {
+        sn_ui::nav::page_alpha()
+    }
+
+    fn navigation_presentation(&self) -> sn_ui::screen::NavPresentation {
+        sn_ui::screen::NavPresentation {
+            page_alpha: sn_ui::nav::page_alpha(),
+            chrome_alpha: sn_ui::nav::chrome_alpha(),
+            view_tab: u32::try_from(sn_ui::nav::view_tab(-1)).ok(),
+            blur_amount: sn_ui::nav::blur_amount(),
+        }
+    }
+
+    /// The television's keyboard, for the field that asked (`textinput`).
+    fn system_keyboard(&mut self, up: bool) {
+        #[cfg(not(test))]
+        if up {
+            crate::textinput::start();
+        } else {
+            crate::textinput::stop();
+        }
+        #[cfg(test)]
+        let _ = up;
+    }
+
+    /// Text arrived with the panel up: it is ours again.
+    fn adopt_system_keyboard(&mut self) {
+        #[cfg(not(test))]
+        crate::textinput::adopt();
     }
 
     /// The render cache's upload step (§3.3 step 9), on the presenting side of the decision.
@@ -251,6 +463,11 @@ pub fn foreground(pages: &mut Dispatcher<Bundle>) {
 /// Is the player page on top?
 pub fn player_on_top(pages: &Dispatcher<Bundle>) -> bool {
     matches!(pages.top_arg(), Some(AppArg::Player(_)))
+}
+
+/// Is the Search page on top, with no menu over it? Its field is the only one text goes to.
+pub fn search_on_top(pages: &Dispatcher<Bundle>) -> bool {
+    matches!(pages.top_arg(), Some(AppArg::Search)) && pages.nav.modals.surfaces.is_empty()
 }
 
 #[cfg(test)]
@@ -364,6 +581,16 @@ mod tests {
                         };
                         bridge.detail.land(crate::work::run_detail_with(&net, job));
                     }
+                    Done::Search(sn_screens::stores::search::SearchLanding { qgen, row, .. }) => {
+                        let url = bridge.search.rows()[row].pager.next_url().unwrap();
+                        let result = sn_stremio::get_json(&net, &url, &[]);
+                        bridge.search.land(sn_screens::stores::search::SearchLanding { qgen, row, result });
+                    }
+                    Done::Grid(sn_screens::stores::grid::GridLanding { key, .. }) => {
+                        let url = bridge.grid.next_url(&key).unwrap();
+                        let result = sn_stremio::get_json(&net, &url, &[]);
+                        bridge.grid.land(sn_screens::stores::grid::GridLanding { key, result });
+                    }
                 }
             }
             bridge.start_catalog_jobs();
@@ -399,6 +626,37 @@ mod tests {
             sn_stremio::streams::GroupState::Ready(streams) => assert_eq!(streams.len(), 2, "both streams listed (one not playable here)"),
             other => panic!("the group loaded: {other:?}"),
         }
+    }
+
+    /// A Settings pick reaches the player at once and the settings file off the frame thread, and
+    /// the search filter and recents ride in the same file.
+    #[test]
+    fn a_settings_change_is_published_to_the_player_and_written() {
+        use sn_screens::registry::SettingsCmd;
+        use sn_screens::stores::settings::Pref;
+        let _g = sn_base::testlock::serial();
+        let dir = sn_base::testscratch::process_dir("bridge-settings");
+        let path = dir.join("settings.json");
+        // SAFETY: as above.
+        let playback = Playback::new(unsafe { MainThread::assume() });
+        let loaded = super::super::prefs::load(&path);
+        let mut bridge = Bridge::with_runner(
+            CatalogStore::new(Vec::<String>::new()),
+            playback,
+            Box::new(sn_ui::fixture::FixtureMeasure),
+            None,
+            Box::new(std::sync::Arc::new(Scripted::default())),
+        )
+        .with_settings(loaded, path.clone());
+        bridge.settings_cmd(SettingsCmd::Set(Pref::SubtitleSize, 4));
+        assert_eq!(sn_media::prefs::subtitle_size(), sn_media::prefs::SubtitleSize::Huge, "the player reads it at once");
+        bridge.search_cmd(sn_screens::registry::SearchCmd::Remember("batman".into()));
+        sn_base::storage_worker::drain_for_test();
+        let back = super::super::prefs::load(&path);
+        assert_eq!(back.settings.get(Pref::SubtitleSize), 4);
+        assert_eq!(back.search.recents(), ["batman"]);
+        bridge.settings_cmd(SettingsCmd::Set(Pref::SubtitleSize, 1));
+        sn_base::storage_worker::drain_for_test();
     }
 
     #[test]

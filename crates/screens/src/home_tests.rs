@@ -181,7 +181,11 @@ fn a_home_that_mounted_empty_seats_focus_when_its_first_row_lands() {
     let _g = sn_base::testlock::serial();
     let mut app = TestApp::boot(CatalogStore::signed_out());
     app.frames(3);
-    assert_eq!(app.d.focus(), None, "nothing to focus while the manifests load");
+    assert_eq!(
+        app.d.focus().map(|k| k.elem),
+        Some(crate::tabs::Tab::Home.elem()),
+        "while the manifests load the remote rests on the bar's Home pill"
+    );
     let jobs = app.rig.catalog.take_jobs();
     assert!(matches!(&jobs[..], [Job::Manifest { source: 0, .. }]));
     app.rig.catalog.land(Landing::Manifest { source: 0, result: Ok(CINEMETA.as_bytes().to_vec()) });
@@ -193,7 +197,11 @@ fn a_home_that_mounted_empty_seats_focus_when_its_first_row_lands() {
     let gen = app.rig.catalog.gen();
     app.notify(StoreId::Catalog, gen);
     app.frames(3);
-    assert!(app.d.focus().is_some(), "the first landed row takes focus");
+    assert!(
+        app.d.focus().is_some_and(|k| !crate::tabs::on_strip(k.elem)),
+        "the first landed row takes the seat nobody chose: {:?}",
+        app.d.focus()
+    );
     app.press(Key::Ok);
     assert_eq!(app.top_name(), "detail", "and OK opens its card");
 }

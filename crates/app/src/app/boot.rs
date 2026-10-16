@@ -101,6 +101,8 @@ pub unsafe fn construct(mt: MainThread) -> Result<App, c_int> {
     }
     sn_gfx::egl::probe();
     sn_platform::tv::window::bind_window(win);
+    // the television keyboard reads the window's input-focus flag (`textinput`'s trap 2)
+    crate::textinput::bind(win);
     sn_platform::tv::window::grab(win);
     sn_platform::tv::window::arm_opaque_region();
     sn_gfx::gfx::init_gl();
@@ -126,16 +128,22 @@ pub unsafe fn construct(mt: MainThread) -> Result<App, c_int> {
     sn_media::player::acb_init(&mt);
     sn_media::ff::boot();
     let playback = Playback::new(mt);
+    sn_screens::settings::set_version(crate::VERSION);
+    // The viewer's settings, read once before the loop (a frame never waits on storage).
+    let settings_path = super::prefs::path();
+    let loaded = super::prefs::load(&settings_path);
     // Signed out: the default addons (Cinemeta). Their manifests are the first requests.
     let mut bridge = Bridge::new(
         sn_screens::stores::catalog::CatalogStore::signed_out(),
         playback,
         Box::new(sn_gfx::text::TtfMeasure),
         Some(art),
-    );
+    )
+    .with_settings(loaded, settings_path);
     bridge.start_catalog_jobs();
     log("boot: Home requested");
-    Ok(App { win, pages, bridge, running: true, backgrounded: false, ev: [0; 64] })
+    let glass = sn_ui::frame::glass::GlassPlan::new();
+    Ok(App { win, pages, bridge, glass, running: true, backgrounded: false, ev: [0; 64] })
 }
 
 /// Leave cleanly: end a playback (the Starfish pipeline must be unloaded, not abandoned), free the

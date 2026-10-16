@@ -6,6 +6,9 @@
 
 pub mod catalog;
 pub mod detail;
+pub mod grid;
+pub mod search;
+pub mod settings;
 
 use sn_machine::machine::StoreOrd;
 
@@ -16,6 +19,9 @@ pub enum StoreId {
     Detail,
     /// The playback publication the player page reads (`registry::PlaybackView`).
     Playback,
+    Search,
+    Grid,
+    Settings,
 }
 
 impl StoreId {
@@ -24,6 +30,9 @@ impl StoreId {
             StoreId::Catalog => 0,
             StoreId::Detail => 1,
             StoreId::Playback => 2,
+            StoreId::Search => 3,
+            StoreId::Grid => 4,
+            StoreId::Settings => 5,
         })
     }
 }

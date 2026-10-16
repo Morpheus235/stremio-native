@@ -8,7 +8,8 @@ The crate `sn_screens`: every screen the dispatcher mounts, the [`Bundle`] host 
 | module | may name |
 |---|---|
 | `stores/` | `sn_stremio`, `sn_machine::machine` — never a screen, never `sn_ui` |
-| a screen (`home.rs`, `detail.rs`, `player.rs`) | `sn_ui`, `stores/`, `sn_stremio` types, `registry` — never a sibling screen, never the app |
+| a screen (`home.rs`, `search.rs`, `livetv.rs`, `library.rs`, `addons.rs`, `settings.rs`, `grid.rs`, `menu.rs`, `detail.rs`, `player.rs`) | `sn_ui`, `stores/`, `sn_stremio` types, `registry`, `tabs`, `cards` — never a sibling screen, never the app |
+| `tabs.rs`, `cards.rs`, `chrome.rs` (shared, not screens) | `sn_ui`, `stores/`, `registry` |
 | `registry.rs` | the screens (it is the one `mount` match) |
 
 Nothing here fetches, spawns or blocks. A screen says what it wants as an `AppFx` (`registry.rs`);
@@ -17,6 +18,31 @@ workers and folds their landings back in; the tree then hears `StoreChanged` and
 re-reads its `Views`. A store is pure: commands in, jobs out, landings in — which is what lets
 `stores/*` tests drive it without a network and `test_support::TestApp` drive a whole screen
 through the real dispatcher.
+
+## The top bar and its destinations
+
+The shared top bar is PlxNative's (`sn_ui::widgets::StripRender` + the container's `STRIP` row,
+`sn_ui::containers::tabs`). `tabs::TABS` is the ONE list of destinations, in bar order — the bar
+(`chrome::ChromeBar`), the colour/channel hotkeys (`tabs::route_hotkey`, `docs/remote-keys.md`)
+and BACK all read it. Home is the root of the shared stack and every other tab is a
+`NavOp::SelectTab` over it. A destination's page wears `Chrome::TabBar` (derived from
+`Tab::of_arg`), keeps its content below `sn_ui::widgets::TOP_BAR_BOTTOM`
+(`RouteLayout::below_top_bar` for a route page) and follows four rules, each a `tabs` helper:
+
+- `Screen::links` declares `tabs::links(first_group)` (UP from the first row to the bar, DOWN back);
+- BACK on its content is `tabs::on_back` (focus to its own pill; on the bar the container's BACK:
+  a pop to Home, or at Home the application's root BACK);
+- a pill's press is `tabs::on_pill`;
+- a page whose content lands after it mounts seats it with `registry::FirstSeat`, counting only a
+  seat `tabs::rests` accepts (the pill the remote arrived on is a seat nobody chose).
+
+Adding a destination (the account page, say) is one `TABS` line, its `AppArg` variant and its
+`mount` arm. The Search pill must stay LAST: the strip draws its last pill as the magnifier.
+
+The installed addons every page plans against are `Views::addons()` (and `Bridge::addons()` on
+the rig side) — today the catalog store's signed-out defaults; the sign-in work switches them by
+building the catalog store over the user's collection. `Views::session` says whether the user is
+signed in (the item menu's Add to library reads it).
 
 ## Adding a screen
 
