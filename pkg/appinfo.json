@@ -1,0 +1,18 @@
+{
+  "id": "com.morpheus235.stremionative",
+  "version": "0.1.0",
+  "vendor": "morpheus235",
+  "type": "native",
+  "main": "stremionative",
+  "title": "StremioNative",
+  "appDescription": "Unofficial native Stremio client - not affiliated with Stremio",
+  "iconColor": "#060606",
+  "nativeLifeCycleInterfaceVersion": 2,
+  "handlesRelaunch": false,
+  "transparent": true,
+  "requiredMemory": 160,
+  "requiredPermissions": [
+    "database.operation",
+    "securitykey.operation"
+  ]
+}

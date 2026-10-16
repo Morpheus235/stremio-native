@@ -1,0 +1,28 @@
+# StremioNative: a native Stremio client for rooted LG webOS TVs.
+# The workspace holds the layer crates under `crates/`; the application crate joins it once it exists.
+[workspace]
+members = [
+    "crates/base",
+    "crates/machine",
+    "crates/net",
+    "crates/platform",
+    "crates/gfx",
+    "crates/ui",
+    "crates/storage",
+    "crates/stremio",
+]
+resolver = "2"
+
+[workspace.lints.rust]
+warnings = "deny"
+
+[profile.release]
+opt-level = 2
+lto = "fat"
+codegen-units = 1
+
+# Fast local device builds: release codegen without LTO.
+[profile.tvdev]
+inherits = "release"
+lto = "off"
+codegen-units = 16

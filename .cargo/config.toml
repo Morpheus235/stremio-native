@@ -1,0 +1,4 @@
+# Codegen flags bound to the TV target: the default ARMv6 codegen emits the legacy CP15 barrier,
+# which is UNDEFINED on the TV's Cortex-A53 (SIGILL). cortex-a9 (ARMv7-A) emits `dmb`.
+[target.arm-unknown-linux-gnueabi]
+rustflags = ["-C", "target-cpu=cortex-a9", "-C", "target-feature=-neon", "-C", "force-frame-pointers=yes"]

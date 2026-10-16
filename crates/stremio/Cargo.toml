@@ -1,0 +1,19 @@
+[package]
+name = "sn_stremio"
+version = "0.0.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "StremioNative addon layer: the Stremio addon protocol (manifests, resource URLs, catalogs, metas, streams), catalog paging, search fan-out and the viewport-first request scheduler."
+repository = "https://github.com/Morpheus235/stremio-native"
+publish = false
+
+[lib]
+name = "sn_stremio"
+crate-type = ["rlib"]
+
+[dependencies]
+serde = { version = "1", default-features = false, features = ["derive", "alloc", "std"] }
+serde_json = { version = "1", default-features = false, features = ["alloc", "std"] }
+
+[lints]
+workspace = true

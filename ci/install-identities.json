@@ -1,0 +1,17 @@
+[
+  {
+    "name": "stable",
+    "app_id": "com.morpheus235.stremionative",
+    "object_id": "snstate.stable"
+  },
+  {
+    "name": "debug",
+    "app_id": "com.morpheus235.stremionative.debug",
+    "object_id": "snstate.debug"
+  },
+  {
+    "name": "nightly",
+    "app_id": "com.morpheus235.stremionative.nightly",
+    "object_id": "snstate.night"
+  }
+]

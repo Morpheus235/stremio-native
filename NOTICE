@@ -1,0 +1,13 @@
+StremioNative
+Copyright (C) 2026 the StremioNative authors
+
+This program is a modified version of PlxNative (https://github.com/GLinnik21/plx-native),
+which is licensed under the GNU General Public License, version 3 or later. The layer crates,
+the native shim and the shared assets were derived from PlxNative and changed for this project
+starting 2026-10-16.
+
+This program is free software: you can redistribute it and/or modify it under the terms of the
+GNU General Public License as published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version. See LICENSE.
+
+Bundled fonts are under the SIL Open Font License (pkg/OFL.txt).

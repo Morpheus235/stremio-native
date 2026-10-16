@@ -1,0 +1,59 @@
+# Publishes the Homebrew Channel repository on GitHub Pages.
+#
+# On every published release carrying an .ipk, this regenerates repo.json and the package
+# manifest (ci/hbrepo.py) and serves them on Pages; the manifest points the TV at the release's
+# own ipk asset, which a public repository serves anonymously. On the TV:
+#   Homebrew Channel > Settings > Add repository > https://<owner>.github.io/stremio-native/repo.json
+#
+# One-time setup: Settings > Pages > Source: "GitHub Actions".
+name: Homebrew Channel repository
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish
+        required: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch the release's ipk
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p dl
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.ipk' --dir dl
+          test "$(ls dl/*.ipk | wc -l)" = 1
+          echo "IPK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$(basename dl/*.ipk)" >> "$GITHUB_ENV"
+      - name: Generate the repository
+        run: |
+          set -euo pipefail
+          base="https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}"
+          python3 -I ci/hbrepo.py --selftest
+          python3 -I ci/hbrepo.py --ipk dl/*.ipk --base-url "$base" --ipk-url "$IPK_URL" --out _site
+          if [ -f pkg/icon160.png ]; then cp pkg/icon160.png _site/; fi
+          cat _site/repo.json _site/*.manifest.json
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@v4
