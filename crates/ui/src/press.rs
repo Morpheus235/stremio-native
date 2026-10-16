@@ -493,10 +493,15 @@ mod ownership_tests {
         assert_eq!(cells, 1, "the one thread_local is the published snapshot");
         let input = std::fs::read_to_string(root.join("ui/src/input.rs")).unwrap();
         assert!(input.contains("press: Press"), "Input owns the press");
-        // The application crate is not ported yet; the ownership claim is checked once it exists.
+        // The application owns its Input machine THROUGH the dispatcher (`Dispatcher::input`, the
+        // `InputMachine` the frame algorithm steps), not as a second field of its own: one press
+        // owner, reached through the one tree.
         if let Ok(app) = std::fs::read_to_string(root.join("app/src/app/mod.rs")) {
-            assert!(app.contains("input: sn_ui::input::Input"), "App owns Input");
+            assert!(app.contains("pages: sn_ui::dispatch::Dispatcher<"), "App owns the dispatcher, which owns Input");
+            assert!(!app.contains("sn_ui::input::Input"), "and no second Input beside it");
         }
+        let dispatch = std::fs::read_to_string(root.join("ui/src/dispatch.rs")).unwrap();
+        assert!(dispatch.contains("pub input: InputMachine<H::Elem>"), "the dispatcher owns the Input machine");
     }
 }
 

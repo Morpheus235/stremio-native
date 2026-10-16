@@ -1,0 +1,123 @@
+{
+  "app.home.loading_addons": {
+    "value": "Caricamento dei tuoi componenti aggiuntivi…",
+    "description": "Home: caption beside the spinner while the installed addons' manifests load."
+  },
+  "app.home.addons_failed": {
+    "value": "Impossibile caricare i tuoi componenti aggiuntivi",
+    "description": "Home: failure verdict when no installed addon could be loaded."
+  },
+  "app.home.addons_failed_reason": {
+    "value": "Verifica che il televisore sia connesso, poi riprova.",
+    "description": "Home: the line under the addons failure verdict."
+  },
+  "app.home.retry": {
+    "value": "Riprova",
+    "description": "Home: the button under the addons failure verdict that asks again."
+  },
+  "app.home.nothing": {
+    "value": "I tuoi componenti aggiuntivi non hanno nulla da sfogliare",
+    "description": "Home: read-out when the installed addons offer no catalog to browse."
+  },
+  "app.home.row_failed": {
+    "value": "Impossibile caricare questo catalogo. Verrà richiesto di nuovo quando ci tornerai.",
+    "description": "Home: note in place of a catalog row whose page failed to load."
+  },
+  "app.home.row_source": {
+    "value": "{kind} · {addon}",
+    "description": "Home: a catalog row heading's annotation — the content type and the addon that provides the row.",
+    "args": {
+      "kind": "str",
+      "addon": "str"
+    }
+  },
+  "app.kind.movie": {
+    "value": "Film",
+    "description": "A Stremio content type, as a row annotation (plural)."
+  },
+  "app.kind.series": {
+    "value": "Serie",
+    "description": "A Stremio content type, as a row annotation (plural)."
+  },
+  "app.kind.channel": {
+    "value": "Canali",
+    "description": "A Stremio content type, as a row annotation (plural): video channels."
+  },
+  "app.kind.tv": {
+    "value": "TV",
+    "description": "A Stremio content type, as a row annotation: live TV."
+  },
+  "app.nav.home": {
+    "value": "Home",
+    "description": "The Home page's name, as the crumb BACK returns to."
+  },
+  "app.detail.loading": {
+    "value": "Caricamento…",
+    "description": "Detail: note while the title's description loads."
+  },
+  "app.detail.season": {
+    "value": "Stagione {season}",
+    "description": "Detail: the heading over one season's episodes.",
+    "args": {
+      "season": "i64"
+    }
+  },
+  "app.detail.specials": {
+    "value": "Speciali",
+    "description": "Detail: the heading over a series' specials (season 0)."
+  },
+  "app.detail.episodes": {
+    "value": "Episodi",
+    "description": "Detail: the heading over a series' episode list while it loads or when it cannot be shown."
+  },
+  "app.detail.episodes_loading": {
+    "value": "Caricamento degli episodi…",
+    "description": "Detail: note while a series' episode list loads."
+  },
+  "app.detail.episodes_failed": {
+    "value": "Impossibile caricare gli episodi ({reason})",
+    "description": "Detail: note when a series' episode list failed to load; reason is a short technical cause.",
+    "args": {
+      "reason": "str"
+    }
+  },
+  "app.detail.no_meta": {
+    "value": "Nessuno dei tuoi componenti aggiuntivi elenca gli episodi di questa serie",
+    "description": "Detail: note when no installed addon describes this series' episodes."
+  },
+  "app.detail.no_episodes": {
+    "value": "Questa serie non ha ancora episodi",
+    "description": "Detail: note when a series lists no episodes."
+  },
+  "app.detail.streams_loading": {
+    "value": "Ricerca dei flussi…",
+    "description": "Detail: note under an addon's name while it is asked for streams."
+  },
+  "app.detail.streams_failed": {
+    "value": "Questo componente aggiuntivo non ha risposto ({reason})",
+    "description": "Detail: note under an addon's name when it did not answer; reason is a short technical cause.",
+    "args": {
+      "reason": "str"
+    }
+  },
+  "app.detail.no_streams": {
+    "value": "Nessun flusso da questo componente aggiuntivo",
+    "description": "Detail: note under an addon's name when it has no stream for this title."
+  },
+  "app.detail.no_stream_addons": {
+    "value": "Nessuno dei tuoi componenti aggiuntivi offre flussi per questo titolo",
+    "description": "Detail: note when no installed addon offers streams for this title."
+  },
+  "app.detail.streams": {
+    "value": "Flussi",
+    "description": "Detail: the heading over the streams when no addon offers any."
+  },
+  "app.detail.not_playable": {
+    "value": "Non riproducibile qui",
+    "description": "Detail: trailing read-out of a stream this app cannot play (a torrent, a link to another app)."
+  },
+  "app.player.refused": {
+    "value": "Impossibile riprodurre questo flusso",
+    "description": "Player: the failure read-out when the stream's own request headers cannot be sent (malformed)."
+  }
+}

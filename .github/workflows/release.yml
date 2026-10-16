@@ -69,10 +69,6 @@ jobs:
           WEBOS_SDK: ${{ steps.ndk.outputs.sdk-dir }}
         run: |
           set -euo pipefail
-          if ! grep -qs '^ipk:' Makefile; then
-            echo "::error::the ipk packaging target is not ported yet (docs/roadmap.md, Distribution)"
-            exit 1
-          fi
           flavor=stable
           if [ "${{ needs.verify.outputs.prerelease }}" = true ]; then flavor=beta; fi
           make RELEASE=1 FLAVOR="$flavor" WEBOS_SDK="$WEBOS_SDK" ipk

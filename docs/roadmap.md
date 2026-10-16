@@ -36,6 +36,13 @@ The Plex transcode decision (`route/`) and transcode ABR are not carried over.
 ## 4. App and screens
 Boot, home rows, detail with streams, library, settings, player.
 
+Landed: the application crate (`crates/app`: boot, the frame loop over the dispatcher, the
+lifecycle, the webOS port, the addon transport and the poster source on workers) and the first
+screens (`crates/screens`): Home with one row per browsable catalog of the installed addons
+(signed out: the defaults), Detail listing each addon's streams with its own loading/failed state
+(episodes by season for a series), and the player page. Still to come: sign-in and the account's
+addons, library, settings, search, the player HUD.
+
 - **Search** with loading, empty and error states (a spinner while a query is in flight).
 - **Hotkeys**: move left/right through the top bar, jump to Search and Settings from anywhere.
 
@@ -44,17 +51,19 @@ Boot, home rows, detail with streams, library, settings, player.
 manifest with sha256 and size, and the ipk). `.github/workflows/hbrepo.yml` publishes it on
 GitHub Pages for every release, so a TV adds
 `https://morpheus235.github.io/stremio-native/repo.json` under Settings > Add repository and
-receives updates as new releases appear. Still needed: the ipk packaging step (`mkipk`) and the
-launcher icons (`pkg/icon160.png` and friends).
+receives updates as new releases appear. The package itself is `make ipk` (`ci/mkipk.py`,
+reproducible, read back with `--verify`); the launcher art (`pkg/icon160.png` and friends, the
+badged `pkg/beta/` set) is drawn by `ci/make-icons.py`.
 
 ## Releases
 Tags on `main`, no release branch: bump `pkg/appinfo.json`'s version, then
 `git tag -a vX.Y.Z -m "StremioNative X.Y.Z" && git push origin vX.Y.Z`. `release.yml` checks the tag
 matches the packaged version and is on `main`, runs the tests, cross-builds the ipk on an arm64
 runner with the pinned webOS NDK, publishes the GitHub release (ipk + sha256) and refreshes the
-Homebrew Channel repository. A suffixed tag (`v0.2.0-rc.1`) publishes a prerelease only. The build
-step fails with a clear message until the `ipk` make target is ported. `ci.yml` runs the host
-tests, the shipping feature set and an ARM compile check on every push and pull request.
+Homebrew Channel repository. A suffixed tag (`v0.2.0-rc.1`) publishes a prerelease only. `ci.yml`
+runs the host tests, the shipping feature set, the packaging selftests, an ARM compile check and a
+full package build (`make RELEASE=1 FLAVOR=stable ipk` on an arm64 runner with the NDK; built and
+read back, not published) on every push and pull request.
 
 ### Beta
 A suffixed tag (`v0.2.0-beta.1`) builds the separate **StremioNative Beta** app (`FLAVOR=beta`, app

@@ -1,5 +1,6 @@
 # StremioNative: a native Stremio client for rooted LG webOS TVs.
-# The workspace holds the layer crates under `crates/`; the application crate joins it once it exists.
+# The workspace holds the layer crates under `crates/`, the screens and the application crate
+# (`crates/app`, the one staticlib the C boot shim links).
 [workspace]
 members = [
     "crates/base",
@@ -11,6 +12,8 @@ members = [
     "crates/ui",
     "crates/storage",
     "crates/stremio",
+    "crates/screens",
+    "crates/app",
 ]
 resolver = "2"
 

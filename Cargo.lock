@@ -884,6 +884,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sn_screens"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "sn_base",
+ "sn_gfx",
+ "sn_machine",
+ "sn_platform",
+ "sn_stremio",
+ "sn_ui",
+]
+
+[[package]]
 name = "sn_stremio"
 version = "0.0.0"
 dependencies = [
@@ -910,6 +923,24 @@ name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
+
+[[package]]
+name = "stremionative-app"
+version = "0.0.0"
+dependencies = [
+ "image",
+ "libc",
+ "serde_json",
+ "sn_base",
+ "sn_gfx",
+ "sn_machine",
+ "sn_media",
+ "sn_net",
+ "sn_platform",
+ "sn_screens",
+ "sn_stremio",
+ "sn_ui",
+]
 
 [[package]]
 name = "stremionative-storage"

@@ -1,0 +1,123 @@
+{
+  "app.home.loading_addons": {
+    "value": "Loading your addons…",
+    "description": "Home: caption beside the spinner while the installed addons' manifests load."
+  },
+  "app.home.addons_failed": {
+    "value": "Couldn’t load your addons",
+    "description": "Home: failure verdict when no installed addon could be loaded."
+  },
+  "app.home.addons_failed_reason": {
+    "value": "Check that the TV is online, then try again.",
+    "description": "Home: the line under the addons failure verdict."
+  },
+  "app.home.retry": {
+    "value": "Try again",
+    "description": "Home: the button under the addons failure verdict that asks again."
+  },
+  "app.home.nothing": {
+    "value": "Your addons have nothing to browse",
+    "description": "Home: read-out when the installed addons offer no catalog to browse."
+  },
+  "app.home.row_failed": {
+    "value": "Couldn’t load this catalog. It is asked again when you come back to it.",
+    "description": "Home: note in place of a catalog row whose page failed to load."
+  },
+  "app.home.row_source": {
+    "value": "{kind} · {addon}",
+    "description": "Home: a catalog row heading's annotation — the content type and the addon that provides the row.",
+    "args": {
+      "kind": "str",
+      "addon": "str"
+    }
+  },
+  "app.kind.movie": {
+    "value": "Movies",
+    "description": "A Stremio content type, as a row annotation (plural)."
+  },
+  "app.kind.series": {
+    "value": "Series",
+    "description": "A Stremio content type, as a row annotation (plural)."
+  },
+  "app.kind.channel": {
+    "value": "Channels",
+    "description": "A Stremio content type, as a row annotation (plural): video channels."
+  },
+  "app.kind.tv": {
+    "value": "TV",
+    "description": "A Stremio content type, as a row annotation: live TV."
+  },
+  "app.nav.home": {
+    "value": "Home",
+    "description": "The Home page's name, as the crumb BACK returns to."
+  },
+  "app.detail.loading": {
+    "value": "Loading…",
+    "description": "Detail: note while the title's description loads."
+  },
+  "app.detail.season": {
+    "value": "Season {season}",
+    "description": "Detail: the heading over one season's episodes.",
+    "args": {
+      "season": "i64"
+    }
+  },
+  "app.detail.specials": {
+    "value": "Specials",
+    "description": "Detail: the heading over a series' specials (season 0)."
+  },
+  "app.detail.episodes": {
+    "value": "Episodes",
+    "description": "Detail: the heading over a series' episode list while it loads or when it cannot be shown."
+  },
+  "app.detail.episodes_loading": {
+    "value": "Loading episodes…",
+    "description": "Detail: note while a series' episode list loads."
+  },
+  "app.detail.episodes_failed": {
+    "value": "Couldn’t load the episodes ({reason})",
+    "description": "Detail: note when a series' episode list failed to load; reason is a short technical cause.",
+    "args": {
+      "reason": "str"
+    }
+  },
+  "app.detail.no_meta": {
+    "value": "None of your addons lists the episodes of this series",
+    "description": "Detail: note when no installed addon describes this series' episodes."
+  },
+  "app.detail.no_episodes": {
+    "value": "This series lists no episodes yet",
+    "description": "Detail: note when a series lists no episodes."
+  },
+  "app.detail.streams_loading": {
+    "value": "Looking for streams…",
+    "description": "Detail: note under an addon's name while it is asked for streams."
+  },
+  "app.detail.streams_failed": {
+    "value": "This addon didn’t answer ({reason})",
+    "description": "Detail: note under an addon's name when it did not answer; reason is a short technical cause.",
+    "args": {
+      "reason": "str"
+    }
+  },
+  "app.detail.no_streams": {
+    "value": "No streams from this addon",
+    "description": "Detail: note under an addon's name when it has no stream for this title."
+  },
+  "app.detail.no_stream_addons": {
+    "value": "None of your addons offers streams for this title",
+    "description": "Detail: note when no installed addon offers streams for this title."
+  },
+  "app.detail.streams": {
+    "value": "Streams",
+    "description": "Detail: the heading over the streams when no addon offers any."
+  },
+  "app.detail.not_playable": {
+    "value": "Can’t play here",
+    "description": "Detail: trailing read-out of a stream this app cannot play (a torrent, a link to another app)."
+  },
+  "app.player.refused": {
+    "value": "This stream can’t be played",
+    "description": "Player: the failure read-out when the stream's own request headers cannot be sent (malformed)."
+  }
+}

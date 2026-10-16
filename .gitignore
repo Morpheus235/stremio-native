@@ -1,4 +1,7 @@
 /target
+/target-*
+/build
+__pycache__/
 /vendor
 /.tv-host
 /.tv-mac

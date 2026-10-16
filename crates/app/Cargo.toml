@@ -1,0 +1,63 @@
+[package]
+name = "stremionative-app"
+# Not the app's version: the version the binary reports is pkg/appinfo.json's (build.rs, SN_VERSION).
+version = "0.0.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "StremioNative application core: boot, the frame loop over the dispatcher, input, the app lifecycle, the webOS port, the addon transport over sn_net, the artwork source and playback orchestration. Built as the ONE staticlib the C boot shim (native/main.c) links."
+repository = "https://github.com/Morpheus235/stremio-native"
+publish = false
+build = "build.rs"
+
+[lib]
+name = "stremionative_app"
+# An rlib by default; the Makefile asks `cargo rustc --crate-type staticlib` for the television.
+crate-type = ["rlib"]
+
+[features]
+# A development build carries the dev triggers (`/tmp/stremionative-*` and the instruments behind
+# them). `make RELEASE=1` builds with `--no-default-features`: nothing a release ships reads a
+# trigger file.
+default = ["devtriggers"]
+devtriggers = [
+    "sn_base/devtriggers",
+    "sn_machine/devtriggers",
+    "sn_net/devtriggers",
+    "sn_platform/devtriggers",
+    "sn_gfx/devtriggers",
+    "sn_ui/devtriggers",
+    "sn_media/devtriggers",
+    "sn_screens/devtriggers",
+]
+# The main-thread blocking guard's fatal mode and the runtime warning surface (developer builds).
+threadcheck = ["sn_base/threadcheck", "sn_ui/threadcheck"]
+
+[dependencies]
+sn_base = { path = "../base" }
+sn_machine = { path = "../machine" }
+sn_net = { path = "../net" }
+sn_platform = { path = "../platform" }
+sn_gfx = { path = "../gfx" }
+sn_ui = { path = "../ui" }
+sn_media = { path = "../media" }
+sn_stremio = { path = "../stremio" }
+sn_screens = { path = "../screens" }
+libc = "0.2"
+# the artwork source's cover-scale (art.rs); the same decoder build sn_gfx already compiles
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+
+[dev-dependencies]
+sn_base = { path = "../base", features = ["test-support"] }
+sn_machine = { path = "../machine", features = ["test-support"] }
+sn_net = { path = "../net", features = ["test-support"] }
+sn_platform = { path = "../platform", features = ["test-support"] }
+sn_gfx = { path = "../gfx", features = ["test-support"] }
+sn_ui = { path = "../ui", features = ["test-support"] }
+sn_media = { path = "../media", features = ["test-support"] }
+sn_screens = { path = "../screens", features = ["test-support"] }
+
+[build-dependencies]
+serde_json = "1"
+
+[lints]
+workspace = true

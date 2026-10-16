@@ -2031,6 +2031,23 @@ mod stack {
         assert_eq!(r.stack.group(Sec::Items), Some(GroupId(0)));
     }
 
+    /// A shelf whose first page has not landed keeps its place in the flow (it paints skeletons
+    /// there), so the page does not reflow when its cards arrive; one with nothing and nothing to
+    /// come is out of the flow.
+    #[test]
+    fn a_shelf_still_loading_keeps_its_height_and_an_empty_finished_one_does_not() {
+        let grid_y = |row: usize, more: bool| {
+            let mut r = rig(row, 24);
+            r.page.row.more = more;
+            r.page.revision += 1;
+            r.run(1);
+            r.place(1000).unwrap().rect.y
+        };
+        let full = grid_y(6, false);
+        assert_eq!(grid_y(0, true), full, "a loading shelf stands where its cards will");
+        assert!(grid_y(0, false) < full, "a finished empty shelf takes no room");
+    }
+
     /// A section's group id is the page's own and is listed in the page's rank: not its position
     /// in the document, and not shifted by which other sections exist.
     #[test]

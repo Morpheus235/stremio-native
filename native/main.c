@@ -1,10 +1,10 @@
-/* StremioNative — an unofficial native Plex client for LG webOS.
+/* StremioNative — an unofficial native Stremio client for LG webOS.
  * Copyright © 2026 Gleb Linnik. Licensed under GPL-3.0-or-later; see LICENSE at the repository
  * root, and THIRD-PARTY-NOTICES.md for the components this links or redistributes.
- * Not affiliated with, endorsed by, or sponsored by Plex GmbH or LG Electronics.
+ * Derived from PlxNative. Not affiliated with, endorsed by, or sponsored by Stremio or LG Electronics.
  *
- * stremionative — native webOS Plex client. BOOT SHIM only: the app core is Rust
- * plex_run() (rust-modules). This file stays C for the genuinely low-level
+ * stremionative — native webOS Stremio client. BOOT SHIM only: the app core is Rust
+ * sn_run() (crates/app). This file stays C for the genuinely low-level
  * bootstrap that must run before any Rust executes — the async-signal-safe crash
  * tracer, the event-log handle, stderr capture, and process bring-up. Everything
  * else (SDL, the event loop, input, playback orchestration, draw) is Rust. */
@@ -28,8 +28,7 @@ FILE *elogf = NULL;   /* shared event/diagnostic log (extern in app.h); used by 
  * boot-time image marker and the Rust panic hook (`app::boot`, through `eventlog::append_record`)
  * also append to the same file. */
 
-extern int plex_run(const char *pms_host, int pms_port);  /* Rust app core (no creds — session or /tmp/stremionative-token) */
-extern int sn_sentry_spool_external(const char *path); /* Sentry daemon's spool-only re-entry */
+extern int sn_run(void);  /* the Rust app core (crates/app/src/port.rs); returns the exit status */
 extern void sn_crash_write_image_marker(int fd); /* identify this binary in the append-only log */
 
 /* Where this INSTALL's runtime files live — `/tmp/stremionative-events.log` for the app users get,
@@ -154,11 +153,8 @@ static int open_fd_log(const char *path, int flags) {
 }
 
 int main(int argc, char **argv) {
-    /* Sentry Native launches this executable with exactly one envelope path after the crashed
-     * process is already beyond saving. Recognise and move it BEFORE opening (and truncating) any
-     * ordinary app log, starting SDL, or arming another handler. A lookalike argument returns 0 and
-     * proceeds as a normal launch; Rust validates the exact SDK directory, UUID and file type. */
-    if (argc == 2 && sn_sentry_spool_external(argv[1])) return 0;
+    (void)argc;
+    (void)argv;  /* webOS passes the launch parameters as one JSON argument; nothing reads them yet */
     elogf = open_event_log();
     /* The crash handler's own descriptors, both opened BEFORE `install_crash_tracer` arms the
      * handler — so a signal can never reach code that has to open something first, which is the
@@ -187,5 +183,5 @@ int main(int argc, char **argv) {
     sn_crash_install(event_fd, crash_fd);
     /* request BACK key delivery from the webOS access policy (before SDL init) */
     setenv("SDL_WEBOS_ACCESS_POLICY_KEYS_BACK", "true", 1);
-    return plex_run(PMS_HOST, PMS_PORT);
+    return sn_run();
 }

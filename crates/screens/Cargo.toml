@@ -1,0 +1,43 @@
+[package]
+name = "sn_screens"
+version = "0.0.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "StremioNative screens layer: the application bundle (the screen argument, effects and views the dispatcher is compiled against), the stores behind the screens (catalog rows, detail metas and streams) and the screens themselves (Home, Detail, Player)."
+repository = "https://github.com/Morpheus235/stremio-native"
+publish = false
+build = "build.rs"
+
+[lib]
+name = "sn_screens"
+# An rlib the application crate links, never an archive of its own: the one staticlib is the
+# application crate's. Its build script exists for the host test binary only (see build.rs).
+crate-type = ["rlib"]
+
+[features]
+default = []
+# Forwarded from the application crate, which is the only one that sets them.
+devtriggers = ["sn_base/devtriggers", "sn_machine/devtriggers", "sn_platform/devtriggers", "sn_gfx/devtriggers", "sn_ui/devtriggers"]
+# The `cfg(test)` seams the application's tests drive the screens through (the store fixtures,
+# the test rig). Enabled from the application crate's `[dev-dependencies]`; never in a shipped
+# build.
+test-support = ["sn_base/test-support", "sn_machine/test-support", "sn_platform/test-support", "sn_gfx/test-support", "sn_ui/test-support"]
+
+[dependencies]
+sn_base = { path = "../base" }
+sn_machine = { path = "../machine" }
+sn_platform = { path = "../platform" }
+sn_gfx = { path = "../gfx" }
+sn_ui = { path = "../ui" }
+sn_stremio = { path = "../stremio" }
+
+[dev-dependencies]
+sn_base = { path = "../base", features = ["test-support"] }
+sn_machine = { path = "../machine", features = ["test-support"] }
+sn_platform = { path = "../platform", features = ["test-support"] }
+sn_gfx = { path = "../gfx", features = ["test-support"] }
+sn_ui = { path = "../ui", features = ["test-support"] }
+serde_json = { version = "1", default-features = false, features = ["alloc", "std"] }
+
+[lints]
+workspace = true

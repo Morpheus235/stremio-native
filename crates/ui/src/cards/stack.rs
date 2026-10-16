@@ -541,11 +541,23 @@ impl<K: Copy + Eq> Stack<K> {
         p.cards(cx, self.specs[i].key).map_or(0, |c| c.len())
     }
 
+    /// Does shelf `i` stand in the flow? When it has cards, and ALSO when it has none yet but its
+    /// source says the list goes on ([`CardSource::more_after`] / [`more_before`]): a row whose
+    /// first page is still on its way paints its skeleton cells ([`Shelf::paint_pending`]) where
+    /// its cards will land, so the page does not reflow under the reader when they do. A shelf with
+    /// nothing and nothing to come is out of the flow, as it always was.
+    ///
+    /// [`more_before`]: CardSource::more_before
+    /// [`Shelf::paint_pending`]: super::Shelf
+    fn shelf_shown<H: Host, P: StackPage<H, Key = K>>(&self, p: &P, cx: &Cx<'_, H>, i: usize) -> bool {
+        p.cards(cx, self.specs[i].key).is_some_and(|c| c.len() > 0 || c.more_after() || c.more_before())
+    }
+
     /// Section `i`'s height in the flow.
     fn height<H: Host, P: StackPage<H, Key = K>>(&self, p: &P, cx: &Cx<'_, H>, i: usize) -> f32 {
         match (&self.specs[i].kind, &self.bodies[i]) {
             (Kind::Shelf { style, heading }, Body::Shelf(s)) => {
-                if self.len_of(p, cx, i) == 0 { 0.0 } else { heading + style.h + s.under_band() + p.shelf_foot(self.specs[i].key) }
+                if !self.shelf_shown(p, cx, i) { 0.0 } else { heading + style.h + s.under_band() + p.shelf_foot(self.specs[i].key) }
             }
             (Kind::Grid { .. }, Body::Grid(g)) => g.height(self.len_of(p, cx, i)),
             (Kind::Custom { height, .. }, _) => *height,
@@ -744,7 +756,7 @@ impl<K: Copy + Eq> Stack<K> {
     fn settled_height<H: Host, P: StackPage<H, Key = K>>(&self, p: &P, cx: &Cx<'_, H>, n: usize, focus: usize) -> f32 {
         match &self.specs[n].kind {
             Kind::Shelf { style, heading } => {
-                if self.len_of(p, cx, n) == 0 {
+                if !self.shelf_shown(p, cx, n) {
                     0.0
                 } else {
                     heading + style.h + card_row::under_band((n == focus) as i32 as f32) + p.shelf_foot(self.specs[n].key)

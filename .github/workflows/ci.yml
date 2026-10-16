@@ -1,5 +1,6 @@
-# Every push to main and every pull request: host tests, the release feature set, and an ARM
-# compile of every crate (no link, so no NDK needed here).
+# Every push to main and every pull request: host tests, the release feature set, the packaging
+# selftests, an ARM compile of every crate (no link, so no NDK), and the real package: the ARM link
+# against the webOS NDK, the bundled FFmpeg, and `make ipk` (built and checked, never published).
 name: CI
 
 on:
@@ -31,7 +32,10 @@ jobs:
       - name: Shipping feature set
         run: cargo check --workspace --lib --no-default-features
       - name: Packaging tools
-        run: python3 -I ci/hbrepo.py --selftest
+        run: |
+          python3 -I ci/flavor.py --selftest
+          python3 -I ci/mkipk.py --selftest
+          python3 -I ci/hbrepo.py --selftest
 
   arm:
     runs-on: ubuntu-24.04
@@ -44,3 +48,33 @@ jobs:
           key: arm
       - name: Cross-compile check
         run: cargo +nightly check --workspace --lib --target arm-unknown-linux-gnueabi -Z build-std=std,panic_unwind
+
+  package:
+    # webosbrew publishes the NDK for linux-aarch64 (and macOS) only.
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: ndk
+        uses: ./.github/actions/webos-ndk
+      - name: Nightly with rust-src
+        run: rustup toolchain install nightly --profile minimal --component rust-src
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: package
+      - name: Restore the bundled FFmpeg
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: vendor/ffmpeg-prefix
+          key: ffmpeg-release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/build-ffmpeg.sh', 'ci/dependencies.json', 'ci/arm-cc.py') }}
+      - name: Build the package
+        env:
+          WEBOS_SDK: ${{ steps.ndk.outputs.sdk-dir }}
+        run: |
+          set -euo pipefail
+          # the same invocation release.yml publishes from; `make ipk` reads the package back
+          # (ci/mkipk.py --verify) before it returns
+          make RELEASE=1 FLAVOR=stable WEBOS_SDK="$WEBOS_SDK" ipk
+          ipk=$(ls build/*.ipk)
+          test "$(echo "$ipk" | wc -l)" = 1
+          ls -la "$ipk"
+          sha256sum "$ipk"
