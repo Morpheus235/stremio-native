@@ -7,6 +7,14 @@ decoders (StarfishMediaAPIs) instead of the web runtime.
 Status: early. The foundation layers are in place; the Stremio addon layer, the player and the
 screens are being built (see [docs/roadmap.md](docs/roadmap.md)).
 
+## Built on PlxNative
+
+StremioNative is built on [PlxNative](https://github.com/GLinnik21/plx-native), the native Plex
+client for LG webOS. Its renderer, UI toolkit, focus engine, network transport, Starfish
+hardware-playback seam, FFmpeg demuxer and subtitle pipeline are the foundation this app was
+ported from, and much of what makes it work on these TVs was worked out there first. Thank you to
+its author and contributors.
+
 ## Layout
 
 | Path | What |
