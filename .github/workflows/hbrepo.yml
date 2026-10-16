@@ -5,17 +5,21 @@
 # own ipk asset, which a public repository serves anonymously. On the TV:
 #   Homebrew Channel > Settings > Add repository > https://<owner>.github.io/stremio-native/repo.json
 #
+# Before the first stable release it serves an empty index, so a TV can add the URL early.
 # One-time setup: Settings > Pages > Source: "GitHub Actions".
 name: Homebrew Channel repository
 
 on:
   release:
     types: [published]
+  push:
+    branches: [main]
+    paths: [ci/hbrepo.py, .github/workflows/hbrepo.yml]
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to publish
-        required: true
+        description: Release tag to publish (empty = the latest stable release)
+        required: false
   workflow_call:
     inputs:
       tag:
@@ -47,6 +51,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dl
+          if [ -z "$TAG" ]; then
+            TAG=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // ""')
+          fi
+          if [ -z "$TAG" ]; then
+            echo "no stable release yet: publishing an empty repository"
+            echo "EMPTY=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.ipk' --dir dl
           test "$(ls dl/*.ipk | wc -l)" = 1
           echo "IPK_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$(basename dl/*.ipk)" >> "$GITHUB_ENV"
@@ -55,9 +67,13 @@ jobs:
           set -euo pipefail
           base="https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}"
           python3 -I ci/hbrepo.py --selftest
-          python3 -I ci/hbrepo.py --ipk dl/*.ipk --base-url "$base" --ipk-url "$IPK_URL" --out _site
+          if [ "${EMPTY:-0}" = 1 ]; then
+            mkdir -p _site && echo '{"packages": []}' > _site/repo.json
+          else
+            python3 -I ci/hbrepo.py --ipk dl/*.ipk --base-url "$base" --ipk-url "$IPK_URL" --out _site
+          fi
           if [ -f pkg/icon160.png ]; then cp pkg/icon160.png _site/; fi
-          cat _site/repo.json _site/*.manifest.json
+          cat _site/*.json
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
           path: _site
