@@ -11,6 +11,8 @@
 //! * [`catalog`] — paging a catalog to completion without trusting a fixed page size.
 //! * [`search`] — which catalogs a query goes to, and each addon's result state.
 //! * [`account`] — signing in and reading the user's installed addon collection.
+//! * [`library`] — the user's library and what a resume opens (the episode, not the series).
+//! * [`streams`] — per-addon stream lookup for one video.
 //! * [`sched`] — the viewport-first request queue: what is on screen loads first, and work for
 //!   rows scrolled past is cancelled rather than drained top-down.
 //!
@@ -18,9 +20,11 @@
 
 pub mod account;
 pub mod catalog;
+pub mod library;
 pub mod manifest;
 pub mod sched;
 pub mod search;
+pub mod streams;
 pub mod types;
 pub mod url;
 

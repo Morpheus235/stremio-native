@@ -46,7 +46,7 @@ fn call<T: serde::de::DeserializeOwned>(fetch: &dyn Fetch, method: &str, body: s
     parse(&raw)
 }
 
-fn parse<T: serde::de::DeserializeOwned>(raw: &[u8]) -> Result<T, ApiError> {
+pub(crate) fn parse<T: serde::de::DeserializeOwned>(raw: &[u8]) -> Result<T, ApiError> {
     let env: Envelope<T> = serde_json::from_slice(raw).map_err(|e| FetchError::Decode(e.to_string()))?;
     match (env.result, env.error) {
         (_, Some(err)) => Err(ApiError::Api { code: err.code, message: err.message }),
