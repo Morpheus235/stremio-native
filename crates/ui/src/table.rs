@@ -467,13 +467,16 @@ const ROW_H_TALL: f32 = 92.0; // a row that carries a detail sub-line (title HEA
 /// `CAPTION` sub-line wants when the list IS the screen.
 pub const ROW_H_ART: f32 = 98.0;
 const ROW_SUB_GAP: f32 = 15.0; // title baseline → detail cap-top, in a two-line row
-/// A still row's picture ([`Row::still`]): 16:9, small enough that a screenful of episodes costs
-/// well under a megabyte of texture (each is decoded at this size, ~83 KB).
-pub const STILL_W: f32 = 192.0;
-pub const STILL_H: f32 = STILL_W * 9.0 / 16.0;
-/// A still row: the picture plus [`STILL_PAD`] above and below it.
-pub const ROW_H_STILL: f32 = STILL_H + 2.0 * STILL_PAD;
-const STILL_PAD: f32 = 12.0;
+/// A still row ([`Row::still`]) is a CARD: the row less the pill's inset, on its own ground, the
+/// 16:9 still filling its leading edge top to bottom, so the focus pill takes the whole card over
+/// with no inner frame round the picture (owner, 2026-10-18).
+pub const ROW_H_STILL: f32 = 132.0;
+/// The still: as tall as the card, 16:9, decoded at this size (~110 KB each, a screenful well
+/// under a megabyte of texture).
+pub const STILL_H: f32 = ROW_H_STILL - 2.0 * PILL_INSET;
+pub const STILL_W: f32 = STILL_H * 16.0 / 9.0;
+/// The air between a still and its row's text.
+const STILL_TEXT_GAP: f32 = 24.0;
 /// A chip row's leading column ([`Row::side`]) is as wide as the table's widest side content
 /// ([`TableView::side_col_w`]), within these bounds: "Proxy" does not get a 220 px gutter, and a
 /// long addon name elides at the cap (it is server text).
@@ -632,6 +635,8 @@ pub const PILL_RAD: f32 = theme::radius::PILL;
 /// Pill inset from the row's top/bottom. `pub` for the [`ROW_H`] caller shape.
 pub const PILL_INSET: f32 = 3.0;
 const PANEL_BG: [f32; 4] = theme::SURFACE_PANEL; // opaque panel colour — fade masks + badge knockout
+/// A still row's card ground (the grouped card's own surface, which a section of cards does not draw).
+const STILL_CARD_BG: [f32; 4] = theme::SURFACE_GROUP;
 /// Air between two chips of one right-aligned badge run (a subtitle row's `FORCED` + `SDH`).
 const BADGE_GAP: f32 = 10.0;
 const ACCESSORY_GAP: f32 = 14.0;
@@ -1220,7 +1225,8 @@ impl TableView {
         if row.side.is_some() {
             self.side_col_w(frame_w, measure)
         } else if row.still.is_some() {
-            STILL_W
+            // the still starts at the card's edge (`SIDE`), not at `content_x`
+            STILL_W + STILL_TEXT_GAP - CONTENT_PAD - GAP
         } else {
             CHECK_W
         }
@@ -1841,6 +1847,10 @@ impl TableView {
         // ---- grouped: each section's card, under its header, its rows and the pill ----
         if self.grouped {
             for (si, top, bot) in self.group_spans() {
+                // a section of still rows is a stack of cards, each on its own ground
+                if self.sections[si].rows.iter().all(|r| r.still.is_some()) {
+                    continue;
+                }
                 let r = Rect::new(frame.x, top0 + top - scroll - GROUP_PAD, frame.w, bot - top + 2.0 * GROUP_PAD);
                 if r.y + r.h > vis_top && r.y < vis_bot {
                     self.group_painter(p, si).rrect(r, GROUP_RAD, GROUP_RAD, theme::SURFACE_GROUP);
@@ -2058,10 +2068,16 @@ impl TableView {
             // trailing edge (below), and no row is allowed to say both.
             let label_x = content_x + self.lead_w(row, frame.w, measure) + GAP;
             if let Some(url) = &row.still {
-                let r = Rect::new(content_x, cyc - STILL_H * 0.5, STILL_W, STILL_H);
+                let card = Rect::new(frame.x + SIDE, sy + PILL_INSET, frame.w - 2.0 * SIDE, h - 2.0 * PILL_INSET);
+                // the card's own ground, which the sliding pill (drawn under the rows) takes over
+                // as it covers the row
+                if cover < 1.0 {
+                    p.alpha(1.0 - cover.max(0.0)).rrect(card, PILL_RAD, PILL_RAD, STILL_CARD_BG);
+                }
+                let r = Rect::new(card.x, card.y, STILL_W, card.h);
                 draw_still(p, r, url);
                 if let Some(frac) = row.progress {
-                    crate::widgets::progress_bar(p, r, theme::CARD_RING_RAD, 4.0, frac);
+                    crate::widgets::progress_bar_lr(p, r, PILL_RAD, 0.0, 4.0, frac);
                 }
             }
             let lead = if row.checked {
@@ -2383,14 +2399,27 @@ impl TableView {
 /// `r`'s own size so no row ever holds a full-size image; a row with no still, or one whose fetch
 /// has settled as a miss, wears the absent ground with a play glyph — nothing is on its way, so it
 /// is not a placeholder.
+///
+/// The picture is rounded on its LEFT only (the card's corner), square where it meets the text:
+/// the image program takes one radius, so the right half is drawn again, square, over the first
+/// draw's right corners from the same texels.
 fn draw_still(p: Painter, r: Rect, url: &str) {
     let res = (r.w as std::os::raw::c_int, r.h as std::os::raw::c_int);
     if !url.is_empty() && !crate::tex::failed_on(0, url, res.0, res.1, false) {
-        crate::widgets::card(p, r, crate::widgets::Art::Thumb { sid: 0, key: url, res }, theme::CARD_RING_RAD, false, 1.0, 1.0);
+        let art = crate::widgets::Art::Thumb { sid: 0, key: url, res };
+        let (tex, tw, th) = crate::widgets::resolve_card_art(p, r, &art);
+        if tex == 0 {
+            crate::placeholder::skeleton(p, crate::placeholder::Reason::CardSkeleton, url, r, PILL_RAD);
+            return;
+        }
+        let uv = r.cover_uv(tw, th, crate::Crop::Centre);
+        p.tex_uv(tex, uv, r, PILL_RAD, theme::TINT_WHITE);
+        let half = Rect::new(r.x + r.w * 0.5, r.y, r.w * 0.5, r.h);
+        p.tex_uv(tex, [uv[0] + uv[2] * 0.5, uv[1], uv[2] * 0.5, uv[3]], half, 0.0, theme::TINT_WHITE);
         return;
     }
     // placeholder-exempt: absence, an episode the addon sent no still for (or one that 404s)
-    p.rrect(r, theme::CARD_RING_RAD, theme::CARD_RING_RAD, theme::CARD_ABSENT);
+    p.rrect(r, PILL_RAD, 0.0, theme::CARD_ABSENT);
     let g = STILL_GLYPH;
     crate::icons::draw(p, crate::icons::Icon::Play, Rect::new(r.x + (r.w - g) * 0.5, r.y + (r.h - g) * 0.5, g, g), theme::TEXT_TERTIARY);
 }
@@ -3061,7 +3090,7 @@ mod tests {
 
     // ---- the focus pill's ink and the page edges ----------------------------------------------
 
-    /// A still row (an episode with its picture) is the still's height plus its pad whatever its
+    /// A still row (an episode with its picture) is a card the still fills top to bottom whatever its
     /// text, and its text column starts past the still instead of the check column — so the label
     /// gives up exactly the still's extra width, and a plain row beside it is untouched.
     #[test]
@@ -3076,9 +3105,10 @@ mod tests {
         let h = |i| t.row_frame(frame, i).unwrap().h;
         assert_eq!((h(1), h(2)), (ROW_H_STILL, ROW_H_STILL), "with or without a picture");
         assert!(h(0) < ROW_H_STILL);
-        assert!(STILL_H + 2.0 * STILL_PAD <= ROW_H_STILL, "the still fits its row");
+        assert_eq!(STILL_H + 2.0 * PILL_INSET, ROW_H_STILL, "the still fills its card top to bottom");
         let w = |i: i32| t.label_width(t.rows_at(i), frame.w, &FixtureMeasure);
-        assert!((w(0) - w(1) - (STILL_W - CHECK_W)).abs() < 1e-3, "{} vs {}", w(0), w(1));
+        let lead = STILL_W + STILL_TEXT_GAP - CONTENT_PAD - GAP;
+        assert!((w(0) - w(1) - (lead - CHECK_W)).abs() < 1e-3, "{} vs {}", w(0), w(1));
         assert_eq!(w(1), w(2));
     }
 

@@ -51,20 +51,24 @@ pub fn upcoming(v: &Video, today: &str) -> bool {
     !today.is_empty() && date > today
 }
 
-/// The row of episode `v` of `season`: a chevron when it plays, *Upcoming* dimmed when it is
-/// still ahead of `today`.
+/// The row of episode `v` of `season`: its number and air date under the title (the season is the
+/// list's), *Upcoming* dimmed when it is still ahead of `today`.
 pub fn row(v: &Video, season: u32, today: &str) -> Row {
     let address = address(season, v);
     let title = if v.title.trim().is_empty() { address.clone() } else { v.title.clone() };
     let date = v.released.as_deref().map(|d| d.get(..10).unwrap_or(d)).unwrap_or("");
-    let detail = if date.is_empty() { address } else { format!("{address} \u{b7} {}", sn_ui::fmt::pretty_date(date, 0)) };
+    let number = match v.episode {
+        Some(n) if n > 0 => msg::core_episode(i64::from(n)),
+        _ => address,
+    };
+    let detail = if date.is_empty() { number } else { format!("{number} \u{b7} {}", sn_ui::fmt::pretty_date(date, 0)) };
     let row = Row::new(title)
         .server_label()
         .detail(detail)
         .server_detail()
         .still(v.thumbnail.as_deref().map(str::trim).unwrap_or(""))
         .blurb(v.overview.as_deref().map(|o| o.split_whitespace().collect::<Vec<_>>().join(" ")).unwrap_or_default());
-    if upcoming(v, today) { row.value(msg::app_detail_upcoming()).dim(true) } else { row.chevron(true) }
+    if upcoming(v, today) { row.value(msg::app_detail_upcoming()).dim(true) } else { row }
 }
 
 /// What the library says of one episode.

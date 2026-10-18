@@ -73,8 +73,8 @@
 //! climbs the groups, DOWN comes back to it, RIGHT is the list; on a page with no library button
 //! LEFT from the list reaches them.
 //!
-//! An item page (a movie's, a series') carries the **action row** at the foot of the narrative
-//! column, under the link chips ([`LibraryButton`], its room kept by [`info_flow`]'s reserve):
+//! An item page (a movie's, a series') carries the **action row** in the narrative column, right
+//! under the link chips ([`LibraryButton`], its room kept by [`info_flow`]'s reserve):
 //! round icon discs (stremio-web's MetaPreview actions) that unfurl their verb while focused. The
 //! library disc — a plus, *Add to library*, or a check, *In your library*, once the account holds
 //! it — toggles it on OK (`LibraryCmd::Add` / `Remove`, optimistic in the library store, so it
@@ -1083,7 +1083,8 @@ fn episodes(out: &mut Built, item: &ItemRef, meta: &Meta, season: Option<u32>, t
     let all = seasons(meta);
     let Some(season) = season.filter(|s| all.contains(s)).or_else(|| all.first().copied()) else { return };
     let show = if meta.preview.name.is_empty() { item.name.clone() } else { meta.preview.name.clone() };
-    let mut s = Section::new(season_label(season));
+    // the season dropdown above the list names the season; with one season there is none
+    let mut s = Section::new(if all.len() > 1 { String::new() } else { season_label(season) });
     for (i, v) in crate::episodes::of_season(meta, season) {
         let address = crate::episodes::address(season, v);
         let title = if v.title.trim().is_empty() { address.clone() } else { v.title.clone() };
@@ -1447,8 +1448,10 @@ impl LibraryButton<'_> {
     fn origin(&self, measure: &dyn Measure) -> Rect {
         *self.rect.borrow_mut().get_or_insert_with(|| {
             let f = flow(self.info, self.title, measure, self.band(), self.expanded);
+            // right under the column's last block, so the actions read with what they act on
+            // rather than alone at the screen's foot (owner, 2026-10-18); never past the foot
             let foot = f.frame.y + f.frame.h;
-            Rect::new(f.frame.x, (foot - ACTION_D).max(f.free), ACTION_D, ACTION_D)
+            Rect::new(f.frame.x, f.free.min(foot - ACTION_D), ACTION_D, ACTION_D)
         })
     }
 
@@ -2980,8 +2983,8 @@ mod tests {
         let mode = Mode::Item(item.clone());
         let state = ready(meta);
         let b = build(&mode, Some(&state), None, None, "");
-        assert_eq!(texts(&b), vec![(msg::app_detail_season(1), vec!["Pilot".to_string(), "Two".to_string()])], "only season 1");
-        assert_eq!(b.sections[0].rows[0].detail, format!("{} \u{b7} 1/20/2008", sn_ui::fmt::episode_ordinal(1, 1)));
+        assert_eq!(texts(&b), vec![(String::new(), vec!["Pilot".to_string(), "Two".to_string()])], "only season 1, which the dropdown names");
+        assert_eq!(b.sections[0].rows[0].detail, format!("{} \u{b7} 1/20/2008", msg::core_episode(1)));
         match &b.actions[0] {
             Some(Action::Episode(video)) => {
                 assert_eq!(video.video_id, "x:1:1");
@@ -2991,9 +2994,9 @@ mod tests {
             other => panic!("expected an episode, got {other:?}"),
         }
         let s2 = build(&mode, Some(&state), None, Some(2), "");
-        assert_eq!(texts(&s2), vec![(msg::app_detail_season(2), vec![sn_ui::fmt::episode_ordinal(2, 1)])], "an untitled episode reads as its address");
+        assert_eq!(texts(&s2), vec![(String::new(), vec![sn_ui::fmt::episode_ordinal(2, 1)])], "an untitled episode reads as its address");
         let sp = build(&mode, Some(&state), None, Some(0), "");
-        assert_eq!(texts(&sp), vec![(msg::app_detail_specials().to_string(), vec!["Special".to_string()])]);
+        assert_eq!(texts(&sp), vec![(String::new(), vec!["Special".to_string()])]);
         assert_eq!(texts(&build(&mode, Some(&state), None, Some(9), "")), texts(&b), "a season the meta lacks lists the first");
         // an episode keeps its key whichever season shows it
         assert_eq!(s2.keys[0], RowKey(EPISODE_KEY + 3));
@@ -3015,10 +3018,10 @@ mod tests {
         assert_eq!(
             got,
             [
-                ("Season 1".to_string(), vec!["S1, E1 \u{b7} 1/21/2008".to_string(), "S1, E2 \u{b7} 1/28/2008".to_string()]),
-                ("Season 2".to_string(), vec!["S2, E1 \u{b7} 3/9/2009".to_string()]),
-                ("Season 5".to_string(), vec!["S5, E16 \u{b7} 9/30/2013".to_string()]),
-                ("Specials".to_string(), vec!["S0, E1 \u{b7} 2/18/2009".to_string()]),
+                (String::new(), vec!["E1 \u{b7} 1/21/2008".to_string(), "E2 \u{b7} 1/28/2008".to_string()]),
+                (String::new(), vec!["E1 \u{b7} 3/9/2009".to_string()]),
+                (String::new(), vec!["E16 \u{b7} 9/30/2013".to_string()]),
+                (String::new(), vec!["E1 \u{b7} 2/18/2009".to_string()]),
             ]
         );
     }
@@ -3078,12 +3081,12 @@ mod tests {
         assert_eq!(
             rows,
             [
-                ("S1, E1 \u{b7} 10/4/2025", None, false),
-                ("S1, E12 \u{b7} 12/20/2025", None, false),
-                ("S1, E13 \u{b7} 10/3/2026", None, false),
-                ("S1, E15 \u{b7} 10/17/2026", None, false),
-                ("S1, E16 \u{b7} 10/24/2026", Some("Upcoming"), true),
-                ("S1, E24 \u{b7} 12/19/2026", Some("Upcoming"), true),
+                ("E1 \u{b7} 10/4/2025", None, false),
+                ("E12 \u{b7} 12/20/2025", None, false),
+                ("E13 \u{b7} 10/3/2026", None, false),
+                ("E15 \u{b7} 10/17/2026", None, false),
+                ("E16 \u{b7} 10/24/2026", Some("Upcoming"), true),
+                ("E24 \u{b7} 12/19/2026", Some("Upcoming"), true),
             ]
         );
         assert_eq!(b.sections[0].rows[4].ticon, None, "an upcoming episode carries no chevron");
@@ -3457,7 +3460,7 @@ mod tests {
         let mut app = boss_detail();
         let page = detail_page(&app);
         assert_eq!(page.season(), Some(2), "the last-watched video's season");
-        assert_eq!(page.sections().iter().map(|s| s.header.as_str()).collect::<Vec<_>>(), ["Season 2"]);
+        assert_eq!(page.sections().iter().map(|s| s.header.as_str()).collect::<Vec<_>>(), [""], "the dropdown names the season");
         let focus = || app.d.focus().map(|k| k.elem);
         assert_eq!(focus(), Some(EPISODE_KEY + 3), "the first row seats: S2 E1 (the fixture's 4th video)");
         app.press(Key::Up);
@@ -3481,7 +3484,7 @@ mod tests {
         assert_eq!(app.d.focus().map(|k| k.elem), Some(SEASON_KEY), "focus returns to the dropdown");
         let page = detail_page(&app);
         assert_eq!(page.season(), Some(1));
-        assert_eq!(page.sections().iter().map(|s| (s.header.as_str(), s.rows.len())).collect::<Vec<_>>(), [("Season 1", 3)]);
+        assert_eq!(page.sections().iter().map(|s| s.rows.len()).collect::<Vec<_>>(), [3]);
         app.press(Key::Down);
         assert_eq!(app.d.focus().map(|k| k.elem), Some(EPISODE_KEY), "DOWN lands on S1 E1");
         assert!(detail_page(&app).table.list_focused, "the row's highlight returns with the focus");
@@ -3511,7 +3514,7 @@ mod tests {
         assert_eq!(Mode::Item(item.clone()).stream_key(), None, "no streams for the bare show id");
         let b = build(&Mode::Item(item), Some(&MetaState::Ready(Box::new(meta.meta))), None, None, "");
         let rows: Vec<&str> = b.sections.iter().flat_map(|s| s.rows.iter().map(|r| r.detail.as_str())).collect();
-        assert_eq!(rows, ["S1, E1 \u{b7} 3/31/2017", "S1, E2 \u{b7} 4/7/2017", "S1, E12 \u{b7} 6/16/2017"]);
+        assert_eq!(rows, ["E1 \u{b7} 3/31/2017", "E2 \u{b7} 4/7/2017", "E12 \u{b7} 6/16/2017"]);
     }
 
     /// The stream panel's ground starts in the air between the narrative column and the list, so

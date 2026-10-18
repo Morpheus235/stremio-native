@@ -1337,6 +1337,12 @@ const SCRIM_CORNER_BANDS: usize = 3;
 ///   the focus pop moved the geometry. Splitting the band at the played fraction removes the overlap
 ///   rather than trying to tune around it.
 pub fn progress_bar(p: Painter, card: Rect, rad: f32, h: f32, frac: f32) {
+    progress_bar_lr(p, card, rad, rad, h, frac);
+}
+
+/// [`progress_bar`] along a card whose left and right corners differ (`rl`, `rr`): a table's still
+/// row, rounded only where it meets the card's edge.
+pub fn progress_bar_lr(p: Painter, card: Rect, rl: f32, rr: f32, h: f32, frac: f32) {
     let snap = |y: f32| sn_gfx::gfx::snap(y + p.dy) - p.dy;
     let bottom = card.y + card.h;
     let top = snap(bottom - h.min(card.h));
@@ -1351,11 +1357,11 @@ pub fn progress_bar(p: Painter, card: Rect, rad: f32, h: f32, frac: f32) {
         .clamp(card.x, right);
     if split > card.x {
         p.clip(Rect::new(card.x, top, split - card.x, bottom - top));
-        p.rrect(card, rad, rad, theme::RESUME_FILL);
+        p.rrect(card, rl, rr, theme::RESUME_FILL);
     }
     if split < right {
         p.clip(Rect::new(split, top, right - split, bottom - top));
-        p.rrect(card, rad, rad, theme::RESUME_TRACK);
+        p.rrect(card, rl, rr, theme::RESUME_TRACK);
     }
     p.clip_clear();
 }
