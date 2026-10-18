@@ -31,7 +31,7 @@ Developer Mode without root is supported by the code but untested so far.
    there too, as a separate app that installs beside the Beta. Updates arrive through the same
    repository.
 
-The packages (ipk + sha256) are also on the [releases page](https://github.com/Morpheus235/stremio-native/releases).
+The packages (ipk + sha256) are on the [download page](https://morpheus235.github.io/stremio-native/) and the [releases page](https://github.com/Morpheus235/stremio-native/releases).
 
 ## Features
 

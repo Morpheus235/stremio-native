@@ -1,4 +1,5 @@
-# Publishes the Homebrew Channel repository on GitHub Pages, one URL with two entries:
+# Publishes the Homebrew Channel repository on GitHub Pages (and the download page, site/index.html,
+# at the site's root), one URL with two entries:
 #
 #   https://<owner>.github.io/stremio-native/repo.json
 #     StremioNative        the newest stable release
@@ -14,7 +15,7 @@ name: Homebrew Channel repository
 on:
   push:
     branches: [main]
-    paths: [ci/hbrepo.py, .github/workflows/hbrepo.yml]
+    paths: [ci/hbrepo.py, .github/workflows/hbrepo.yml, site/**, docs/screenshots/**]
   workflow_dispatch:
   workflow_call:
 
@@ -64,6 +65,9 @@ jobs:
           channel false "StremioNative"
           channel true "StremioNative Beta"
           if [ -f pkg/icon160.png ]; then cp pkg/icon160.png _site/; fi
+          # the download page beside the index: it reads repo.json and the manifests in the browser
+          cp site/index.html _site/
+          mkdir -p _site/screenshots && cp docs/screenshots/*.jpg _site/screenshots/
           find _site -name '*.json' -print -exec cat {} \;
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:

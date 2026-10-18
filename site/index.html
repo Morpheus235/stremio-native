@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StremioNative</title>
+<meta name="description" content="Unofficial native Stremio client for rooted LG webOS TVs. Install through Homebrew Channel.">
+<link rel="icon" href="icon160.png">
+<style>
+  :root {
+    --bg: #0b0a12; --surface: #15131f; --line: #2a2738; --text: #f2f0f7; --muted: #a9a5b8;
+    --accent: #6e4ee8; --accent-ink: #fff; --code: #1d1a2a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Inter, sans-serif; }
+  main { max-width: 1040px; margin: 0 auto; padding: 48px 16px 64px; }
+  header { display: flex; gap: 20px; align-items: center; }
+  header img { width: 72px; height: 72px; border-radius: 16px; }
+  h1 { margin: 0; font-size: 34px; letter-spacing: -.01em; }
+  .tag { color: var(--muted); margin: 4px 0 0; }
+  h2 { font-size: 20px; margin: 48px 0 14px; }
+  .shots { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 32px; }
+  .shots img { width: 100%; border-radius: 10px; display: block; border: 1px solid var(--line); }
+  ol { padding-left: 22px; margin: 0; }
+  ol li { margin: 6px 0; }
+  .url { display: flex; gap: 8px; margin: 10px 0 4px; }
+  .url code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; background: var(--code); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 15px; }
+  button, .btn { font: inherit; font-weight: 600; border: 0; border-radius: 8px; padding: 10px 16px; cursor: pointer; background: var(--accent); color: var(--accent-ink); text-decoration: none; display: inline-block; white-space: nowrap; }
+  .btn.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+  .pkgs { display: grid; gap: 12px; }
+  .pkg { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  .pkg .info { flex: 1; min-width: 220px; }
+  .pkg h3 { margin: 0; font-size: 18px; }
+  .pkg .meta { color: var(--muted); font-size: 14px; }
+  .pkg .sha { color: var(--muted); font-size: 12px; font-family: ui-monospace, Menlo, monospace; word-break: break-all; margin-top: 4px; }
+  .note { color: var(--muted); font-size: 14px; }
+  footer { margin-top: 56px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); padding-top: 18px; }
+  a { color: #b9a6ff; }
+  @media (max-width: 640px) { .shots { grid-template-columns: 1fr; } h1 { font-size: 28px; } .url { flex-direction: column; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="icon160.png" alt="">
+    <div>
+      <h1>StremioNative</h1>
+      <p class="tag">An unofficial native Stremio client for LG webOS TVs: hardware playback, your addons, Dolby Digital and Pro Logic II audio conversion, Dolby Vision and styled subtitles.</p>
+    </div>
+  </header>
+
+  <div class="shots">
+    <img src="screenshots/home.jpg" alt="Home">
+    <img src="screenshots/series.jpg" alt="A series and its episodes">
+    <img src="screenshots/discover.jpg" alt="Discover">
+    <img src="screenshots/settings.jpg" alt="Settings">
+  </div>
+
+  <h2>Install with Homebrew Channel</h2>
+  <ol>
+    <li>Install <a href="https://github.com/webosbrew/webos-homebrew-channel">Homebrew Channel</a> on the TV (a rooted TV is recommended).</li>
+    <li>In Homebrew Channel, open <b>Settings → Add repository</b> and enter:
+      <div class="url"><code id="repo"></code><button id="copy" type="button">Copy</button></div>
+    </li>
+    <li>Install <b>StremioNative</b> or <b>StremioNative Beta</b> from the list. Updates arrive the same way.</li>
+  </ol>
+
+  <h2>Download</h2>
+  <div class="pkgs" id="pkgs"><p class="note">Loading the current packages…</p></div>
+  <p class="note">To install an .ipk by hand, use webOS Dev Manager or <code>ares-install</code>. Older versions are on the <a href="https://github.com/Morpheus235/stremio-native/releases">releases page</a>.</p>
+
+  <footer>
+    <a href="https://github.com/Morpheus235/stremio-native">Source on GitHub</a> · GPL-3.0-or-later ·
+    Built on <a href="https://github.com/GLinnik21/plx-native">PlxNative</a> · Not affiliated with Stremio or LG.
+  </footer>
+</main>
+<script>
+  const base = new URL(".", location.href).href;
+  const repo = base + "repo.json";
+  document.getElementById("repo").textContent = repo;
+  document.getElementById("copy").addEventListener("click", async (e) => {
+    try { await navigator.clipboard.writeText(repo); e.target.textContent = "Copied"; }
+    catch { e.target.textContent = "Select and copy"; }
+    setTimeout(() => (e.target.textContent = "Copy"), 2000);
+  });
+
+  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text) n.textContent = text; return n; };
+  const mb = (b) => (b / 1048576).toFixed(1) + " MB";
+
+  (async () => {
+    const box = document.getElementById("pkgs");
+    try {
+      const index = await (await fetch(repo, { cache: "no-store" })).json();
+      const manifests = await Promise.all(index.packages.map(async (p) => (await fetch(p.manifestUrl, { cache: "no-store" })).json()));
+      box.replaceChildren();
+      if (!manifests.length) box.append(el("p", "note", "No release yet."));
+      for (const m of manifests) {
+        const card = el("div", "pkg"), info = el("div", "info");
+        info.append(el("h3", null, m.title), el("div", "meta", `Version ${m.version} · ${mb(m.ipkSize)}`), el("div", "sha", "sha256 " + m.ipkHash.sha256));
+        const dl = el("a", "btn", "Download .ipk");
+        dl.href = m.ipkUrl;
+        card.append(info, dl);
+        box.append(card);
+      }
+    } catch {
+      box.replaceChildren(el("p", "note", "Couldn't load the package list."));
+      const a = el("a", "btn ghost", "Open the releases page");
+      a.href = "https://github.com/Morpheus235/stremio-native/releases";
+      box.append(a);
+    }
+  })();
+</script>
+</body>
+</html>
