@@ -1,19 +1,61 @@
 # StremioNative
 
-A native Stremio client for rooted LG webOS TVs (webOS 4.5 and later), written in Rust with a
-small C boot shim. It draws its own UI with OpenGL ES and plays media through the TV's hardware
-decoders (StarfishMediaAPIs) instead of the web runtime.
+An unofficial native [Stremio](https://www.stremio.com) client for rooted LG webOS TVs. It's
+written in Rust with a small C boot shim, draws its own UI with OpenGL ES and plays through the
+TV's hardware decoders instead of the web runtime. Developed and tested on an LG C1 (webOS 6).
 
-Status: early. The foundation layers are in place; the Stremio addon layer, the player and the
-screens are being built (see [docs/roadmap.md](docs/roadmap.md)).
+Not affiliated with Stremio.
 
-## Built on PlxNative
+## Install
 
-StremioNative is built on [PlxNative](https://github.com/GLinnik21/plx-native), the native Plex
-client for LG webOS. Its renderer, UI toolkit, focus engine, network transport, Starfish
-hardware-playback seam, FFmpeg demuxer and subtitle pipeline are the foundation this app was
-ported from, and much of what makes it work on these TVs was worked out there first. Thank you to
-its author and contributors.
+You need a rooted TV with [Homebrew Channel](https://github.com/webosbrew/webos-homebrew-channel).
+
+1. In Homebrew Channel, open **Settings → Add repository** and enter
+   `https://morpheus235.github.io/stremio-native/repo.json`
+2. Install **StremioNative Beta**. Once there is a stable release, **StremioNative** appears
+   there too, as a separate app that installs beside the Beta. Updates arrive through the same
+   repository.
+
+The packages (ipk + sha256) are also on the [releases page](https://github.com/Morpheus235/stremio-native/releases).
+
+## Features
+
+- Stremio sign-in, your account's addons, Continue Watching, Library, Search, Live TV
+- Hardware playback with probing before load; HLS; Dolby Vision Profile 7 played as 8.1
+- Audio the TV can't decode (TrueHD, DTS, FLAC, PCM…) converted in software. Under
+  **Settings → Multichannel audio**, 5.1 is sent as Dolby Digital (optical/ARC), as PCM (eARC),
+  as stereo or as Pro Logic II.
+- Text subtitles through libass (SRT, WebVTT, ASS/SSA, embedded fonts), plus addon subtitles
+- Skip intro/recap/credits, CH +/- to jump between chapters, Up Next
+- Remote control mapping: [docs/remote-keys.md](docs/remote-keys.md)
+
+Status and plans: [docs/roadmap.md](docs/roadmap.md).
+
+## Building
+
+```sh
+rustup toolchain install nightly --component rust-src
+make setup-env                     # webOS NDK into ~/webos-ndk (or WEBOS_SDK=<sdk root>)
+make ipk                           # debug build: build/com.morpheus235.stremionative.debug_<ver>_arm.ipk
+make RELEASE=1 FLAVOR=beta ipk     # StremioNative Beta, version X.Y.<UTC date>
+make RELEASE=1 FLAVOR=stable ipk   # what a release publishes
+```
+
+The NDK is published for macOS and linux-aarch64. `make ipk` also builds the bundled FFmpeg
+(`ci/build-ffmpeg.sh`) and libass (`ci/build-libass.sh`, needs `cmake` and `pkg-config`). The
+package is reproducible: the same inputs give the same sha256 (`ci/mkipk.py --verify`).
+
+Host tests (no NDK needed):
+
+```sh
+# Debian/Ubuntu: apt-get install libsdl2-dev libsdl2-ttf-dev libgl-dev
+CARGO_INCREMENTAL=0 cargo test --workspace
+make check                         # host tests + packaging selftests
+```
+
+Releases are cut by pushing a `vX.Y.Z` tag on `main` (a suffixed tag such as `v0.2.0-beta.1`
+publishes the Beta). CI builds, publishes the release and refreshes the Homebrew Channel
+repository. Details in [docs/roadmap.md](docs/roadmap.md#releases).
 
 ## Layout
 
@@ -21,64 +63,26 @@ its author and contributors.
 | --- | --- |
 | `crates/base` | event log, file locations, spawn discipline, dlopen seam, frame instruments |
 | `crates/machine` | state machines, effects, the present gate, idle wake, motion |
-| `crates/net` | HTTP(S) transport over the TV's libcurl, TLS fallbacks, DNS pins |
+| `crates/net` | HTTP(S) over the TV's libcurl, TLS fallbacks, DNS pins |
 | `crates/platform` | webOS services, device capabilities, i18n, image cache, storage |
 | `crates/gfx` | GL ES renderer, text, SVG, images |
-| `crates/ui` | theme, layout, focus engine, widgets, card rows and grids |
-| `crates/media` | demux, the HLS client, stream probing, subtitles, the Starfish buffer-feed player |
-| `crates/stremio` | the addon protocol: manifests, catalogs, metas, streams, viewport-first scheduling |
-| `crates/screens` | the screens (Home, Detail/streams, the player page) and the stores they read |
-| `crates/app` | the application core the C shim links: boot, the frame loop, the webOS port, workers |
+| `crates/ui` | theme, layout, focus engine, widgets |
+| `crates/media` | demux, HLS, probing, audio conversion, subtitles, the Starfish player |
+| `crates/stremio` | the addon protocol, the Stremio account API, skip markers |
+| `crates/screens` | the screens and the stores they read |
+| `crates/app` | the application core: boot, frame loop, webOS port, workers |
 | `crates/storage` | the private storage helper process |
-| `native/` | C boot/crash shim, Starfish/ACB seam, libass glue, nanosvg rasterizer |
-| `locales/` | translation catalogs |
-| `assets/`, `pkg/` | icons, fonts, the packaged app manifest and root bundle |
+| `native/` | C boot/crash shim, Starfish/ACB seam, libass and audio-decoder glue, SVG rasterizer |
+| `locales/`, `assets/`, `pkg/` | translations, icons, fonts, the app manifest |
 
-## Host build and tests
+## Built on PlxNative
 
-```sh
-# Debian/Ubuntu: apt-get install libsdl2-dev libsdl2-ttf-dev libgl-dev
-CARGO_INCREMENTAL=0 cargo test --workspace
-```
-
-The TV build cross-compiles to `arm-unknown-linux-gnueabi` with the webOS NDK; `.cargo/config.toml`
-pins the codegen flags that keep the binary from SIGILL-ing on the TV.
-
-`make check` runs the host tests and the packaging selftests (`ci/flavor.py`, `ci/mkipk.py`,
-`ci/hbrepo.py`); `make selftest` runs only the selftests. Neither needs the NDK.
-
-## Building the package
-
-```sh
-rustup toolchain install nightly --component rust-src
-make setup-env                     # the webOS NDK into ~/webos-ndk (or pass WEBOS_SDK=<sdk root>)
-make ipk                           # build/com.morpheus235.stremionative.debug_<version>_arm.ipk
-make RELEASE=1 FLAVOR=stable ipk   # what a release publishes
-make RELEASE=1 FLAVOR=beta ipk     # the StremioNative Beta app, version X.Y.<UTC date>
-```
-
-`make` links `build/stremionative` (the C shim in `native/` plus the `stremionative-app` staticlib)
-and `build/stremionative-storage`. `FLAVOR` picks the install (`debug`, `beta`, `stable`; see
-`ci/flavor.py`); `stable` and `beta` refuse to build without `RELEASE=1`, which also drops every dev
-trigger. `ARM_PROFILE=tvdev|release` overrides the cargo profile (`tvdev`, no LTO, is the default
-only for a local debug build). The NDK is published for linux-aarch64 and macOS only.
-
-**Bundled libraries.** The package carries its own FFmpeg (`libavutil-sn.so.61`,
-`libavcodec-sn.so.63`, `libavformat-sn.so.63`; plus `libswscale-sn.so.10` in a non-release build),
-which the player dlopens from the app directory. `make ipk` builds it with `ci/build-ffmpeg.sh`
-into `vendor/ffmpeg-prefix` (`make ffmpeg` alone; incremental after the first ~minutes);
-`BUNDLED_LIB_DIR=<dir>` takes prebuilt `-sn` libraries instead. A missing required library stops
-the build with its name. libass (`libass-sn.so.0`, every text subtitle: SRT, WebVTT, ASS/SSA) is
-built by `make ipk` with `ci/build-libass.sh` (`make libass` alone) into `vendor/libass-prefix`:
-libass, FreeType, FriBidi, HarfBuzz and libunibreak at the versions pinned in `ci/dependencies.json`,
-linked static into one library that exports only `sn_ass_*` and needs only libc, libm and libgcc_s.
-It needs `cmake` and `pkg-config` on the host. `LIBASS_SO=<path>` takes a prebuilt one; a missing
-one only warns, and the player then shows no text subtitles.
-
-The package is reproducible: `ci/mkipk.py` normalises every archive field, so the same inputs give
-the same sha256, and `make ipk` reads the result back (`ci/mkipk.py --verify`). The launcher art in
-`pkg/` (and the badged `pkg/beta/`, `pkg/debug/` sets) is drawn by `ci/make-icons.py`.
+StremioNative is built on [PlxNative](https://github.com/GLinnik21/plx-native), the native Plex
+client for LG webOS. Its renderer, UI toolkit, focus engine, network transport, Starfish playback
+seam, FFmpeg demuxer and subtitle pipeline are the foundation this app was ported from. Thank you
+to its author and contributors.
 
 ## License
 
-GPL-3.0-or-later. See [LICENSE](LICENSE), [NOTICE](NOTICE), [docs/legal.md](docs/legal.md) and [PRIVACY.md](PRIVACY.md). Not affiliated with Stremio.
+GPL-3.0-or-later. See [LICENSE](LICENSE), [NOTICE](NOTICE), [docs/legal.md](docs/legal.md) and
+[PRIVACY.md](PRIVACY.md).

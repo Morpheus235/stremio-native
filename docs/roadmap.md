@@ -18,7 +18,7 @@ The Plex transcode decision (`route/`) and transcode ABR are not carried over.
   decoded on the CPU and fed as S16LE 48 kHz PCM (`ff::adec`, `libsnadec.so`, ported from
   PlxNative) — stereo always; more than two channels go through the same `ff::transcode` as
   AC-3 5.1 (what optical and plain ARC carry) unless Settings > Multichannel audio says PCM, or
-  Automatic finds the TV's sound output on HDMI eARC. Its Stereo and Stereo (Pro Logic II) rungs
+  Automatic finds the TV's sound output on HDMI eARC. Its Stereo and Pro Logic II rungs
   fold every multichannel track the build decodes to a plain or a DPLII matrixed stereo pair instead. Still to verify on
   a TV.
 - **Probe before Load.** A stream comes with no codec facts, so the player opens it with the
