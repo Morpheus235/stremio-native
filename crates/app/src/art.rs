@@ -725,7 +725,10 @@ impl tex::Source for Art {
 
     fn unresident(&self, key: PosterKey, refused: bool) {
         let mut inner = self.inner.borrow_mut();
-        if let Some(slot) = inner.slots.get_mut(&key.0) {
+        // Only a READY claim is revoked. A rejected result (`tex::accept` of a settled miss)
+        // reaches here too, and its `Failed` hold must stand: demoting it to `Wanted` refetched a
+        // 404 / undecodable image on every draw and kept the frame from ever settling.
+        if let Some(slot) = inner.slots.get_mut(&key.0).filter(|s| s.state == State::Ready) {
             // Stop answering READY now. A refused arrival cools down; a lost texture is asked for
             // again by the next draw that wants it (from the disk tier, so cheaply).
             slot.state = if refused { State::Refused(Instant::now() + Duration::from_millis(REFUSED_MS)) } else { State::Wanted };
@@ -936,6 +939,31 @@ mod tests {
         }
         assert_eq!(keys(&started).len(), 1);
         assert!(art.failed(0, url, 250, 375, false));
+        tex::reset_for_test(64 << 20);
+    }
+
+    /// The same settled miss with the source INSTALLED, as in the product: `tex::accept`'s
+    /// rejected result calls back into `unresident`, which must not undo the miss's hold. It did
+    /// (`State::Failed` -> `Wanted`), so every draw of a 404 / undecodable poster refetched it,
+    /// the source never went idle and the frame never settled.
+    #[test]
+    fn a_settled_miss_round_tripped_through_the_render_cache_is_not_refetched() {
+        let _g = sn_base::testlock::serial();
+        tex::reset_for_test(64 << 20);
+        let (art, started) = art(true);
+        let art = art.install();
+        let url = "https://img.example/404.jpg";
+        art.probe(0, url, 250, 375, false);
+        let key = keys(&started)[0];
+        art.tx.send(Fetched { key, outcome: Outcome::Failed { transient: false, error: PosterError::Fetch } }).unwrap();
+        art.drain();
+        for _ in 0..10 {
+            assert_eq!(art.probe(0, url, 250, 375, false), None);
+            art.drain();
+        }
+        assert_eq!(keys(&started).len(), 1, "a settled miss is held, not refetched every frame");
+        assert!(art.failed(0, url, 250, 375, false));
+        assert!(art.idle(), "nothing is wanted: the frame may settle");
         tex::reset_for_test(64 << 20);
     }
 
