@@ -219,7 +219,7 @@
     "description": "Subtitle size picker: the line under the title."
   },
   "app.settings.subtitle_position_copy": {
-    "value": "Where on the picture plain-text subtitles sit. Styled and image subtitles keep their own placement.",
+    "value": "Where text subtitles sit. Styled and image subtitles keep their own.",
     "description": "Subtitle position picker: the line under the title."
   },
   "app.settings.size.small": {

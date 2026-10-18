@@ -1,0 +1,1266 @@
+{
+  "app.home.loading_addons": {
+    "value": "Addons werden geladen …",
+    "description": "Home: caption beside the spinner while the installed addons' manifests load."
+  },
+  "app.home.addons_failed": {
+    "value": "Addons konnten nicht geladen werden",
+    "description": "Home: failure verdict when no installed addon could be loaded."
+  },
+  "app.home.addons_failed_reason": {
+    "value": "Prüfe, ob der Fernseher online ist, und versuche es erneut.",
+    "description": "Home: the line under the addons failure verdict."
+  },
+  "app.home.retry": {
+    "value": "Erneut versuchen",
+    "description": "Home: the button under the addons failure verdict that asks again."
+  },
+  "app.home.nothing": {
+    "value": "Deine Addons bieten nichts zum Stöbern",
+    "description": "Home: read-out when the installed addons offer no catalog to browse."
+  },
+  "app.home.row_failed": {
+    "value": "Katalog konnte nicht geladen werden.",
+    "description": "Home: note in place of a catalog row whose first page failed to load; a Try again button follows it."
+  },
+  "app.home.row_source": {
+    "value": "{kind} · {addon}",
+    "description": "Home: a catalog row heading's annotation — the content type and the addon that provides the row.",
+    "args": {
+      "kind": "str",
+      "addon": "str"
+    }
+  },
+  "app.kind.movie": {
+    "value": "Filme",
+    "description": "A Stremio content type, as a row annotation (plural)."
+  },
+  "app.kind.series": {
+    "value": "Serien",
+    "description": "A Stremio content type, as a row annotation (plural)."
+  },
+  "app.kind.channel": {
+    "value": "Kanäle",
+    "description": "A Stremio content type, as a row annotation (plural): video channels."
+  },
+  "app.kind.tv": {
+    "value": "TV",
+    "description": "A Stremio content type, as a row annotation: live TV."
+  },
+  "app.kind.anime": {
+    "value": "Anime",
+    "description": "A Stremio content type (addon-defined, e.g. Kitsu), as a row annotation and a type filter chip."
+  },
+  "app.filter.all": {
+    "value": "Alle",
+    "description": "Home and Library: the first type filter chip, which shows every content type."
+  },
+  "app.nav.home": {
+    "value": "Startseite",
+    "description": "The Home page's name, as the crumb BACK returns to."
+  },
+  "app.detail.loading": {
+    "value": "Wird geladen …",
+    "description": "Detail: note while the title's description loads."
+  },
+  "app.detail.season": {
+    "value": "Staffel {season}",
+    "description": "Detail: the heading over one season's episodes.",
+    "args": {
+      "season": "i64"
+    }
+  },
+  "app.detail.specials": {
+    "value": "Specials",
+    "description": "Detail: the heading over a series' specials (season 0)."
+  },
+  "app.detail.episodes": {
+    "value": "Folgen",
+    "description": "Detail: the heading over a series' episode list while it loads or when it cannot be shown."
+  },
+  "app.detail.episodes_loading": {
+    "value": "Folgen werden geladen …",
+    "description": "Detail: note while a series' episode list loads."
+  },
+  "app.detail.episodes_failed": {
+    "value": "Folgen konnten nicht geladen werden ({reason})",
+    "description": "Detail: note when a series' episode list failed to load; reason is a short technical cause.",
+    "args": {
+      "reason": "str"
+    }
+  },
+  "app.detail.no_meta": {
+    "value": "Keines deiner Addons listet die Folgen dieser Serie",
+    "description": "Detail: note when no installed addon describes this series' episodes."
+  },
+  "app.detail.no_episodes": {
+    "value": "Für diese Serie sind noch keine Folgen gelistet",
+    "description": "Detail: note when a series lists no episodes."
+  },
+  "app.detail.streams_loading": {
+    "value": "Suche nach Streams …",
+    "description": "Detail: note under an addon's name while it is asked for streams."
+  },
+  "app.detail.streams_failed": {
+    "value": "Dieses Addon hat nicht geantwortet ({reason})",
+    "description": "Detail: note under an addon's name when it did not answer; reason is a short technical cause.",
+    "args": {
+      "reason": "str"
+    }
+  },
+  "app.detail.no_streams": {
+    "value": "Keine Streams von diesem Addon",
+    "description": "Detail: note under an addon's name when it has no stream for this title."
+  },
+  "app.detail.no_stream_addons": {
+    "value": "Keines deiner Addons bietet Streams für diesen Titel",
+    "description": "Detail: note when no installed addon offers streams for this title."
+  },
+  "app.detail.streams": {
+    "value": "Streams",
+    "description": "Detail: the heading over the streams when no addon offers any."
+  },
+  "app.detail.not_playable": {
+    "value": "Hier nicht abspielbar",
+    "description": "Detail: trailing read-out of a stream this app cannot play (a torrent, a link to another app)."
+  },
+  "app.detail.stream_cached": {
+    "value": "Im Cache",
+    "description": "Detail: chip on a stream the addon's debrid service already holds (it plays at once)."
+  },
+  "app.detail.stream_uncached": {
+    "value": "Nicht im Cache – lädt erst",
+    "description": "Detail: quiet chip on a stream the debrid service does not hold yet: playing it starts the download and shows the service's placeholder clip."
+  },
+  "app.detail.stream_live": {
+    "value": "LIVE",
+    "description": "Detail: chip on a live stream (a TV channel, an addon's live stream): it has no length and no resume point."
+  },
+  "app.detail.stream_seeders": {
+    "value": "{count} Seeder",
+    "description": "Detail: chip with a torrent stream's seeder count.",
+    "args": {
+      "count": "i64"
+    }
+  },
+  "app.settings.stream_languages": {
+    "value": "Stream-Sortierung",
+    "description": "Settings: row and page title — the languages whose streams a stream list puts first."
+  },
+  "app.settings.stream_languages_copy": {
+    "value": "Streams in diesen Sprachen stehen oben, nach denen im Cache.",
+    "description": "Preferred audio language picker: the line under the title."
+  },
+  "app.settings.stream_languages_same": {
+    "value": "Wie Tonspur",
+    "description": "Stream sorting: the row value, and the page's switch, when the order follows the audio languages."
+  },
+  "app.settings.audio_languages": {
+    "value": "Audiosprachen",
+    "description": "Settings: row and page title — the ordered languages of the audio track a film starts on."
+  },
+  "app.settings.audio_languages_copy": {
+    "value": "Spielt die erste dieser Sprachen, die eine Datei hat. Keine gewählt: Standard der Datei.",
+    "description": "Audio languages page: the line under the title."
+  },
+  "app.settings.audio_languages_none": {
+    "value": "Standard der Datei",
+    "description": "Settings: the Audio languages row's value while none is chosen (the file's default track plays)."
+  },
+  "app.settings.subtitle_languages": {
+    "value": "Untertitelsprachen",
+    "description": "Settings: row and page title — the ordered subtitle languages."
+  },
+  "app.settings.subtitle_languages_copy": {
+    "value": "Zeigt die erste verfügbare dieser Sprachen. Keine gewählt: App-Sprache, dann Englisch.",
+    "description": "Subtitle languages page: the line under the title."
+  },
+  "app.settings.subtitle_languages_none": {
+    "value": "App-Sprache",
+    "description": "Settings: the Subtitle languages row's value while none is chosen (the app's language, then English)."
+  },
+  "app.settings.languages_chosen": {
+    "value": "Deine Sprachen",
+    "description": "A language list page: the heading over the chosen languages, in order."
+  },
+  "app.settings.languages_add": {
+    "value": "Sprache hinzufügen",
+    "description": "A language list page: the heading over the languages that can be added."
+  },
+  "app.settings.languages_none": {
+    "value": "Keine gewählt",
+    "description": "A language list page: the note while no language is chosen."
+  },
+  "app.settings.languages_summary": {
+    "value": "{first} +{more}",
+    "description": "Settings: a language row's value for several languages — the first one's name and how many follow it.",
+    "args": {
+      "first": "str",
+      "more": "i64"
+    }
+  },
+  "app.settings.language_up": {
+    "value": "Nach oben",
+    "description": "A chosen language's menu: move it one place earlier."
+  },
+  "app.settings.language_down": {
+    "value": "Nach unten",
+    "description": "A chosen language's menu: move it one place later."
+  },
+  "app.settings.language_remove": {
+    "value": "Entfernen",
+    "description": "A chosen language's menu: take it off the list."
+  },
+  "app.settings.forced_fallback": {
+    "value": "Erzwungene als Ersatz",
+    "description": "Settings: row and picker title — whether Forced only also accepts a forced track in a subtitle language."
+  },
+  "app.settings.forced_fallback_copy": {
+    "value": "Bei „Nur erzwungene“: Fehlt der Audiosprache eine erzwungene Spur, wird eine in deinen Untertitelsprachen genommen.",
+    "description": "Forced fallback picker: the line under the title."
+  },
+  "app.settings.forced_fallback_off": {
+    "value": "Aus",
+    "description": "Forced fallback picker: only the audio language's forced track."
+  },
+  "app.settings.forced_fallback_on": {
+    "value": "An",
+    "description": "Forced fallback picker: also a forced track in a subtitle language."
+  },
+  "app.settings.subtitle_mode": {
+    "value": "Untertitel",
+    "description": "Settings: row and picker title — whether subtitles show when a film starts."
+  },
+  "app.settings.subtitle_mode_copy": {
+    "value": "Auto: Untertitel, wenn der Ton nicht in deiner Sprache ist, sonst nur erzwungene.",
+    "description": "Subtitles picker: the line under the title."
+  },
+  "app.settings.subs_off": {
+    "value": "Aus",
+    "description": "Subtitles picker: never show subtitles."
+  },
+  "app.settings.subs_on": {
+    "value": "An",
+    "description": "Subtitles picker: always show subtitles in the subtitle language."
+  },
+  "app.settings.subs_forced": {
+    "value": "Nur erzwungene",
+    "description": "Subtitles picker: only forced subtitles (signs, foreign dialogue)."
+  },
+  "app.settings.subs_auto": {
+    "value": "Auto",
+    "description": "Subtitles picker: on when the audio is not in the audio language, forced only when it is."
+  },
+  "app.settings.next_episode": {
+    "value": "Nächste Folge",
+    "description": "Settings: row and picker title — what plays when an episode ends or Up Next is accepted."
+  },
+  "app.settings.next_episode_copy": {
+    "value": "„Gleiches Release“ behält deine aktuelle Quelle, wenn sie die nächste Folge hat; sonst öffnet sich die Stream-Liste.",
+    "description": "Next episode picker: the line under the title."
+  },
+  "app.settings.next_same": {
+    "value": "Gleiches Release",
+    "description": "Next episode picker: play the next episode's stream of the same release (shown on the player's Up Next line once found)."
+  },
+  "app.settings.next_choose": {
+    "value": "Immer auswählen",
+    "description": "Next episode picker: always open the next episode's stream list."
+  },
+  "app.detail.upcoming": {
+    "value": "Demnächst",
+    "description": "Detail: trailing read-out of an episode whose release date is still ahead."
+  },
+  "app.detail.all_episodes": {
+    "value": "Alle Folgen",
+    "description": "Detail: the button on an episode's Streams page that opens the show's page with all its episodes."
+  },
+  "app.detail.cast": {
+    "value": "Besetzung: {names}",
+    "description": "Detail: the line naming a title's leading actors; names is a comma-separated list.",
+    "args": {
+      "names": "str"
+    }
+  },
+  "app.detail.director": {
+    "value": "Regie: {names}",
+    "description": "Detail: the line naming a title's directors; names is a comma-separated list.",
+    "args": {
+      "names": "str"
+    }
+  },
+  "app.detail.genres_label": {
+    "value": "Genres",
+    "description": "Detail: the label over a title's genre chips (each opens Discover on that genre)."
+  },
+  "app.detail.cast_label": {
+    "value": "Besetzung",
+    "description": "Detail: the label over a title's cast chips (each searches for that name)."
+  },
+  "app.detail.director_label": {
+    "value": "Regie",
+    "description": "Detail: the label over a title's director chips (each searches for that name)."
+  },
+  "app.detail.summary_label": {
+    "value": "Handlung",
+    "description": "Detail page: the small-caps label over the synopsis (stremio-web's SUMMARY)."
+  },
+  "app.player.refused": {
+    "value": "Dieser Stream kann nicht abgespielt werden",
+    "description": "Player: the failure read-out when the stream's own request headers cannot be sent (malformed)."
+  },
+  "app.player.debrid_downloading": {
+    "value": "Lädt noch bei deinem Debrid-Dienst – versuche es in ein paar Minuten erneut",
+    "description": "Player: the system toast after a debrid service's \"still downloading\" placeholder clip played out (the torrent is not cached yet)."
+  },
+  "app.player.audio": {
+    "value": "Audio",
+    "description": "Player: the audio track menu's title, and the Info panel's audio row."
+  },
+  "app.player.subtitles": {
+    "value": "Untertitel",
+    "description": "Player: the subtitle track menu's title, and the Info panel's subtitle row."
+  },
+  "app.player.subtitles_off": {
+    "value": "Aus",
+    "description": "Player: the subtitle menu's first row, which shows no subtitles; also the Info panel's subtitle value then."
+  },
+  "app.player.subtitle_addon": {
+    "value": "{language} · {addon}",
+    "description": "Player: a subtitles addon's subtitle in the subtitle menu — its language and the addon that offers it (both server text).",
+    "args": {
+      "language": "str",
+      "addon": "str"
+    }
+  },
+  "app.player.subtitle_delay": {
+    "value": "Untertitelverzögerung",
+    "description": "Player: the subtitle menu's delay row and the title of the delay menu."
+  },
+  "app.player.subtitle_earlier": {
+    "value": "Früher",
+    "description": "Subtitle delay menu: show the subtitles a quarter second earlier."
+  },
+  "app.player.subtitle_later": {
+    "value": "Später",
+    "description": "Subtitle delay menu: show the subtitles a quarter second later."
+  },
+  "app.player.subtitle_delay_reset": {
+    "value": "Zurücksetzen",
+    "description": "Subtitle delay menu: back to no delay."
+  },
+  "app.player.subtitle_languages": {
+    "value": "Sprachen",
+    "description": "Player: the subtitle menu's left column header — the languages subtitles are offered in."
+  },
+  "app.player.subtitles_embedded": {
+    "value": "Eingebettet",
+    "description": "Player: the subtitle menu's group of the file's own subtitle tracks, and the mark on such a track among a language's subtitles."
+  },
+  "app.player.subtitles_other": {
+    "value": "Andere",
+    "description": "Player: the subtitle menu's group of addon subtitles that name no language."
+  },
+  "app.player.subtitle_forced": {
+    "value": "Erzwungen",
+    "description": "Player: the mark on a subtitle that only translates foreign dialogue."
+  },
+  "app.player.subtitle_sdh": {
+    "value": "SDH",
+    "description": "Player: the mark on a subtitle for the deaf and hard of hearing (keep it short: a mark, not a phrase)."
+  },
+  "app.player.subtitle_delay_short": {
+    "value": "Verzögerung",
+    "description": "Player: the subtitle menu's delay row, under the languages (the menu is the subtitles', so the one word says it)."
+  },
+  "app.player.seconds": {
+    "value": "{value} s",
+    "description": "Player: a subtitle delay in seconds, signed (+0.25, −1.50).",
+    "args": {
+      "value": "str"
+    }
+  },
+  "app.player.more": {
+    "value": "Mehr",
+    "description": "Player: the title of the menu behind the transport's … button."
+  },
+  "app.player.show_info": {
+    "value": "Infos anzeigen",
+    "description": "Player: the … menu's row that opens what plays, as its catalog tells it (the show, the episode, its overview, cast and director)."
+  },
+  "app.player.now_playing": {
+    "value": "Läuft gerade",
+    "description": "Player: the Episodes panel's mark on the episode that is playing."
+  },
+  "app.player.paused": {
+    "value": "Pausiert",
+    "description": "Player: the word under the pause badge in the middle of the picture while the film is paused."
+  },
+  "app.player.subtitles_on": {
+    "value": "Untertitel an: {name}",
+    "description": "Player: the note after the green key turned subtitles on; {name} is the subtitle's name (its language, the addon).",
+    "args": {
+      "name": "str"
+    }
+  },
+  "app.player.subtitles_turned_off": {
+    "value": "Untertitel aus",
+    "description": "Player: the note after the green key turned subtitles off."
+  },
+  "app.player.track": {
+    "value": "Spur {n}",
+    "description": "Player: a track menu row for a track the file names in no language, by its position.",
+    "args": {
+      "n": "i64"
+    }
+  },
+  "app.player.next_episode": {
+    "value": "Nächste Folge",
+    "description": "Player: the button near an episode's end that opens the next episode's streams."
+  },
+  "app.player.watch_credits": {
+    "value": "Abspann ansehen",
+    "description": "Player: the button beside Next episode that keeps watching this one."
+  },
+  "app.player.up_next": {
+    "value": "Als Nächstes",
+    "description": "Player: the line over the next episode's name near an episode's end."
+  },
+  "app.player.skip_intro": {
+    "value": "Intro überspringen",
+    "description": "Player: the button shown during an episode's intro; OK jumps to its end."
+  },
+  "app.player.skip_recap": {
+    "value": "Rückblick überspringen",
+    "description": "Player: the button shown during an episode's recap of earlier episodes; OK jumps to its end."
+  },
+  "app.player.skipped_intro": {
+    "value": "Intro übersprungen",
+    "description": "Player: the short notice after the intro was skipped automatically."
+  },
+  "app.player.skipped_recap": {
+    "value": "Rückblick übersprungen",
+    "description": "Player: the short notice after the recap was skipped automatically."
+  },
+  "app.settings.skip_intros": {
+    "value": "Intros überspringen",
+    "description": "Settings: row and picker title — whether the player offers to skip intros and recaps."
+  },
+  "app.settings.skip_off": {
+    "value": "Aus",
+    "description": "Skip intros picker: never offer to skip."
+  },
+  "app.settings.skip_button": {
+    "value": "Taste anzeigen",
+    "description": "Skip intros picker: show a Skip intro button (the default)."
+  },
+  "app.settings.skip_auto": {
+    "value": "Automatisch",
+    "description": "Skip intros picker: skip intros and recaps without asking."
+  },
+  "app.settings.skip_intros_copy": {
+    "value": "Überspringt Intros und Rückblicke, wenn ihre Marker bekannt sind (introdb.app, AniSkip).",
+    "description": "Skip intros picker: the line under the title. introdb.app and AniSkip are proper names."
+  },
+  "app.settings.dv_profile7": {
+    "value": "Dolby Vision Profil 7",
+    "description": "Settings: row and picker title — how a dual-layer Dolby Vision Profile 7 file plays. 'Dolby Vision' is a trademark, never translated."
+  },
+  "app.settings.dv_hdr10": {
+    "value": "HDR10",
+    "description": "Dolby Vision Profile 7 picker: play the HDR10 base layer (the default). HDR10 is a format name."
+  },
+  "app.settings.dv_try": {
+    "value": "Dolby Vision versuchen",
+    "description": "Dolby Vision Profile 7 picker: experimental — declare Dolby Vision to the TV, falling back to HDR10 automatically."
+  },
+  "app.settings.dv_profile7_copy": {
+    "value": "Für Dual-Layer-Dolby-Vision-Filme. HDR10 läuft auf jedem TV; „Dolby Vision versuchen“ fällt auf HDR10 zurück, wenn der TV ablehnt.",
+    "description": "Dolby Vision Profile 7 picker: the line under the title."
+  },
+  "app.settings.multichannel_audio": {
+    "value": "Mehrkanalton",
+    "description": "Settings: row and picker title — what a 5.1/7.1 track the app decodes itself is sent to the TV's audio output as."
+  },
+  "app.settings.multichannel_auto": {
+    "value": "Automatisch",
+    "description": "Multichannel audio picker: Dolby Digital, or PCM when the TV's sound output is HDMI eARC (the default)."
+  },
+  "app.settings.multichannel_dolby_digital": {
+    "value": "Dolby Digital",
+    "description": "Multichannel audio picker: always Dolby Digital 5.1. 'Dolby Digital' is a trademark, never translated."
+  },
+  "app.settings.multichannel_pcm": {
+    "value": "PCM",
+    "description": "Multichannel audio picker: always multichannel PCM. PCM is a format name."
+  },
+  "app.settings.multichannel_stereo": {
+    "value": "Stereo",
+    "description": "Multichannel audio picker: every surround track downmixed to a plain stereo pair."
+  },
+  "app.settings.multichannel_stereo_hint": {
+    "value": "Für TV-Lautsprecher, Kopfhörer oder Bluetooth",
+    "description": "Multichannel audio picker: the line under Stereo — who it is for."
+  },
+  "app.settings.multichannel_dplii": {
+    "value": "Pro Logic II",
+    "description": "Multichannel audio picker: every surround track folded to Dolby Pro Logic II matrixed stereo. 'Pro Logic II' is a trademark, never translated."
+  },
+  "app.settings.multichannel_dplii_hint": {
+    "value": "Für Pro-Logic-II-Receiver an einer Stereoverbindung",
+    "description": "Multichannel audio picker: the line under Pro Logic II — for a receiver that unfolds Pro Logic II, connected by a link that carries stereo only (optical with LG Sound Sync)."
+  },
+  "app.settings.multichannel_audio_copy": {
+    "value": "Wie 5.1- und 7.1-Ton gesendet wird, den die App dekodiert. Automatisch: Dolby Digital über optisch und ARC, PCM über eARC.",
+    "description": "Multichannel audio picker: the line under the title."
+  },
+  "app.player.undo": {
+    "value": "BACK · {time}",
+    "description": "Player: the chip after a seek saying that the BACK key returns to {time}, where the seek started. The key's name is in capitals.",
+    "args": {
+      "time": "str"
+    }
+  },
+  "app.player.aspect": {
+    "value": "Seitenverhältnis",
+    "description": "Player: the … menu's row for how the picture fills the screen, and its picker's title."
+  },
+  "app.player.aspect_auto": {
+    "value": "Auto",
+    "description": "Player: aspect mode — the picture's own shape, with black bars where it does not fill the screen."
+  },
+  "app.player.aspect_fill": {
+    "value": "Füllen",
+    "description": "Player: aspect mode — enlarge the picture until it covers the screen, cropping its edges."
+  },
+  "app.player.aspect_stretch": {
+    "value": "Strecken",
+    "description": "Player: aspect mode — stretch the picture to the whole screen, ignoring its shape."
+  },
+  "app.player.aspect_zoom_4_3": {
+    "value": "Zoom 4:3",
+    "description": "Player: aspect mode — zoom a 4:3 picture that has black bars at its sides until it fills the screen."
+  },
+  "app.player.aspect_zoom_21_9": {
+    "value": "Zoom 21:9",
+    "description": "Player: aspect mode — zoom a 21:9 picture that has black bars above and below until it fills the screen."
+  },
+  "app.player.stats": {
+    "value": "Statistiken für Nerds",
+    "description": "Player and Settings: the row that shows or hides the technical read-out over the picture (YouTube's name for it)."
+  },
+  "app.player.stats_on": {
+    "value": "An",
+    "description": "Player and Settings: the Stats for nerds row's value while the read-out is shown."
+  },
+  "app.player.stats_off": {
+    "value": "Aus",
+    "description": "Player and Settings: the Stats for nerds row's value while the read-out is hidden."
+  },
+  "app.stats.title": {
+    "value": "Statistiken für Nerds",
+    "description": "Stats for nerds: the read-out's title."
+  },
+  "app.stats.section_stream": {
+    "value": "STREAM / AUSGABE",
+    "description": "Stats for nerds: the left column's heading (what the stream is and where it is shown). Capitals."
+  },
+  "app.stats.section_delivery": {
+    "value": "ZUFUHR / STEUERUNG",
+    "description": "Stats for nerds: the right column's heading (how the bytes arrive and are fed). Capitals."
+  },
+  "app.stats.section_device": {
+    "value": "GERÄT",
+    "description": "Stats for nerds: the heading of the TV's own facts, shown before anything has played. Capitals."
+  },
+  "app.stats.header": {
+    "value": "StremioNative {version} · {build} · {os} · DV {dv} · {w}×{h}",
+    "description": "Stats for nerds: the identity line — the app's version, the kind of build, the TV's system, its Dolby Vision support and the screen size in pixels.",
+    "args": {
+      "build": "str",
+      "dv": "str",
+      "h": "str",
+      "os": "str",
+      "version": "str",
+      "w": "str"
+    }
+  },
+  "app.stats.build_release": {
+    "value": "Release",
+    "description": "Stats for nerds: the build is the one users install."
+  },
+  "app.stats.build_dev": {
+    "value": "Entwickler",
+    "description": "Stats for nerds: the build is a developer build."
+  },
+  "app.stats.idle": {
+    "value": "Leerlauf",
+    "description": "Stats for nerds verdict: nothing is playing."
+  },
+  "app.stats.resolving": {
+    "value": "Stream wird aufgelöst",
+    "description": "Stats for nerds verdict: the stream's address is being worked out."
+  },
+  "app.stats.connecting": {
+    "value": "Verbinde",
+    "description": "Stats for nerds verdict: opening the stream."
+  },
+  "app.stats.buffering": {
+    "value": "Puffert",
+    "description": "Stats for nerds verdict: filling the buffer."
+  },
+  "app.stats.seeking": {
+    "value": "Springt",
+    "description": "Stats for nerds verdict: moving to a new position."
+  },
+  "app.stats.playing": {
+    "value": "Wiedergabe",
+    "description": "Stats for nerds verdict: playing."
+  },
+  "app.stats.error": {
+    "value": "Wiedergabefehler",
+    "description": "Stats for nerds verdict: the playback failed (the reason follows)."
+  },
+  "app.stats.paused": {
+    "value": "{state} (pausiert)",
+    "description": "Stats for nerds verdict: {state} is a verdict, while the viewer has paused.",
+    "args": {
+      "state": "str"
+    }
+  },
+  "app.stats.stalled": {
+    "value": "STOCKT {secs} s – {state}",
+    "description": "Stats for nerds verdict: the picture has not moved for {secs} seconds although {state} says it plays. Capitals mark the fault.",
+    "args": {
+      "secs": "i64",
+      "state": "str"
+    }
+  },
+  "app.stats.f_source": {
+    "value": "Quelle",
+    "description": "Stats for nerds row key: the addon and server the stream comes from. Short (a narrow column)."
+  },
+  "app.stats.f_transport": {
+    "value": "Transport",
+    "description": "Stats for nerds row key: how the stream is delivered (HLS, progressive, torrent). Short."
+  },
+  "app.stats.f_container": {
+    "value": "Container",
+    "description": "Stats for nerds row key: the file format (MKV, MP4). Short."
+  },
+  "app.stats.f_video": {
+    "value": "Video",
+    "description": "Stats for nerds row key: the video codec. Short."
+  },
+  "app.stats.f_audio": {
+    "value": "Audio",
+    "description": "Stats for nerds row key: the audio codec. Short."
+  },
+  "app.stats.f_picture": {
+    "value": "Bild",
+    "description": "Stats for nerds row key: the picture's size and frame rate. Short."
+  },
+  "app.stats.f_timeline": {
+    "value": "Position",
+    "description": "Stats for nerds row key: the position shown and the length. Short."
+  },
+  "app.stats.f_sync": {
+    "value": "Zufuhr V−A",
+    "description": "Stats for nerds row key: how far ahead the video was handed over compared with the audio. V and A are video and audio. Short."
+  },
+  "app.stats.f_plane": {
+    "value": "Videoebene",
+    "description": "Stats for nerds row key: the TV's hardware video layer. Short."
+  },
+  "app.stats.f_transfer": {
+    "value": "Transfer",
+    "description": "Stats for nerds row key: the bytes received and the server's HTTP status. Short."
+  },
+  "app.stats.f_throughput": {
+    "value": "Durchsatz",
+    "description": "Stats for nerds row key: the network speed. Short."
+  },
+  "app.stats.f_load": {
+    "value": "Laden",
+    "description": "Stats for nerds row key: the TV media pipeline's load of the stream. Short."
+  },
+  "app.stats.f_feed": {
+    "value": "Zufuhr",
+    "description": "Stats for nerds row key: the rate at which data is handed to the decoder. Short."
+  },
+  "app.stats.f_queues": {
+    "value": "Queues",
+    "description": "Stats for nerds row key: how full the audio and video queues are. Short."
+  },
+  "app.stats.f_buffer": {
+    "value": "Puffer",
+    "description": "Stats for nerds row key: how many seconds are buffered ahead. Short."
+  },
+  "app.stats.f_frames": {
+    "value": "Frames",
+    "description": "Stats for nerds row key: how many pictures have been shown. Short."
+  },
+  "app.stats.f_stalls": {
+    "value": "Stocker",
+    "description": "Stats for nerds row key: how often the picture froze while playing. Short."
+  },
+  "app.stats.f_error": {
+    "value": "Fehler",
+    "description": "Stats for nerds row key: the last error. Short."
+  },
+  "app.stats.f_set": {
+    "value": "TV",
+    "description": "Stats for nerds row key: the TV's model. Short."
+  },
+  "app.stats.f_firmware": {
+    "value": "Firmware",
+    "description": "Stats for nerds row key: the TV's system software release. Short."
+  },
+  "app.stats.f_decoder": {
+    "value": "Decoder",
+    "description": "Stats for nerds row key: the video formats the TV can decode. Short."
+  },
+  "app.stats.f_dolby_vision": {
+    "value": "Dolby Vision",
+    "description": "Stats for nerds row key: the TV's Dolby Vision support (a brand name). Short."
+  },
+  "app.stats.this_tv": {
+    "value": "dieser TV",
+    "description": "Stats for nerds: the stream's server runs on this TV."
+  },
+  "app.stats.local_network": {
+    "value": "lokales Netzwerk",
+    "description": "Stats for nerds: the stream's server is on the home network."
+  },
+  "app.stats.public_address": {
+    "value": "öffentliche Adresse",
+    "description": "Stats for nerds: the stream's server is named by a bare internet address (not shown)."
+  },
+  "app.stats.progressive": {
+    "value": "Progressiv",
+    "description": "Stats for nerds: the stream is one file read from start to end (not HLS)."
+  },
+  "app.stats.live": {
+    "value": "live",
+    "description": "Stats for nerds: the stream is live (it has no end)."
+  },
+  "app.stats.torrent": {
+    "value": "Torrent über Streaming-Server",
+    "description": "Stats for nerds: the stream is a torrent read through Stremio's streaming server."
+  },
+  "app.stats.not_in_url": {
+    "value": "nicht in der URL",
+    "description": "Stats for nerds: the file format cannot be read from the stream's address."
+  },
+  "app.stats.not_opened": {
+    "value": "NICHT GEÖFFNET",
+    "description": "Stats for nerds: the video has not been opened. Capitals mark the fault."
+  },
+  "app.stats.fps": {
+    "value": "{w}×{h} · {fps} fps ({src})",
+    "description": "Stats for nerds: the picture's width×height, frames per second and who stated the rate ({src}).",
+    "args": {
+      "fps": "str",
+      "h": "str",
+      "src": "str",
+      "w": "str"
+    }
+  },
+  "app.stats.fps_unknown": {
+    "value": "{w}×{h} · Bildrate unbekannt",
+    "description": "Stats for nerds: the picture's size with no known frame rate.",
+    "args": {
+      "h": "str",
+      "w": "str"
+    }
+  },
+  "app.stats.pipeline": {
+    "value": "Pipeline",
+    "description": "Stats for nerds: the frame rate was reported by the TV's media pipeline."
+  },
+  "app.stats.declared": {
+    "value": "deklariert",
+    "description": "Stats for nerds: the frame rate is what the file declares."
+  },
+  "app.stats.exported_window": {
+    "value": "exportiertes Fenster",
+    "description": "Stats for nerds: the video is shown through a window the system hands the app (webOS 5 and later)."
+  },
+  "app.stats.no_window": {
+    "value": "KEIN FENSTER",
+    "description": "Stats for nerds: the system gave no video window. Capitals mark the fault."
+  },
+  "app.stats.window_ready": {
+    "value": "Fenster bereit",
+    "description": "Stats for nerds: the system's video window exists."
+  },
+  "app.stats.not_placed": {
+    "value": "NICHT PLATZIERT",
+    "description": "Stats for nerds: the video window was never positioned. Capitals mark the fault."
+  },
+  "app.stats.placement_failed": {
+    "value": "PLATZIERUNG FEHLGESCHLAGEN",
+    "description": "Stats for nerds: positioning the video window failed. Capitals mark the fault."
+  },
+  "app.stats.placed": {
+    "value": "platziert {w}×{h} rv={rv}",
+    "description": "Stats for nerds: the video window was positioned for a w×h picture; rv is the system's return code.",
+    "args": {
+      "h": "str",
+      "rv": "str",
+      "w": "str"
+    }
+  },
+  "app.stats.unavailable": {
+    "value": "NICHT VERFÜGBAR",
+    "description": "Stats for nerds: the video layer is not available. Capitals mark the fault."
+  },
+  "app.stats.unbound": {
+    "value": "nicht gebunden",
+    "description": "Stats for nerds: the video layer is not yet attached to the playback."
+  },
+  "app.stats.binding": {
+    "value": "wird gebunden",
+    "description": "Stats for nerds: the video layer is being attached to the playback."
+  },
+  "app.stats.streaming": {
+    "value": "streamt",
+    "description": "Stats for nerds: the video layer shows the playback."
+  },
+  "app.stats.no_video_path": {
+    "value": "KEINER – kein Videopfad",
+    "description": "Stats for nerds: the TV offers no way to show video. Capitals mark the fault."
+  },
+  "app.stats.no_connection": {
+    "value": "keine Verbindung",
+    "description": "Stats for nerds: the stream's server has not answered yet."
+  },
+  "app.stats.received": {
+    "value": "{mb} · HTTP {status}",
+    "description": "Stats for nerds: the bytes received ({mb}, with its unit) and the server's HTTP status code.",
+    "args": {
+      "mb": "str",
+      "status": "str"
+    }
+  },
+  "app.stats.rate": {
+    "value": "{now} aktuell · {avg} Schnitt",
+    "description": "Stats for nerds: the network speed in the last half second and on average since the stream opened, each with its unit.",
+    "args": {
+      "avg": "str",
+      "now": "str"
+    }
+  },
+  "app.stats.waiting": {
+    "value": "wartet",
+    "description": "Stats for nerds: the TV's pipeline has not finished loading the stream."
+  },
+  "app.stats.completed": {
+    "value": "abgeschlossen",
+    "description": "Stats for nerds: the TV's pipeline loaded the stream."
+  },
+  "app.stats.refused": {
+    "value": "ABGELEHNT",
+    "description": "Stats for nerds: the TV's pipeline refused. Capitals mark the fault."
+  },
+  "app.stats.no_callbacks": {
+    "value": "keine Events",
+    "description": "Stats for nerds: the TV's pipeline has sent no events."
+  },
+  "app.stats.callbacks": {
+    "value": "{n} Events",
+    "description": "Stats for nerds: how many events the TV's pipeline sent.",
+    "args": {
+      "n": "i64"
+    }
+  },
+  "app.stats.callback_error": {
+    "value": "{n} Events · FEHLER {code} bei #{at}",
+    "description": "Stats for nerds: the pipeline's events, and the ERROR code it reported at event number {at}. Capitals mark the fault.",
+    "args": {
+      "at": "str",
+      "code": "str",
+      "n": "i64"
+    }
+  },
+  "app.stats.nothing_demuxed": {
+    "value": "NICHTS GELESEN",
+    "description": "Stats for nerds: nothing has been read out of the file yet. Capitals mark the fault."
+  },
+  "app.stats.fed_rate": {
+    "value": "{v} fps · Audio {a}/s",
+    "description": "Stats for nerds: video frames and audio packets handed to the decoder per second.",
+    "args": {
+      "a": "str",
+      "v": "str"
+    }
+  },
+  "app.stats.feed_accepting": {
+    "value": "nimmt an",
+    "description": "Stats for nerds: the decoder is taking data."
+  },
+  "app.stats.feed_full": {
+    "value": "Decoder voll",
+    "description": "Stats for nerds: the decoder's input is full."
+  },
+  "app.stats.feed_holding": {
+    "value": "hält ~1,6 s Vorlauf",
+    "description": "Stats for nerds: the app deliberately holds about 1.6 seconds ahead of the picture (normal)."
+  },
+  "app.stats.feed_empty": {
+    "value": "Queue leer",
+    "description": "Stats for nerds: no data is waiting to be handed over."
+  },
+  "app.stats.feed_none": {
+    "value": "noch nichts zugeführt",
+    "description": "Stats for nerds: nothing has been handed to the decoder yet."
+  },
+  "app.stats.queues": {
+    "value": "Audio {a} / {ca} MB · Video {v} / {cv} MB",
+    "description": "Stats for nerds: the audio and video queues' fill and capacity, in megabytes.",
+    "args": {
+      "a": "str",
+      "ca": "str",
+      "cv": "str",
+      "v": "str"
+    }
+  },
+  "app.stats.buffer_ahead": {
+    "value": "{secs} s voraus",
+    "description": "Stats for nerds: seconds of playable stream buffered ahead of the picture.",
+    "args": {
+      "secs": "str"
+    }
+  },
+  "app.stats.not_yet": {
+    "value": "noch unbekannt",
+    "description": "Stats for nerds: a value that cannot be known yet."
+  },
+  "app.stats.none_yet": {
+    "value": "noch keine",
+    "description": "Stats for nerds: no picture has been shown yet."
+  },
+  "app.stats.frames_none": {
+    "value": "KEINE {secs} s nach dem Laden",
+    "description": "Stats for nerds: no picture {secs} seconds after the pipeline loaded. Capitals mark the fault.",
+    "args": {
+      "secs": "str"
+    }
+  },
+  "app.stats.since_seek": {
+    "value": "0 seit dem Sprung",
+    "description": "Stats for nerds: the picture count restarted at a seek."
+  },
+  "app.stats.frames_frozen": {
+    "value": "{n} – EINGEFROREN {secs} s",
+    "description": "Stats for nerds: {n} pictures shown, and none for {secs} seconds. Capitals mark the fault.",
+    "args": {
+      "n": "str",
+      "secs": "str"
+    }
+  },
+  "app.stats.stalls": {
+    "value": "{n} gesehen",
+    "description": "Stats for nerds: how many times the picture froze while playing, this playback.",
+    "args": {
+      "n": "i64"
+    }
+  },
+  "app.stats.stalls_now": {
+    "value": "{n} gesehen · STOCKT JETZT {secs} s",
+    "description": "Stats for nerds: the freezes seen, and that it is frozen NOW for {secs} seconds. Capitals mark the fault.",
+    "args": {
+      "n": "i64",
+      "secs": "str"
+    }
+  },
+  "app.stats.no_error": {
+    "value": "keiner",
+    "description": "Stats for nerds: there is no error."
+  },
+  "app.stats.unknown_device": {
+    "value": "NICHT GEMELDET",
+    "description": "Stats for nerds: the TV did not say what model it is. Capitals mark the fault."
+  },
+  "app.stats.device_table": {
+    "value": "Gerätetabelle",
+    "description": "Stats for nerds: the decoder facts were read from the TV's own table."
+  },
+  "app.stats.assumed": {
+    "value": "ANGENOMMEN",
+    "description": "Stats for nerds: the TV's table was unreadable, so the decoder facts are assumed. Capitals mark the fault."
+  },
+  "app.stats.no_codec": {
+    "value": "kein {codec}",
+    "description": "Stats for nerds: the TV cannot decode {codec} (a codec name such as HEVC).",
+    "args": {
+      "codec": "str"
+    }
+  },
+  "app.stats.chart_queue_v": {
+    "value": "Video-Queue",
+    "description": "Stats for nerds chart: the lane showing how full the video queue is."
+  },
+  "app.stats.chart_queue_a": {
+    "value": "Audio-Queue",
+    "description": "Stats for nerds chart: the lane showing how full the audio queue is."
+  },
+  "app.stats.buffer_low": {
+    "value": "{secs} s voraus · NIEDRIG",
+    "description": "Stats for nerds: the playable buffer is nearly used up. Capitals mark the fault.",
+    "args": {
+      "secs": "str"
+    }
+  },
+  "app.stats.buffer_empty": {
+    "value": "LEER – nichts voraus",
+    "description": "Stats for nerds: no playable stream is buffered ahead of the picture. Capitals mark the fault."
+  },
+  "app.stats.chart_mean": {
+    "value": "{now} · {mean} Mittel",
+    "description": "Stats for nerds chart: the network speed in the last half second and its mean over the chart's last minute, each with its unit.",
+    "args": {
+      "mean": "str",
+      "now": "str"
+    }
+  },
+  "app.settings.subtitle_color": {
+    "value": "Textfarbe",
+    "description": "Settings: row and picker title — the colour text subtitles are drawn in."
+  },
+  "app.settings.subtitle_color_copy": {
+    "value": "Farbe der Text-Untertitel.",
+    "description": "Text colour picker: the line under the title."
+  },
+  "app.settings.color_white": {
+    "value": "Weiß",
+    "description": "A subtitle colour: white."
+  },
+  "app.settings.color_yellow": {
+    "value": "Gelb",
+    "description": "A subtitle colour: yellow."
+  },
+  "app.settings.color_cyan": {
+    "value": "Cyan",
+    "description": "A subtitle colour: cyan."
+  },
+  "app.settings.color_green": {
+    "value": "Grün",
+    "description": "A subtitle colour: green."
+  },
+  "app.settings.color_grey": {
+    "value": "Grau",
+    "description": "A subtitle colour: grey."
+  },
+  "app.settings.color_black": {
+    "value": "Schwarz",
+    "description": "A subtitle outline colour: black."
+  },
+  "app.settings.subtitle_background": {
+    "value": "Hintergrund",
+    "description": "Settings: row and picker title — the box drawn behind text subtitles."
+  },
+  "app.settings.subtitle_background_copy": {
+    "value": "Ein Kasten hinter Text-Untertiteln, besser lesbar in hellen Szenen.",
+    "description": "Background picker: the line under the title."
+  },
+  "app.settings.background_none": {
+    "value": "Transparent",
+    "description": "Background picker: no box."
+  },
+  "app.settings.background_black_50": {
+    "value": "Schwarz 50 %",
+    "description": "Background picker: a black box at half opacity."
+  },
+  "app.settings.background_black_75": {
+    "value": "Schwarz 75 %",
+    "description": "Background picker: a black box at three-quarter opacity."
+  },
+  "app.settings.background_black": {
+    "value": "Schwarzer Kasten",
+    "description": "Background picker: an opaque black box."
+  },
+  "app.settings.subtitle_outline": {
+    "value": "Konturfarbe",
+    "description": "Settings: row and picker title — the colour of the edge around text subtitles."
+  },
+  "app.settings.subtitle_outline_copy": {
+    "value": "Der Rand um jeden Buchstaben.",
+    "description": "Outline colour picker: the line under the title."
+  },
+  "app.settings.subtitle_opacity": {
+    "value": "Deckkraft",
+    "description": "Settings: row and picker title — how opaque text subtitles are drawn."
+  },
+  "app.settings.subtitle_opacity_copy": {
+    "value": "Gilt für Text, Kontur und Hintergrund.",
+    "description": "Opacity picker: the line under the title."
+  },
+  "app.settings.opacity_100": {
+    "value": "100 %",
+    "description": "Opacity picker: fully opaque."
+  },
+  "app.settings.opacity_75": {
+    "value": "75 %",
+    "description": "Opacity picker: three-quarters opaque."
+  },
+  "app.settings.opacity_50": {
+    "value": "50 %",
+    "description": "Opacity picker: half opaque."
+  },
+  "app.settings.ass_styling": {
+    "value": "ASS-Untertitel gestalten",
+    "description": "Settings: row and picker title — whether ASS/SSA subtitles keep their own styling."
+  },
+  "app.settings.ass_styling_copy": {
+    "value": "An behält Schriften, Farben und Position einer ASS-Spur. Aus nutzt deinen Untertitelstil.",
+    "description": "Style ASS subtitles picker: the line under the title."
+  },
+  "app.settings.switch_off": {
+    "value": "Aus",
+    "description": "A Settings switch's rung: off."
+  },
+  "app.settings.switch_on": {
+    "value": "An",
+    "description": "A Settings switch's rung: on."
+  },
+  "app.settings.auto_play": {
+    "value": "Nächste Folge automatisch",
+    "description": "Settings: row and picker title — whether the next episode plays by itself when one ends."
+  },
+  "app.settings.auto_play_copy": {
+    "value": "Aus: Am Ende einer Folge zurück zu deinem Ausgangspunkt. „Als Nächstes“ wird weiter angeboten.",
+    "description": "Auto-play picker: the line under the title."
+  },
+  "app.settings.up_next_at": {
+    "value": "„Als Nächstes“ erscheint",
+    "description": "Settings: row and picker title — when the player offers the next episode."
+  },
+  "app.settings.up_next_at_copy": {
+    "value": "„Beim Abspann“ nutzt den Abspann-Marker, ohne ihn 35 s vor dem Ende.",
+    "description": "Up Next picker: the line under the title."
+  },
+  "app.settings.up_next_credits": {
+    "value": "Beim Abspann",
+    "description": "Up Next picker: at the credits marker when known (else 35 s before the end)."
+  },
+  "app.settings.up_next_15": {
+    "value": "15 s vor dem Ende",
+    "description": "Up Next picker: 15 seconds before the end."
+  },
+  "app.settings.up_next_25": {
+    "value": "25 s vor dem Ende",
+    "description": "Up Next picker: 25 seconds before the end."
+  },
+  "app.settings.up_next_35": {
+    "value": "35 s vor dem Ende",
+    "description": "Up Next picker: 35 seconds before the end."
+  },
+  "app.settings.up_next_45": {
+    "value": "45 s vor dem Ende",
+    "description": "Up Next picker: 45 seconds before the end."
+  },
+  "app.settings.language": {
+    "value": "Sprache der Oberfläche",
+    "description": "Settings > Interface: the row (and picker title) choosing the language of the app's own text."
+  },
+  "app.settings.language_copy": {
+    "value": "Menüs und Meldungen. Gilt nach einem Neustart.",
+    "description": "Interface language picker: the line under the title."
+  },
+  "app.player.choose_stream": {
+    "value": "Anderen Stream wählen",
+    "description": "Player failure read-out: the button that returns to the stream list to pick another stream."
+  },
+  "app.player.try_again": {
+    "value": "Erneut versuchen",
+    "description": "Player failure read-out: the button that starts the same stream again from where it stopped."
+  },
+  "app.grid.more_failed": {
+    "value": "Mehr laden fehlgeschlagen · Erneut versuchen",
+    "description": "Catalog grid/list: the button after the last item when the next page failed to load; pressing it asks again."
+  },
+  "app.menu.sign_in_to_add": {
+    "value": "Anmelden für die Bibliothek",
+    "description": "Item menu, signed out: the row that opens sign-in (a library needs an account)."
+  },
+  "app.reason.timeout": {
+    "value": "Zeitüberschreitung",
+    "description": "A short failure cause in parentheses or after a dot: the request took too long."
+  },
+  "app.reason.network": {
+    "value": "keine Verbindung",
+    "description": "A short failure cause: the server could not be reached (no connection, DNS, refused)."
+  },
+  "app.reason.bad_response": {
+    "value": "unerwartete Antwort",
+    "description": "A short failure cause: the server answered something the app could not read."
+  },
+  "app.reason.cancelled": {
+    "value": "abgebrochen",
+    "description": "A short failure cause: the request was cancelled."
+  },
+  "app.reason.api_error": {
+    "value": "Fehler {code}",
+    "description": "A short failure cause: the Stremio account service answered with error number {code}.",
+    "args": {
+      "code": "i64"
+    }
+  },
+  "app.detail.why_torrent": {
+    "value": "Torrents laufen hier nicht: Richte in diesem Addon einen Debrid-Dienst ein, um abspielbare Links zu erhalten",
+    "description": "Toast when OK is pressed on a torrent stream: this app has no torrent engine; a debrid service in the addon turns torrents into playable links."
+  },
+  "app.detail.why_youtube": {
+    "value": "YouTube-Videos können in dieser App nicht abgespielt werden",
+    "description": "Toast when OK is pressed on a YouTube stream: the app cannot play YouTube."
+  },
+  "app.detail.why_external": {
+    "value": "Dieser Stream öffnet sich in einer anderen App oder Website, nicht hier",
+    "description": "Toast when OK is pressed on a stream that is a link to another app or website."
+  },
+  "app.detail.quiet_addons": {
+    "value": {
+      "one": "{count} Addon ohne Streams",
+      "other": "{count} Addons ohne Streams"
+    },
+    "description": "Stream list: the last row, standing for the addons that failed or found nothing; OK shows them and why.",
+    "args": {
+      "count": "i64"
+    }
+  },
+  "app.detail.still_asking": {
+    "value": {
+      "one": "Frage noch {count} Addon …",
+      "other": "Frage noch {count} Addons …"
+    },
+    "description": "Stream list: the note at the end while some addons have not answered yet; a spinner beside it.",
+    "args": {
+      "count": "i64"
+    }
+  },
+  "app.player.start_over": {
+    "value": "Von vorne",
+    "description": "Player: the pill offered for a few seconds after a playback resumed where the viewer stopped; OK plays it from the beginning."
+  },
+  "app.player.tab_tracks": {
+    "value": "Spuren",
+    "description": "Subtitle menu: the tab listing the subtitle tracks to pick from."
+  },
+  "app.player.tab_timing": {
+    "value": "Timing",
+    "description": "Subtitle menu: the tab moving subtitles earlier or later (the delay)."
+  },
+  "app.player.tab_style": {
+    "value": "Stil",
+    "description": "Subtitle menu: the tab for the subtitles' look (size, position, colour, outline, background); the same preferences as Settings."
+  },
+  "app.player.style_note": {
+    "value": "Gilt auch als Standard in den Einstellungen",
+    "description": "Subtitle menu, Style tab: the note under the rows — the choices are the app-wide subtitle preferences (also in Settings)."
+  },
+  "app.player.audio_sync": {
+    "value": "Audio-Sync",
+    "description": "Player audio menu: the row (and the steps' title) moving the sound earlier or later against the picture, for streams whose sound is out of sync."
+  }
+}

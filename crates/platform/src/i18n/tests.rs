@@ -42,7 +42,8 @@ fn locale_resolution_separates_language_from_formatting() {
         LocaleContext::resolve(Preference::Fr, None, None, None, None).format_locale(),
         "fr-FR"
     );
-    for tag in ["de-DE", "be-Latn", "fr-Cyrl", "garbage\r\nheader", "C"] {
+    assert_eq!(LocaleContext::resolve(Preference::System, Some("de-AT"), None, None, None).language(), Language::De);
+    for tag in ["pt-BR", "be-Latn", "fr-Cyrl", "garbage\r\nheader", "C"] {
         assert_eq!(
             LocaleContext::resolve(Preference::System, Some(tag), None, None, None).language(),
             Language::En

@@ -29,7 +29,7 @@
   "widgets.reason.unknown": "Прайгравальнік спыніўся, не вызначыўшы прычыну",
   "widgets.hint.hold_options": "Утрымлівайце {key}, каб адкрыць меню",
   "widgets.cards.see_all": "Паказаць усё",
-  "widgets.reason.jail_help": "Для выпраўлення патрэбны тэлевізар з root-доступам і Homebrew Channel. Даведка: stremionative.com/troubleshooting/#playback-reports-jail_missing_rtkmem.",
+  "widgets.reason.jail_help": "Для выпраўлення патрэбны тэлевізар з root і Homebrew Channel.",
   "widgets.tracks.empty": "Няма дарожак",
   "widgets.tracks.mbps": "{rate} Мбіт/с",
   "widgets.tracks.kbps": "{rate} кбіт/с",

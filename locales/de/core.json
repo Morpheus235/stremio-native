@@ -1,0 +1,127 @@
+{
+  "core.system_default": {
+    "value": "Systemstandard",
+    "description": "Language option that follows the television"
+  },
+  "core.converts_on_server": {
+    "value": "Wird auf dem Server konvertiert",
+    "args": {},
+    "description": "Shared display formatter: converts_on_server"
+  },
+  "core.duration_short_hours": {
+    "value": "{hours} Std. {minutes} Min.",
+    "args": {
+      "hours": "i64",
+      "minutes": "i64"
+    },
+    "description": "Shared display formatter: duration_short_hours"
+  },
+  "core.duration_short_minutes": {
+    "value": "{minutes} Min.",
+    "args": {
+      "minutes": "i64"
+    },
+    "description": "Shared display formatter: duration_short_minutes"
+  },
+  "core.duration_long_hours": {
+    "value": "{hours} Std. {minutes} Min.",
+    "args": {
+      "hours": "i64",
+      "minutes": "i64"
+    },
+    "description": "Shared display formatter: duration_long_hours"
+  },
+  "core.duration_long_minutes": {
+    "value": "{minutes} Min.",
+    "args": {
+      "minutes": "i64"
+    },
+    "description": "Shared display formatter: duration_long_minutes"
+  },
+  "core.time_left_hours": {
+    "value": "Noch {hours} Std. {minutes} Min.",
+    "args": {
+      "hours": "i64",
+      "minutes": "i64"
+    },
+    "description": "Shared display formatter: time_left_hours"
+  },
+  "core.time_left_minutes": {
+    "value": "Noch {minutes} Min.",
+    "args": {
+      "minutes": "i64"
+    },
+    "description": "Shared display formatter: time_left_minutes"
+  },
+  "core.seconds": {
+    "value": "{seconds} s",
+    "args": {
+      "seconds": "str"
+    },
+    "description": "Shared display formatter: seconds"
+  },
+  "core.season": {
+    "value": "S{season}",
+    "args": {
+      "season": "i64"
+    },
+    "description": "Shared display formatter: season"
+  },
+  "core.episode": {
+    "value": "F{episode}",
+    "args": {
+      "episode": "i64"
+    },
+    "description": "Shared display formatter: episode"
+  },
+  "core.episode_ordinal": {
+    "value": "S{season}, F{episode}",
+    "args": {
+      "season": "i64",
+      "episode": "i64"
+    },
+    "description": "Shared display formatter: episode_ordinal"
+  },
+  "core.shared_by": {
+    "value": "Geteilt von {handle}",
+    "args": {
+      "handle": "str"
+    },
+    "description": "Shared display formatter: shared_by"
+  },
+  "core.unit_gb": {
+    "value": "{value} GB",
+    "args": {
+      "value": "str"
+    },
+    "description": "A size in gigabytes."
+  },
+  "core.unit_mb": {
+    "value": "{value} MB",
+    "args": {
+      "value": "str"
+    },
+    "description": "A size in megabytes."
+  },
+  "core.unit_kb": {
+    "value": "{value} kB",
+    "args": {
+      "value": "str"
+    },
+    "description": "A size in kilobytes."
+  },
+  "core.percent": {
+    "value": "{value} %",
+    "args": {
+      "value": "str"
+    },
+    "description": "A percentage. es and be put a no-break space before the percent sign."
+  },
+  "core.unit_b": {
+    "value": "{value} B",
+    "args": {
+      "value": "str"
+    },
+    "description": "A size in bytes, abbreviated (B), for compact technical read-outs."
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "app.watched.mark_failed": {
+    "value": "Gesehen-Status konnte nicht geändert werden",
+    "description": "Toast: the account refused a Mark as watched / unwatched (rolled back)."
+  },
+  "app.watched.watched": {
+    "value": "Gesehen",
+    "description": "Detail / Episodes panel: trailing read-out of an episode marked watched."
+  },
+  "app.watched.mark_season": {
+    "value": "Staffel als gesehen markieren",
+    "description": "Detail: the button beside the season dropdown that marks every episode of the listed season watched."
+  },
+  "app.watched.unmark_season": {
+    "value": "Staffel als ungesehen markieren",
+    "description": "Detail: the same button once every episode of the season is watched."
+  },
+  "app.library.sort": {
+    "value": "Sortieren",
+    "description": "Library: the sort dropdown's popover title."
+  },
+  "app.library.sort_last_watched": {
+    "value": "Zuletzt gesehen",
+    "description": "Library sort: most recently watched first (the default)."
+  },
+  "app.library.sort_name": {
+    "value": "A–Z",
+    "description": "Library sort: by name."
+  },
+  "app.library.sort_name_reverse": {
+    "value": "Z–A",
+    "description": "Library sort: by name, reversed."
+  },
+  "app.library.sort_times_watched": {
+    "value": "Meistgesehen",
+    "description": "Library sort: most times watched first."
+  },
+  "app.library.sort_watched": {
+    "value": "Gesehen",
+    "description": "Library sort: watched titles first."
+  },
+  "app.library.sort_not_watched": {
+    "value": "Nicht gesehen",
+    "description": "Library sort: titles not watched first."
+  }
+}

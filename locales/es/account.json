@@ -1,6 +1,6 @@
 {
   "app.signin.title": "Iniciar sesión",
-  "app.signin.copy": "Escanea el código con tu teléfono, o abre link.stremio.com e introduce el código de abajo. También puedes iniciar sesión con tu correo y contraseña.",
+  "app.signin.copy": "Escanea el código con el móvil o introdúcelo en link.stremio.com. O usa correo y contraseña.",
   "app.signin.with_email": "Correo y contraseña",
   "app.signin.email": "Correo",
   "app.signin.password": "Contraseña",
@@ -21,8 +21,8 @@
   "app.signin.skip": "Continuar sin iniciar sesión",
   "app.signin.skip_detail": "Explorar solo con Cinemeta",
   "app.addons.title": "Complementos",
-  "app.addons.copy_signed_in": "Los complementos instalados en tu cuenta de Stremio, en su orden. Instálalos o quítalos en Stremio desde otro dispositivo.",
-  "app.addons.copy_signed_out": "Sin sesión, la app usa Cinemeta. Inicia sesión para usar los complementos de tu cuenta de Stremio.",
+  "app.addons.copy_signed_in": "Los addons de tu cuenta Stremio, en orden. Instálalos o quítalos en Stremio desde otro dispositivo.",
+  "app.addons.copy_signed_out": "Sin sesión: solo Cinemeta. Inicia sesión para usar los addons de tu cuenta.",
   "app.addons.account": "Cuenta",
   "app.addons.restoring": "Comprobando tu cuenta…",
   "app.addons.sign_in": "Iniciar sesión",

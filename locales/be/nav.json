@@ -51,7 +51,7 @@
   "app.settings.subtitle_size": "Памер субтытраў",
   "app.settings.subtitle_position": "Пазіцыя субтытраў",
   "app.settings.subtitle_size_copy": "Памер субтытраў, якія малюе StremioNative. Субтытры-выявы захоўваюць свой памер.",
-  "app.settings.subtitle_position_copy": "Дзе на экране размяшчаюцца тэкставыя субтытры. Стылізаваныя і субтытры-выявы захоўваюць сваё месца.",
+  "app.settings.subtitle_position_copy": "Дзе стаяць тэкставыя субтытры. Стылізаваныя і графічныя застаюцца на сваім месцы.",
   "app.settings.size.small": "Малы",
   "app.settings.size.medium": "Сярэдні",
   "app.settings.size.large": "Вялікі",

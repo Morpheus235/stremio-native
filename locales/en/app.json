@@ -148,7 +148,7 @@
     "description": "Settings: row and page title — the languages whose streams a stream list puts first."
   },
   "app.settings.stream_languages_copy": {
-    "value": "Within each addon, streams in these languages are listed first, after the cached ones.",
+    "value": "Streams in these languages are listed first, after cached ones.",
     "description": "Preferred audio language picker: the line under the title."
   },
   "app.settings.stream_languages_same": {
@@ -160,7 +160,7 @@
     "description": "Settings: row and page title — the ordered languages of the audio track a film starts on."
   },
   "app.settings.audio_languages_copy": {
-    "value": "A film starts on the audio track in the first of these languages it has. With none chosen, the file’s default track plays.",
+    "value": "Plays the first of these languages a file has. None chosen: the file’s default.",
     "description": "Audio languages page: the line under the title."
   },
   "app.settings.audio_languages_none": {
@@ -172,7 +172,7 @@
     "description": "Settings: row and page title — the ordered subtitle languages."
   },
   "app.settings.subtitle_languages_copy": {
-    "value": "When subtitles are on, the first of these languages the file or a subtitles addon has is shown. With none chosen, the app’s language, then English.",
+    "value": "Shows the first of these languages available. None chosen: the app’s language, then English.",
     "description": "Subtitle languages page: the line under the title."
   },
   "app.settings.subtitle_languages_none": {
@@ -216,7 +216,7 @@
     "description": "Settings: row and picker title — whether Forced only also accepts a forced track in a subtitle language."
   },
   "app.settings.forced_fallback_copy": {
-    "value": "With Forced only, show a forced track in one of your subtitle languages when the audio’s language has none.",
+    "value": "With Forced only: if the audio’s language has no forced track, use one in your subtitle languages.",
     "description": "Forced fallback picker: the line under the title."
   },
   "app.settings.forced_fallback_off": {
@@ -232,7 +232,7 @@
     "description": "Settings: row and picker title — whether subtitles show when a film starts."
   },
   "app.settings.subtitle_mode_copy": {
-    "value": "Auto shows subtitles when the audio is not in your audio language, and only forced subtitles when it is.",
+    "value": "Auto: subtitles when the audio isn’t in your language, otherwise forced only.",
     "description": "Subtitles picker: the line under the title."
   },
   "app.settings.subs_off": {
@@ -256,7 +256,7 @@
     "description": "Settings: row and picker title — what plays when an episode ends or Up Next is accepted."
   },
   "app.settings.next_episode_copy": {
-    "value": "Same release plays the next episode from the release you are watching when its addon has it; otherwise the stream list opens.",
+    "value": "Same release keeps the source you’re watching when it has the next episode; otherwise the stream list opens.",
     "description": "Next episode picker: the line under the title."
   },
   "app.settings.next_same": {
@@ -459,7 +459,7 @@
     "description": "Skip intros picker: skip intros and recaps without asking."
   },
   "app.settings.skip_intros_copy": {
-    "value": "Skips an episode’s intro or recap when its start and end are known. The markers come from introdb.app and AniSkip.",
+    "value": "Skips intros and recaps when their markers are known (introdb.app, AniSkip).",
     "description": "Skip intros picker: the line under the title. introdb.app and AniSkip are proper names."
   },
   "app.settings.dv_profile7": {
@@ -475,7 +475,7 @@
     "description": "Dolby Vision Profile 7 picker: experimental — declare Dolby Vision to the TV, falling back to HDR10 automatically."
   },
   "app.settings.dv_profile7_copy": {
-    "value": "How a dual-layer Dolby Vision (Profile 7) film plays. HDR10 plays its base layer, which every set shows. Try Dolby Vision asks the TV for Dolby Vision and returns to HDR10 by itself if the TV refuses.",
+    "value": "For dual-layer Dolby Vision films. HDR10 works on every TV; Try Dolby Vision falls back to HDR10 if the TV refuses.",
     "description": "Dolby Vision Profile 7 picker: the line under the title."
   },
   "app.settings.multichannel_audio": {
@@ -511,7 +511,7 @@
     "description": "Multichannel audio picker: the line under Pro Logic II — for a receiver that unfolds Pro Logic II, connected by a link that carries stereo only (optical with LG Sound Sync)."
   },
   "app.settings.multichannel_audio_copy": {
-    "value": "What a 5.1 or 7.1 track the app decodes itself is sent as. Automatic sends Dolby Digital 5.1, which optical and ARC carry, and PCM over HDMI eARC. Dolby Digital and PCM always send that. Stereo folds every surround track to a plain stereo pair; Pro Logic II to one a Pro Logic II receiver unfolds.",
+    "value": "How 5.1 and 7.1 audio the app decodes is sent. Automatic: Dolby Digital over optical and ARC, PCM over eARC.",
     "description": "Multichannel audio picker: the line under the title."
   },
   "app.player.undo": {
@@ -1029,7 +1029,7 @@
     "description": "Settings: row and picker title — the colour text subtitles are drawn in."
   },
   "app.settings.subtitle_color_copy": {
-    "value": "The colour of text subtitles. Image subtitles keep their own.",
+    "value": "Colour of text subtitles.",
     "description": "Text colour picker: the line under the title."
   },
   "app.settings.color_white": {
@@ -1061,7 +1061,7 @@
     "description": "Settings: row and picker title — the box drawn behind text subtitles."
   },
   "app.settings.subtitle_background_copy": {
-    "value": "A box behind text subtitles makes them easier to read over a bright picture.",
+    "value": "A box behind text subtitles, easier to read on bright scenes.",
     "description": "Background picker: the line under the title."
   },
   "app.settings.background_none": {
@@ -1085,7 +1085,7 @@
     "description": "Settings: row and picker title — the colour of the edge around text subtitles."
   },
   "app.settings.subtitle_outline_copy": {
-    "value": "The edge around each letter of text subtitles.",
+    "value": "The edge around each letter.",
     "description": "Outline colour picker: the line under the title."
   },
   "app.settings.subtitle_opacity": {
@@ -1093,7 +1093,7 @@
     "description": "Settings: row and picker title — how opaque text subtitles are drawn."
   },
   "app.settings.subtitle_opacity_copy": {
-    "value": "How opaque text subtitles are, their outline and background included.",
+    "value": "Applies to text, outline and background.",
     "description": "Opacity picker: the line under the title."
   },
   "app.settings.opacity_100": {
@@ -1113,7 +1113,7 @@
     "description": "Settings: row and picker title — whether ASS/SSA subtitles keep their own styling."
   },
   "app.settings.ass_styling_copy": {
-    "value": "On keeps the fonts, colours and placement an ASS track brings. Off shows its dialogue plainly, in your subtitle style.",
+    "value": "On keeps an ASS track’s fonts, colours and placement. Off uses your subtitle style.",
     "description": "Style ASS subtitles picker: the line under the title."
   },
   "app.settings.switch_off": {
@@ -1129,7 +1129,7 @@
     "description": "Settings: row and picker title — whether the next episode plays by itself when one ends."
   },
   "app.settings.auto_play_copy": {
-    "value": "Off returns to where you started when an episode ends. Up Next is still offered.",
+    "value": "Off: when an episode ends, go back to where you started. Up Next is still offered.",
     "description": "Auto-play picker: the line under the title."
   },
   "app.settings.up_next_at": {
@@ -1137,7 +1137,7 @@
     "description": "Settings: row and picker title — when the player offers the next episode."
   },
   "app.settings.up_next_at_copy": {
-    "value": "At the credits uses the episode’s credits marker when it has one, and 35 seconds before the end when it does not.",
+    "value": "At the credits uses the credits marker, or 35 s before the end without one.",
     "description": "Up Next picker: the line under the title."
   },
   "app.settings.up_next_credits": {
@@ -1165,7 +1165,7 @@
     "description": "Settings > Interface: the row (and picker title) choosing the language of the app's own text."
   },
   "app.settings.language_copy": {
-    "value": "The language of the app’s menus and messages. Takes effect the next time the app starts.",
+    "value": "Menus and messages. Applies after a restart.",
     "description": "Interface language picker: the line under the title."
   },
   "app.player.choose_stream": {

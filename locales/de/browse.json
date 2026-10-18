@@ -1,0 +1,58 @@
+{
+  "browse.action.more": {
+    "value": "MEHR",
+    "description": "browse action more"
+  },
+  "browse.person.filmography": {
+    "value": "Filmografie",
+    "description": "browse person filmography"
+  },
+  "browse.person.films": {
+    "value": {
+      "one": "{count} Film",
+      "other": "{count} Filme"
+    },
+    "args": {
+      "count": "i64"
+    },
+    "description": "browse person films"
+  },
+  "browse.search.items": {
+    "value": {
+      "one": "{count} Titel",
+      "other": "{count} Titel"
+    },
+    "args": {
+      "count": "i64"
+    },
+    "description": "Number of items inside one collection, shared by search results, collection tiles and the collection page"
+  },
+  "browse.diagnostics.unknown": {
+    "value": "unbekannt",
+    "description": "Diagnostics panel: unknown"
+  },
+  "browse.diagnostics.unknown_os": {
+    "value": "webOS unbekannt – os_info.json nicht lesbar",
+    "description": "Diagnostics panel: unknown os"
+  },
+  "browse.diagnostics.dv_yes": {
+    "value": "ja",
+    "description": "Diagnostics header: the TV supports Dolby Vision."
+  },
+  "browse.diagnostics.dv_no": {
+    "value": "nein",
+    "description": "Diagnostics header: the TV does not support Dolby Vision."
+  },
+  "browse.diagnostics.dv_supported": {
+    "value": "unterstützt",
+    "description": "Diagnostics: the TV reports Dolby Vision support."
+  },
+  "browse.diagnostics.dv_unsupported": {
+    "value": "nicht unterstützt",
+    "description": "Diagnostics: the TV reports no Dolby Vision support."
+  },
+  "browse.diagnostics.dv_forced": {
+    "value": "erzwungen",
+    "description": "Diagnostics: the Dolby Vision answer was forced by a test override rather than asked of the TV."
+  }
+}

@@ -1,6 +1,6 @@
 {
   "app.signin.title": "Connexion",
-  "app.signin.copy": "Scannez le code avec votre téléphone, ou ouvrez link.stremio.com et saisissez le code ci-dessous. Vous pouvez aussi vous connecter avec votre e-mail et votre mot de passe.",
+  "app.signin.copy": "Scannez le code avec votre téléphone ou saisissez-le sur link.stremio.com. Ou utilisez e-mail et mot de passe.",
   "app.signin.with_email": "E-mail et mot de passe",
   "app.signin.email": "E-mail",
   "app.signin.password": "Mot de passe",
@@ -21,8 +21,8 @@
   "app.signin.skip": "Continuer sans se connecter",
   "app.signin.skip_detail": "Parcourir avec Cinemeta seulement",
   "app.addons.title": "Extensions",
-  "app.addons.copy_signed_in": "Les extensions installées sur votre compte Stremio, dans leur ordre. Installez-les ou retirez-les dans Stremio sur un autre appareil.",
-  "app.addons.copy_signed_out": "Hors connexion, l’app utilise Cinemeta. Connectez-vous pour utiliser les extensions de votre compte Stremio.",
+  "app.addons.copy_signed_in": "Les addons de votre compte Stremio, dans l’ordre. Installez-les ou retirez-les dans Stremio sur un autre appareil.",
+  "app.addons.copy_signed_out": "Déconnecté : Cinemeta uniquement. Connectez-vous pour utiliser les addons de votre compte.",
   "app.addons.account": "Compte",
   "app.addons.restoring": "Vérification du compte…",
   "app.addons.sign_in": "Se connecter",

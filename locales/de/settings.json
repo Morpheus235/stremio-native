@@ -1,0 +1,18 @@
+{
+  "settings.language.contribute_body": {
+    "value": "Übersetzungsleitfaden",
+    "description": "Caption above the translation guide address; the canonical URL is drawn separately and must never be translated."
+  },
+  "settings.login.unknown_device": {
+    "value": "unbekanntes Gerät",
+    "description": "Settings, consent or sign-in UI: settings.login.unknown_device"
+  },
+  "settings.data.delete_question": {
+    "value": "Alle lokalen Daten löschen?",
+    "description": "Settings: the confirmation question for deleting all local data"
+  },
+  "settings.data.delete_scope": {
+    "value": "Meldet dich ab und entfernt Sitzung, Einstellungen und Caches von diesem Fernseher. Addons behalten, was sie bereits erhalten haben.",
+    "description": "Settings: the confirmation body for deleting all local data"
+  }
+}

@@ -130,6 +130,7 @@ fn app_languages() -> &'static [&'static str] {
         "es" => &["ES", "EN"],
         "fr" => &["FR", "EN"],
         "it" => &["IT", "EN"],
+        "de" => &["DE", "EN"],
         "be" => &["RU", "EN"],
         _ => &["EN"],
     }

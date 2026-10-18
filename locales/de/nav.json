@@ -1,0 +1,612 @@
+{
+  "app.filter.type": {
+    "value": "Typ",
+    "description": "Dropdowns: the type selector's popover title."
+  },
+  "app.filter.all_types": {
+    "value": "Alle Typen",
+    "description": "Home and Library: the type dropdown's button while every type is shown."
+  },
+  "app.discover.catalog": {
+    "value": "Katalog",
+    "description": "Discover: the catalog dropdown's popover title."
+  },
+  "app.discover.genre": {
+    "value": "Genre",
+    "description": "Discover: the genre dropdown's popover title."
+  },
+  "app.discover.all_genres": {
+    "value": "Alle Genres",
+    "description": "Discover: the genre dropdown's button while no genre narrows the catalog."
+  },
+  "app.search.addons": {
+    "value": "Addons",
+    "description": "Search: the addon filter's popover title."
+  },
+  "app.search.addons_all": {
+    "value": "Alle Addons",
+    "description": "Search: the addon filter's button while every addon is searched."
+  },
+  "app.search.addons_some": {
+    "value": "{on} von {total} Addons",
+    "description": "Search: the addon filter's button while only some addons are searched.",
+    "args": {
+      "on": "i64",
+      "total": "i64"
+    }
+  },
+  "app.search.select_all": {
+    "value": "Alle auswählen",
+    "description": "Search: the addon filter's row that switches every addon on."
+  },
+  "app.search.select_none": {
+    "value": "Keine auswählen",
+    "description": "Search: the addon filter's row that switches every addon off."
+  },
+  "app.detail.seasons": {
+    "value": "Staffeln",
+    "description": "Detail: the season dropdown's popover title."
+  },
+  "app.tab.home": {
+    "value": "Startseite",
+    "description": "Top bar: the Home destination's pill."
+  },
+  "app.tab.discover": {
+    "value": "Entdecken",
+    "description": "Top bar: the Discover destination's pill (the addons' catalogs by type, catalog and genre)."
+  },
+  "app.tab.live_tv": {
+    "value": "Live-TV",
+    "description": "Discover: the Live TV sub-tab's chip (the TV channel catalogs)."
+  },
+  "app.tab.library": {
+    "value": "Bibliothek",
+    "description": "Top bar: the Library destination's pill (the user's Stremio library)."
+  },
+  "app.tab.addons": {
+    "value": "Addons",
+    "description": "Top bar: the Addons destination's pill."
+  },
+  "app.tab.settings": {
+    "value": "Einstellungen",
+    "description": "Top bar: the Settings destination's pill; also the Settings page title and the crumb of its sub-pages."
+  },
+  "app.tab.search": {
+    "value": "Suche",
+    "description": "The Search destination (its pill is a magnifier; named in the remote key list)."
+  },
+  "app.menu.open": {
+    "value": "Öffnen",
+    "description": "A card's options menu: open the item's page."
+  },
+  "app.menu.add_to_library": {
+    "value": "Zur Bibliothek hinzufügen",
+    "description": "A card's options menu: add the item to the user's Stremio library."
+  },
+  "app.menu.sign_in_first": {
+    "value": "Melde dich an, um die Bibliothek zu nutzen",
+    "description": "A card's options menu: why Add to library is unavailable."
+  },
+  "app.menu.in_library": {
+    "value": "In deiner Bibliothek",
+    "description": "The Detail page's library button once the item is in the user's Stremio library (pressing it removes the item)."
+  },
+  "app.menu.adding": {
+    "value": "Wird hinzugefügt …",
+    "description": "A card's options menu, under Add to library: the item is being added."
+  },
+  "app.menu.add_failed": {
+    "value": "Hinzufügen zur Bibliothek fehlgeschlagen",
+    "description": "A toast after a refused Add to library (the card's menu or the Detail page's button); the item is shown as it was."
+  },
+  "app.menu.remove_from_library": {
+    "value": "Aus Bibliothek entfernen",
+    "description": "A card's options menu: remove the item from the user's Stremio library."
+  },
+  "app.menu.removing": {
+    "value": "Wird entfernt …",
+    "description": "A card's options menu, under Remove from library: the item is being removed."
+  },
+  "app.menu.remove_failed": {
+    "value": "Entfernen aus Bibliothek fehlgeschlagen",
+    "description": "A toast after a refused Remove from library; the item is shown as it was."
+  },
+  "app.menu.remove_from_continue": {
+    "value": "Aus „Weiter ansehen“ entfernen",
+    "description": "A card's options menu: drop the item from the Continue Watching row (it stays in the library)."
+  },
+  "app.menu.rewind_failed": {
+    "value": "Entfernen aus „Weiter ansehen“ fehlgeschlagen",
+    "description": "A toast after a refused Remove from Continue Watching; the item is shown as it was."
+  },
+  "app.grid.loading": {
+    "value": "Wird geladen …",
+    "description": "Catalog grid: caption beside the spinner while the first page loads."
+  },
+  "app.grid.empty": {
+    "value": "Hier ist nichts",
+    "description": "Catalog grid: the catalog holds nothing."
+  },
+  "app.grid.missing": {
+    "value": "Dieses Addon ist nicht mehr installiert",
+    "description": "Catalog grid: the addon the grid belongs to is not installed any more."
+  },
+  "app.grid.failed": {
+    "value": "Katalog konnte nicht geladen werden",
+    "description": "Catalog grid: failure verdict when the first page failed."
+  },
+  "app.grid.failed_reason": {
+    "value": "Das Addon hat nicht geantwortet. Versuch es gleich noch einmal.",
+    "description": "Catalog grid: the line under the failure verdict."
+  },
+  "app.grid.results_for": {
+    "value": "{kind} · Ergebnisse für „{query}“",
+    "description": "Catalog grid opened from a search row: the heading's annotation — the content type and the query.",
+    "args": {
+      "kind": "str",
+      "query": "str"
+    }
+  },
+  "app.discover.none": {
+    "value": "Deine Addons haben nichts zu entdecken",
+    "description": "Discover: no installed addon offers a catalog to browse."
+  },
+  "app.discover.none_reason": {
+    "value": "Installiere ein Addon mit Katalogen, dann erscheinen sie hier.",
+    "description": "Discover: the line under the no-catalogs read-out."
+  },
+  "app.search.placeholder": {
+    "value": "Suche",
+    "description": "Search field: the placeholder while it is empty."
+  },
+  "app.search.hint": {
+    "value": "Gib mindestens zwei Buchstaben ein, um deine Addons zu durchsuchen.",
+    "description": "Search page with no query and no recent searches."
+  },
+  "app.search.addon_on": {
+    "value": "An",
+    "description": "Search: an addon filter chip's state — the addon is searched."
+  },
+  "app.search.addon_off": {
+    "value": "Aus",
+    "description": "Search: an addon filter chip's state — the addon is left out."
+  },
+  "app.search.clear_recents": {
+    "value": "Letzte Suchen löschen",
+    "description": "Search: the control under the recent searches that forgets them."
+  },
+  "app.search.no_catalogs": {
+    "value": "Kein Addon sucht",
+    "description": "Search: every addon that can search is switched off."
+  },
+  "app.search.no_catalogs_reason": {
+    "value": "Schalte oben ein Addon ein oder installiere eines, das suchen kann.",
+    "description": "Search: the line under the no-addon read-out."
+  },
+  "app.search.row_loading": {
+    "value": "Suche läuft …",
+    "description": "Search: a result row whose addon has not answered yet."
+  },
+  "app.search.row_empty": {
+    "value": "Hier nichts gefunden",
+    "description": "Search: a result row whose catalog found nothing."
+  },
+  "app.search.row_failed": {
+    "value": "Suche dieses Addons fehlgeschlagen ({reason})",
+    "description": "Search: a result row whose addon failed, with the cause.",
+    "args": {
+      "reason": "str"
+    }
+  },
+  "app.settings.copy": {
+    "value": "Wie StremioNative abspielt, was welche Taste tut und was es ist.",
+    "description": "Settings root: the line under the title."
+  },
+  "app.settings.playback": {
+    "value": "Wiedergabe",
+    "description": "Settings root: section header."
+  },
+  "app.settings.subtitle_size": {
+    "value": "Untertitelgröße",
+    "description": "Settings: row and picker title — how large subtitles are drawn."
+  },
+  "app.settings.subtitle_position": {
+    "value": "Untertitelposition",
+    "description": "Settings: row and picker title — where on the picture subtitles sit."
+  },
+  "app.settings.subtitle_size_copy": {
+    "value": "Wie groß StremioNative Untertitel darstellt. Bilduntertitel behalten ihre eigene Größe.",
+    "description": "Subtitle size picker: the line under the title."
+  },
+  "app.settings.subtitle_position_copy": {
+    "value": "Wo Textuntertitel stehen. Formatierte und Bilduntertitel behalten ihre eigene Position.",
+    "description": "Subtitle position picker: the line under the title."
+  },
+  "app.settings.size.small": {
+    "value": "Klein",
+    "description": "Subtitle size rung."
+  },
+  "app.settings.size.medium": {
+    "value": "Mittel",
+    "description": "Subtitle size rung (the default)."
+  },
+  "app.settings.size.large": {
+    "value": "Groß",
+    "description": "Subtitle size rung."
+  },
+  "app.settings.size.extra_large": {
+    "value": "Sehr groß",
+    "description": "Subtitle size rung."
+  },
+  "app.settings.size.huge": {
+    "value": "Riesig",
+    "description": "Subtitle size rung (the largest)."
+  },
+  "app.settings.position.low": {
+    "value": "Unten",
+    "description": "Subtitle position rung (the default: near the bottom)."
+  },
+  "app.settings.position.middle": {
+    "value": "Mitte",
+    "description": "Subtitle position rung."
+  },
+  "app.settings.position.high": {
+    "value": "Oben",
+    "description": "Subtitle position rung."
+  },
+  "app.settings.interface": {
+    "value": "Oberfläche",
+    "description": "Settings root: section header for Stats for nerds and the remote key map."
+  },
+  "app.settings.audio_subtitles": {
+    "value": "Audio & Untertitel",
+    "description": "Settings root: section header for the audio and subtitle language lists, the subtitle mode and the subtitle look."
+  },
+  "app.settings.streams": {
+    "value": "Streams",
+    "description": "Settings root: section header for how stream lists are sorted."
+  },
+  "app.settings.remote_keys": {
+    "value": "Fernbedienungstasten",
+    "description": "Settings: the row and page title of the remote key map."
+  },
+  "app.settings.remote_keys_detail": {
+    "value": "Kürzel für Farb- und Kanaltasten",
+    "description": "Settings: the line under the Remote keys row."
+  },
+  "app.settings.about_section": {
+    "value": "Info",
+    "description": "Settings root: section header for About, Legal and Privacy."
+  },
+  "app.settings.about": {
+    "value": "Über StremioNative",
+    "description": "Settings: the row and page title of About StremioNative."
+  },
+  "app.settings.legal": {
+    "value": "Rechtliche Hinweise",
+    "description": "Settings: the row and page title of the legal notices; the crumb of a licence text."
+  },
+  "app.settings.legal_copy": {
+    "value": "Die Komponenten von StremioNative und ihre jeweiligen Lizenzen.",
+    "description": "Legal notices page: the line under the title."
+  },
+  "app.settings.privacy": {
+    "value": "Datenschutz",
+    "description": "Settings: the row and page title of the privacy summary."
+  },
+  "app.settings.version": {
+    "value": "Version {version}",
+    "description": "Settings: the version line (the version is a build string, e.g. 0.1.0).",
+    "args": {
+      "version": "str"
+    }
+  },
+  "app.settings.components": {
+    "value": "Komponenten von Drittanbietern",
+    "description": "Legal notices: the row and title of the third-party component list."
+  },
+  "app.settings.gpl": {
+    "value": "GNU General Public License v3",
+    "description": "Legal notices: the row and title of the GPL text (keep the licence's own name recognisable)."
+  },
+  "app.settings.ofl": {
+    "value": "Schriftlizenz (SIL OFL 1.1)",
+    "description": "Legal notices: the row and title of the fonts' licence text."
+  },
+  "app.settings.notice": {
+    "value": "Urheberrechtshinweis",
+    "description": "Legal notices: the row and title of the copyright notice."
+  },
+  "app.settings.components_intro": {
+    "value": "StremioNative enthält diese Komponenten, jede unter eigener Lizenz:",
+    "description": "Third-party components page: the line before the list."
+  },
+  "app.settings.components_texts": {
+    "value": "Die vollständigen Lizenztexte liegen dem Paket und dem Quellcode bei.",
+    "description": "Third-party components page: the line after the list."
+  },
+  "app.about.affiliation_head": {
+    "value": "Unabhängig",
+    "description": "About: heading (shown in capitals)."
+  },
+  "app.about.affiliation": {
+    "value": "StremioNative ist ein unabhängiger, inoffizieller Client. Er wird nicht von Stremio, Smart Code OOD, LG Electronics oder einem Addon-Betreiber erstellt, unterstützt oder empfohlen. „Stremio“ wird nur genannt, um zu sagen, mit welchem Dienst die App funktioniert.",
+    "description": "About: the not-affiliated statement (docs/legal.md)."
+  },
+  "app.about.content_head": {
+    "value": "Keine Inhalte",
+    "description": "About: heading (shown in capitals)."
+  },
+  "app.about.content": {
+    "value": "Die App enthält keine Kataloge und keine Medien. Alles, was sie anzeigt oder abspielt, stammt von den Addons, die du installierst – sie entscheiden, was sie anbieten. Du bist für die Addons verantwortlich, die du installierst.",
+    "description": "About: the no-content statement (docs/legal.md)."
+  },
+  "app.about.licence_head": {
+    "value": "Freie Software",
+    "description": "About: heading (shown in capitals)."
+  },
+  "app.about.licence": {
+    "value": "StremioNative ist freie Software unter der GNU General Public License, Version 3 oder neuer. Den vollständigen Quellcode erhältst du unter:",
+    "description": "About: the licence statement; the source address follows on its own line."
+  },
+  "app.about.plxnative_head": {
+    "value": "Basiert auf PlxNative",
+    "description": "About: heading (shown in capitals) for the credit to the project it is derived from."
+  },
+  "app.about.plxnative": {
+    "value": "StremioNative ist von PlxNative abgeleitet, dem nativen Plex-Client für LG-Fernseher, und behält dessen Lizenz:",
+    "description": "About: the PlxNative credit; its address follows on its own line."
+  },
+  "app.about.version_head": {
+    "value": "Version",
+    "description": "About: heading (shown in capitals) above the version string."
+  },
+  "app.privacy.copy": {
+    "value": "Was StremioNative sendet und an wen.",
+    "description": "Privacy page: the line under the title."
+  },
+  "app.privacy.collects": {
+    "value": "StremioNative sammelt nichts. Es gibt keine Analysen, keine Absturzberichte und keine Nutzungstelemetrie, und es werden keine Daten an die Entwickler gesendet.",
+    "description": "Privacy: the opening statement (PRIVACY.md)."
+  },
+  "app.privacy.leaves_head": {
+    "value": "Was den Fernseher verlässt",
+    "description": "Privacy: heading (shown in capitals)."
+  },
+  "app.privacy.sign_in": {
+    "value": "Deine Stremio-E-Mail, dein Passwort und dein Sitzungsschlüssel gehen an api.strem.io – nur zum Anmelden und um deine Addons und Bibliothek zu lesen.",
+    "description": "Privacy: one line of what leaves the TV."
+  },
+  "app.privacy.addons": {
+    "value": "Katalog-, Such-, Meta-, Stream- und Untertitelanfragen – einschließlich deines Suchtexts und des geöffneten Titels – gehen an die installierten Addons. Untertitelanfragen senden auch Dateiname, Größe und Hash des Videos; Untertiteldateien werden von den Hosts geladen, die das Addon nennt.",
+    "description": "Privacy: one line of what leaves the TV."
+  },
+  "app.privacy.media": {
+    "value": "Medienanfragen gehen mit allen Headern, die ein Addon verlangt, an die Hosts, die den Stream bereitstellen.",
+    "description": "Privacy: one line of what leaves the TV."
+  },
+  "app.privacy.artwork": {
+    "value": "Bildanfragen gehen an die Hosts in den Bildadressen der Addons.",
+    "description": "Privacy: one line of what leaves the TV."
+  },
+  "app.privacy.skip": {
+    "value": "Sofern „Intros überspringen“ nicht aus ist, geht die ID der abgespielten Folge oder des Films an api.introdb.app – bei Anime an api.aniskip.com, kitsu.io und arm.haglund.dev –, um Intro, Rückblick und Abspann zu finden.",
+    "description": "Privacy: one line of what leaves the TV. Skip intros is the Settings row; the hosts are proper names."
+  },
+  "app.privacy.stays_head": {
+    "value": "Was auf dem Fernseher bleibt",
+    "description": "Privacy: heading (shown in capitals)."
+  },
+  "app.privacy.stays": {
+    "value": "Dein Sitzungsschlüssel und deine Einstellungen werden nur auf dem Fernseher gespeichert und beim Abmelden gelöscht. Protokolle bleiben auf dem Fernseher, bereinigt um Schlüssel, Passwörter, Addon-Konfiguration und Suchtext.",
+    "description": "Privacy: what is stored locally."
+  },
+  "app.privacy.full": {
+    "value": "Die vollständige Erklärung: {url}",
+    "description": "Privacy: where the full statement is; the address is a URL.",
+    "args": {
+      "url": "str"
+    }
+  },
+  "app.remote.copy": {
+    "value": "Was jede Taste der Fernbedienung tut.",
+    "description": "Remote keys page: the line under the title."
+  },
+  "app.remote.navigation_head": {
+    "value": "Navigation",
+    "description": "Remote keys: heading (shown in capitals)."
+  },
+  "app.remote.key_arrows": {
+    "value": "Pfeiltasten",
+    "description": "Remote keys: the arrow keys."
+  },
+  "app.remote.move": {
+    "value": "zwischen Elementen wechseln, nach oben zur Leiste",
+    "description": "Remote keys: what the arrows do."
+  },
+  "app.remote.key_ok": {
+    "value": "OK",
+    "description": "Remote keys: the OK key."
+  },
+  "app.remote.select": {
+    "value": "öffnen oder auswählen",
+    "description": "Remote keys: what OK does."
+  },
+  "app.remote.key_hold_ok": {
+    "value": "OK halten",
+    "description": "Remote keys: holding OK down."
+  },
+  "app.remote.options": {
+    "value": "Optionen für ein Element",
+    "description": "Remote keys: what holding OK on an item does."
+  },
+  "app.remote.key_back": {
+    "value": "BACK",
+    "description": "Remote keys: the BACK key."
+  },
+  "app.remote.back": {
+    "value": "zurück; in der Leiste zur Startseite; in der Leiste der Startseite zum TV-Home",
+    "description": "Remote keys: what BACK does."
+  },
+  "app.remote.key_exit": {
+    "value": "EXIT",
+    "description": "Remote keys: the EXIT key."
+  },
+  "app.remote.exit": {
+    "value": "StremioNative schließen",
+    "description": "Remote keys: what EXIT does."
+  },
+  "app.remote.shortcuts_head": {
+    "value": "Kürzel",
+    "description": "Remote keys: heading (shown in capitals)."
+  },
+  "app.remote.shortcuts_where": {
+    "value": "Überall außer beim Tippen, in einem Menü oder während der Wiedergabe:",
+    "description": "Remote keys: where the shortcuts work."
+  },
+  "app.remote.key_red": {
+    "value": "Rot",
+    "description": "Remote keys: the red colour key."
+  },
+  "app.remote.key_green": {
+    "value": "Grün",
+    "description": "Remote keys: the green colour key."
+  },
+  "app.remote.key_yellow": {
+    "value": "Gelb",
+    "description": "Remote keys: the yellow colour key."
+  },
+  "app.remote.key_blue": {
+    "value": "Blau",
+    "description": "Remote keys: the blue colour key."
+  },
+  "app.remote.key_ch_up": {
+    "value": "CH +",
+    "description": "Remote keys: the channel-up key."
+  },
+  "app.remote.key_ch_down": {
+    "value": "CH −",
+    "description": "Remote keys: the channel-down key."
+  },
+  "app.remote.prev_tab": {
+    "value": "vorheriger Tab",
+    "description": "Remote keys: a shortcut's action — the top bar's previous destination."
+  },
+  "app.remote.next_tab": {
+    "value": "nächster Tab",
+    "description": "Remote keys: a shortcut's action — the top bar's next destination."
+  },
+  "app.remote.see_all": {
+    "value": "in einer Kartenreihe: alle anzeigen",
+    "description": "Remote keys: what the yellow key does (it opens the whole row the focused card is in)."
+  },
+  "app.remote.playback_head": {
+    "value": "Während der Wiedergabe",
+    "description": "Remote keys: heading (shown in capitals)."
+  },
+  "app.remote.key_play": {
+    "value": "OK, PLAY, PAUSE",
+    "description": "Remote keys: the play/pause transport keys."
+  },
+  "app.remote.pause": {
+    "value": "pausieren oder fortsetzen",
+    "description": "Remote keys: what the play/pause keys do."
+  },
+  "app.remote.key_stop": {
+    "value": "BACK, STOP",
+    "description": "Remote keys: the keys that end playback."
+  },
+  "app.remote.stop": {
+    "value": "beenden und zurück",
+    "description": "Remote keys: what BACK/STOP do during playback."
+  },
+  "app.remote.key_left_right": {
+    "value": "LINKS, RECHTS",
+    "description": "Remote keys: the left and right arrows, during playback."
+  },
+  "app.remote.seek_step": {
+    "value": "10 s zurück oder vor; mehrere Drücke ergeben einen Sprung",
+    "description": "Remote keys: what LEFT/RIGHT do in the player (each press moves 10 seconds; quick presses become one seek)."
+  },
+  "app.remote.key_rew_ff": {
+    "value": "REW, FF",
+    "description": "Remote keys: the rewind and fast-forward transport keys."
+  },
+  "app.remote.speed_scrub": {
+    "value": "mit jedem Druck schneller suchen (×2 bis ×32); OK spielt ab dort, BACK bricht ab",
+    "description": "Remote keys: what rewind/fast-forward do in the player."
+  },
+  "app.remote.key_digits": {
+    "value": "0–9",
+    "description": "Remote keys: the number keys."
+  },
+  "app.remote.jump_percent": {
+    "value": "zu 0–90 % des Videos springen",
+    "description": "Remote keys: what the number keys do in the player (1 is 10 %, 0 the start)."
+  },
+  "app.remote.key_ch": {
+    "value": "CH +, CH −",
+    "description": "Remote keys: the channel keys, during playback."
+  },
+  "app.remote.jump_ten": {
+    "value": "10 Minuten vor oder zurück",
+    "description": "Remote keys: what the channel keys do in the player."
+  },
+  "app.remote.audio_menu": {
+    "value": "Tonspur",
+    "description": "Remote keys: what the red key does in the player."
+  },
+  "app.remote.subtitles_toggle": {
+    "value": "Untertitel an oder aus; halten für das Untertitelmenü",
+    "description": "Remote keys: what the green key does in the player."
+  },
+  "app.remote.episodes": {
+    "value": "Folgen (bei Filmen: Infos)",
+    "description": "Remote keys: what the yellow key does in the player (a series' episodes; for a film, its show info)."
+  },
+  "app.remote.show_info": {
+    "value": "Infos anzeigen",
+    "description": "Remote keys: what the blue key does in the player."
+  },
+  "app.view.name": {
+    "value": "Ansicht",
+    "description": "Search, Library and catalog grids: the name on the chip that switches between posters and a list."
+  },
+  "app.view.posters": {
+    "value": "Poster",
+    "description": "The view chip's value while items are shown as posters."
+  },
+  "app.view.list": {
+    "value": "Liste",
+    "description": "The view chip's value while items are shown as a list."
+  },
+  "app.search.recents": {
+    "value": "Letzte Suchen",
+    "description": "Search: the heading over the recent search pills."
+  },
+  "app.search.clear": {
+    "value": "Löschen",
+    "description": "Search: the last recent-search pill, which forgets them all."
+  },
+  "app.search.summary_empty": {
+    "value": "Keine Ergebnisse von: {addons}",
+    "description": "Search: the closing line naming the catalogs that found nothing.",
+    "args": {
+      "addons": "str"
+    }
+  },
+  "app.search.summary_failed": {
+    "value": "Fehlgeschlagen: {addons}",
+    "description": "Search: the closing line naming the catalogs whose search failed, each with a short cause.",
+    "args": {
+      "addons": "str"
+    }
+  },
+  "app.search.no_results": {
+    "value": "Keine Ergebnisse für „{query}“",
+    "description": "Search: the verdict leading the closing line when every catalog has answered and none found anything. {query} is what was searched (keep the quotation marks of your language).",
+    "args": {
+      "query": "str"
+    }
+  }
+}

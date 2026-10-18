@@ -1,0 +1,271 @@
+{
+  "app.signin.title": {
+    "value": "Anmelden",
+    "description": "Sign-in page: its title (signing in to a Stremio account)."
+  },
+  "app.signin.copy": {
+    "value": "Scanne den Code mit dem Handy oder gib ihn auf link.stremio.com ein. Oder nutze E-Mail und Passwort.",
+    "description": "Sign-in page: the explanation under the title; the QR code and its code follow below it."
+  },
+  "app.signin.with_email": {
+    "value": "E-Mail und Passwort",
+    "description": "Sign-in page: heading of the section with the email and password fields."
+  },
+  "app.signin.email": {
+    "value": "E-Mail",
+    "description": "Sign-in page: label of the email field."
+  },
+  "app.signin.password": {
+    "value": "Passwort",
+    "description": "Sign-in page: label of the password field."
+  },
+  "app.signin.not_entered": {
+    "value": "Nicht eingegeben",
+    "description": "Sign-in page: the dim value of a text field nothing has been typed into yet."
+  },
+  "app.signin.submit": {
+    "value": "Anmelden",
+    "description": "Sign-in page: the button that signs in with the typed email and password."
+  },
+  "app.signin.working": {
+    "value": "Anmeldung läuft…",
+    "description": "Sign-in page: note while a sign-in is in progress."
+  },
+  "app.signin.rejected": {
+    "value": "Anmeldung fehlgeschlagen: {reason}",
+    "description": "Sign-in page: the account service refused the sign-in; {reason} is its own message (e.g. a wrong password).",
+    "args": {
+      "reason": "str"
+    }
+  },
+  "app.signin.offline": {
+    "value": "Stremio nicht erreichbar ({reason}). Prüfe, ob der TV online ist.",
+    "description": "Sign-in page: the sign-in got no answer; {reason} is the technical cause. A retry button follows.",
+    "args": {
+      "reason": "str"
+    }
+  },
+  "app.signin.retry": {
+    "value": "Erneut versuchen",
+    "description": "Sign-in page: the button that repeats a sign-in or code request that failed."
+  },
+  "app.signin.with_phone": {
+    "value": "Mit dem Handy",
+    "description": "Sign-in page: heading of the section about signing in by confirming a code on a phone."
+  },
+  "app.signin.link_start": {
+    "value": "Anmeldecode anzeigen",
+    "description": "Sign-in page: the button that asks for a code to confirm on a phone."
+  },
+  "app.signin.link_creating": {
+    "value": "Code wird abgerufen…",
+    "description": "Sign-in page: note while a sign-in code is being requested."
+  },
+  "app.signin.link_waiting": {
+    "value": "Warte auf Bestätigung des Codes auf deinem Handy…",
+    "description": "Sign-in page: note while the shown code waits to be confirmed on a phone."
+  },
+  "app.signin.link_failed": {
+    "value": "Code konnte nicht abgerufen werden ({reason}).",
+    "description": "Sign-in page: the code request failed; {reason} is the technical cause.",
+    "args": {
+      "reason": "str"
+    }
+  },
+  "app.signin.link_expired": {
+    "value": "Der Code ist abgelaufen.",
+    "description": "Sign-in page: the shown code was not confirmed in time."
+  },
+  "app.signin.link_new": {
+    "value": "Neuen Code anzeigen",
+    "description": "Sign-in page: the button that replaces an expired code."
+  },
+  "app.signin.without": {
+    "value": "Ohne Konto",
+    "description": "Sign-in page: heading of the section that skips signing in."
+  },
+  "app.signin.skip": {
+    "value": "Ohne Anmeldung fortfahren",
+    "description": "Sign-in page: the button that goes on without an account."
+  },
+  "app.signin.skip_detail": {
+    "value": "Nur mit Cinemeta stöbern",
+    "description": "Sign-in page: under the skip button; signed out, only the Cinemeta addon is used."
+  },
+  "app.addons.title": {
+    "value": "Addons",
+    "description": "Addons page: its title (the Stremio addons the app uses)."
+  },
+  "app.addons.copy_signed_in": {
+    "value": "Die Addons deines Stremio-Kontos, in Reihenfolge. Installiere oder entferne sie in Stremio auf einem anderen Gerät.",
+    "description": "Addons page, signed in: the explanation under the title."
+  },
+  "app.addons.copy_signed_out": {
+    "value": "Abgemeldet: nur Cinemeta. Melde dich an, um die Addons deines Kontos zu nutzen.",
+    "description": "Addons page, signed out: the explanation under the title."
+  },
+  "app.addons.account": {
+    "value": "Konto",
+    "description": "Addons page: heading of the account section."
+  },
+  "app.addons.restoring": {
+    "value": "Konto wird geprüft…",
+    "description": "Addons page: note while the saved session is being read."
+  },
+  "app.addons.sign_in": {
+    "value": "Anmelden",
+    "description": "Addons page and Library: the button that opens the sign-in page."
+  },
+  "app.addons.sign_in_detail": {
+    "value": "Addons und Bibliothek deines Kontos nutzen",
+    "description": "Addons page: under the sign-in button."
+  },
+  "app.addons.signed_in": {
+    "value": "Angemeldet als",
+    "description": "Addons page: label of the row showing the signed-in account's email."
+  },
+  "app.addons.refreshing": {
+    "value": "Addons werden aktualisiert…",
+    "description": "Addons page: note while the account's addon list is being fetched."
+  },
+  "app.addons.refresh_failed": {
+    "value": "Addons konnten nicht aktualisiert werden ({reason}).",
+    "description": "Addons page: the account's addon list could not be fetched; {reason} is the cause. The last known list stays.",
+    "args": {
+      "reason": "str"
+    }
+  },
+  "app.addons.not_kept": {
+    "value": "Dieser TV konnte die Anmeldung nicht speichern. Du musst dich nächstes Mal erneut anmelden.",
+    "description": "Addons page: the session could not be stored on the TV."
+  },
+  "app.addons.sign_out": {
+    "value": "Abmelden",
+    "description": "Addons page: the button that signs out of the account."
+  },
+  "app.addons.installed": {
+    "value": "Aktive Addons",
+    "description": "Addons page: heading of the list of addons."
+  },
+  "app.addons.configurable": {
+    "value": "Konfigurierbar",
+    "description": "Addons page: an addon whose settings can be changed (in Stremio)."
+  },
+  "app.addons.res_catalog": {
+    "value": "Kataloge",
+    "description": "Addons page: what an addon serves — catalogs of titles."
+  },
+  "app.addons.res_meta": {
+    "value": "Details",
+    "description": "Addons page: what an addon serves — details of titles (descriptions, episodes)."
+  },
+  "app.addons.res_stream": {
+    "value": "Streams",
+    "description": "Addons page: what an addon serves — streams to play."
+  },
+  "app.addons.res_subtitles": {
+    "value": "Untertitel",
+    "description": "Addons page: what an addon serves — subtitles."
+  },
+  "app.addons.res_addon_catalog": {
+    "value": "Addon-Listen",
+    "description": "Addons page: what an addon serves — lists of other addons."
+  },
+  "app.addons.about": {
+    "value": "Info",
+    "description": "One addon's page: heading of its facts."
+  },
+  "app.addons.version": {
+    "value": "Version",
+    "description": "One addon's page: label of its version."
+  },
+  "app.addons.serves": {
+    "value": "Liefert",
+    "description": "One addon's page: label of what it serves (catalogs, streams…) and for which types."
+  },
+  "app.addons.yes": {
+    "value": "Ja",
+    "description": "One addon's page: a yes value."
+  },
+  "app.addons.no": {
+    "value": "Nein",
+    "description": "One addon's page: a no value."
+  },
+  "app.addons.search": {
+    "value": "Suche",
+    "description": "One addon's page: heading of its search setting."
+  },
+  "app.addons.search_toggle": {
+    "value": "In Suche einbeziehen",
+    "description": "One addon's page: switch that decides whether a search asks this addon."
+  },
+  "app.addons.no_search": {
+    "value": "Dieses Addon ist nicht durchsuchbar.",
+    "description": "One addon's page: the addon has no searchable catalog."
+  },
+  "app.addons.catalogs": {
+    "value": "Kataloge",
+    "description": "One addon's page: heading of its catalog list."
+  },
+  "app.addons.no_catalogs": {
+    "value": "Dieses Addon hat keine Kataloge.",
+    "description": "One addon's page: the addon lists no catalog."
+  },
+  "app.addons.on_home": {
+    "value": "Auf Startseite",
+    "description": "One addon's page: a catalog shown as a row on Home."
+  },
+  "app.addons.search_only": {
+    "value": "Nur Suche",
+    "description": "One addon's page: a catalog that is only used by search."
+  },
+  "app.addons.gone": {
+    "value": "Dieses Addon wird nicht mehr verwendet.",
+    "description": "One addon's page: the addon was removed from the account."
+  },
+  "app.home.continue": {
+    "value": "Weiterschauen",
+    "description": "Home: heading of the row of titles in progress."
+  },
+  "app.library.loading": {
+    "value": "Bibliothek wird geladen…",
+    "description": "Library: caption beside the spinner while the library loads."
+  },
+  "app.library.failed": {
+    "value": "Bibliothek konnte nicht geladen werden",
+    "description": "Library: failure verdict."
+  },
+  "app.library.empty": {
+    "value": "Deine Bibliothek ist leer",
+    "description": "Library: read-out when the account's library has nothing."
+  },
+  "app.library.signed_out": {
+    "value": "Melde dich an, um deine Bibliothek zu sehen",
+    "description": "Library, signed out: the verdict; a sign-in button follows."
+  },
+  "app.library.signed_out_reason": {
+    "value": "Bibliothek und „Weiterschauen“ kommen aus deinem Stremio-Konto.",
+    "description": "Library, signed out: the line under the verdict."
+  },
+  "app.library.count": {
+    "value": {
+      "one": "{count} Titel",
+      "other": "{count} Titel"
+    },
+    "description": "Library: a type row's annotation — how many titles it holds.",
+    "args": {
+      "count": "i64"
+    }
+  },
+  "app.library.none_of_type": {
+    "value": "Keine {kind} in deiner Bibliothek",
+    "description": "Library: read-out when the type filter is set to a type the library holds nothing of. {kind} is the type's plural label (Movies, Series).",
+    "args": {
+      "kind": "str"
+    }
+  },
+  "app.library.empty_hint": {
+    "value": "Halte OK auf einem Titel, um ihn zur Bibliothek hinzuzufügen.",
+    "description": "Library: the hint under the empty-library verdict, saying how to add a title."
+  }
+}

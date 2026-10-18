@@ -1,0 +1,386 @@
+{
+  "widgets.badge.forced": {
+    "value": "ERZWUNGEN",
+    "description": "Compact media-track badge. This describes a subtitle or audio track."
+  },
+  "widgets.toggle.on": {
+    "value": "An",
+    "description": "Trailing value of an on/off settings switch."
+  },
+  "widgets.toggle.off": {
+    "value": "Aus",
+    "description": "Trailing value of an on/off settings switch."
+  },
+  "widgets.action.mark_watched": {
+    "value": "Als gesehen markieren",
+    "description": "Action verb shared by the media context menu and detail-page controls."
+  },
+  "widgets.action.mark_unwatched": {
+    "value": "Als ungesehen markieren",
+    "description": "Action verb shared by the media context menu and detail-page controls."
+  },
+  "widgets.action.play_start": {
+    "value": "Von Anfang an",
+    "description": "Action verb shared by the media context menu and detail-page controls."
+  },
+  "widgets.action.play_trailer": {
+    "value": "Trailer abspielen",
+    "description": "Action verb shared by the media context menu and detail-page controls."
+  },
+  "widgets.status.preparing": {
+    "value": "Wird vorbereitet…",
+    "description": "Short player status beside a spinner or terminal playback error."
+  },
+  "widgets.status.connecting": {
+    "value": "Verbinde…",
+    "description": "Short player status beside a spinner or terminal playback error."
+  },
+  "widgets.status.buffering": {
+    "value": "Puffern…",
+    "description": "Short player status beside a spinner or terminal playback error."
+  },
+  "widgets.status.switching_audio": {
+    "value": "Tonspur wird gewechselt…",
+    "description": "Short player status beside a spinner while the stream is rebuilt for an audio track the viewer picked."
+  },
+  "widgets.status.seeking": {
+    "value": "Springe…",
+    "description": "Short player status beside a spinner or terminal playback error."
+  },
+  "widgets.status.failed": {
+    "value": "Wiedergabe fehlgeschlagen",
+    "description": "Short player status beside a spinner or terminal playback error."
+  },
+  "widgets.card.new_episode": {
+    "value": "Neue Folge",
+    "description": "Secondary caption beneath a focused media card."
+  },
+  "widgets.card.show_new_episode": {
+    "value": "{show} · Neue Folge",
+    "description": "Secondary caption beneath a focused media card.",
+    "args": {
+      "show": "str"
+    }
+  },
+  "widgets.card.season_episode": {
+    "value": "S{season} • F{episode}",
+    "description": "Secondary caption beneath a focused media card.",
+    "args": {
+      "episode": "i64",
+      "season": "i64"
+    }
+  },
+  "widgets.card.episode": {
+    "value": "F{episode}",
+    "description": "Secondary caption beneath a focused media card.",
+    "args": {
+      "episode": "i64"
+    }
+  },
+  "widgets.failure.jail": {
+    "value": "Wiedergabe fehlgeschlagen – die Sandbox dieses TVs blockiert natives Video",
+    "description": "failure jail"
+  },
+  "widgets.failure.no_video": {
+    "value": "Wiedergabe fehlgeschlagen – kein Video in der Datei",
+    "description": "Player error caption or supporting subscription fact."
+  },
+  "widgets.failure.open": {
+    "value": "Wiedergabe fehlgeschlagen – der Stream ließ sich nicht öffnen",
+    "description": "Player error caption or supporting subscription fact."
+  },
+  "widgets.failure.stopped": {
+    "value": "Wiedergabe fehlgeschlagen – nach dem Start abgebrochen",
+    "description": "Player error caption or supporting subscription fact."
+  },
+  "widgets.failure.tv_rejected": {
+    "value": "Wiedergabe fehlgeschlagen – der TV hat den Stream abgelehnt",
+    "description": "Player error caption or supporting subscription fact."
+  },
+  "widgets.reason.jail": {
+    "value": "Die Sandbox dieses Geräts gibt der App keinen Zugriff auf /dev/rtkmem",
+    "description": "reason jail"
+  },
+  "widgets.reason.no_video": {
+    "value": "Diese Datei hat keine Videospur",
+    "description": "Explanation beneath the playback-failed heading. Device paths and project identifiers stay unchanged."
+  },
+  "widgets.reason.open": {
+    "value": "Der Stream konnte nicht geöffnet werden",
+    "description": "Explanation beneath the playback-failed heading. Device paths and project identifiers stay unchanged."
+  },
+  "widgets.reason.stopped": {
+    "value": "Die Wiedergabe brach nach dem Start ab",
+    "description": "Explanation beneath the playback-failed heading. Device paths and project identifiers stay unchanged."
+  },
+  "widgets.reason.tv_rejected": {
+    "value": "Dieser TV konnte den Videostream nicht starten",
+    "description": "Explanation beneath the playback-failed heading. Device paths and project identifiers stay unchanged."
+  },
+  "widgets.reason.unknown": {
+    "value": "Der Player stoppte, bevor er das Problem erkennen konnte",
+    "description": "Explanation beneath the playback-failed heading. Device paths and project identifiers stay unchanged."
+  },
+  "widgets.hint.hold_options": {
+    "value": "{key} halten für Optionen",
+    "description": "Complete sentence in the Home screen's standing hint capsule, teaching that holding the remote's OK button on a card opens its context menu. {key} is the OK button rendered as a keycap; keep exactly one occurrence. Must fit one line in the capsule at CAPTION size in every shipped language.",
+    "args": {
+      "key": "str"
+    }
+  },
+  "widgets.cards.see_all": {
+    "value": "Alle",
+    "description": "The tile at the end of a row of cards (and the last row of a row shown as a list) that opens the whole row. Must fit one line on a poster card at BODY size in every shipped language."
+  },
+  "widgets.reason.jail_help": {
+    "value": "Reparatur erfordert einen gerooteten TV mit Homebrew Channel.",
+    "description": "reason jail_help"
+  },
+  "widgets.tracks.empty": {
+    "value": "Keine Spuren",
+    "description": "Label or formatted fact in the media track information sheet or track selector."
+  },
+  "widgets.tracks.mbps": {
+    "value": "{rate} Mbit/s",
+    "description": "Label or formatted fact in the media track information sheet or track selector.",
+    "args": {
+      "rate": "str"
+    }
+  },
+  "widgets.tracks.kbps": {
+    "value": "{rate} kbit/s",
+    "description": "Label or formatted fact in the media track information sheet or track selector.",
+    "args": {
+      "rate": "str"
+    }
+  },
+  "widgets.panel.jail": {
+    "value": "die Sandbox dieser Installation blockiert den Zugriff auf /dev/rtkmem; StremioNative kann eine bestätigte Reparatur über gerooteten Homebrew-Channel-Zugang anbieten",
+    "description": "panel jail"
+  },
+  "widgets.panel.no_video": {
+    "value": "der Stream enthält keine Videospur",
+    "description": "Player diagnostic reason; preserve technical device paths and protocol endpoints."
+  },
+  "widgets.panel.open": {
+    "value": "der Stream konnte nicht geöffnet oder gelesen werden",
+    "description": "Player diagnostic reason; preserve technical device paths and protocol endpoints."
+  },
+  "widgets.panel.stopped": {
+    "value": "die Medienquelle stoppte vor Ende der Wiedergabe",
+    "description": "Player diagnostic reason; preserve technical device paths and protocol endpoints."
+  },
+  "widgets.panel.tv_rejected": {
+    "value": "die Medien-Pipeline des TVs hat den Stream abgelehnt",
+    "description": "Player diagnostic reason; preserve technical device paths and protocol endpoints."
+  },
+  "widgets.panel.unknown": {
+    "value": "der Player stoppte ohne gemeldete Ursache",
+    "description": "Player diagnostic reason; preserve technical device paths and protocol endpoints."
+  },
+  "widgets.failure.load_timeout": {
+    "value": "Wiedergabe fehlgeschlagen – der TV hat den Stream nicht fertig gestartet",
+    "description": "failure load_timeout"
+  },
+  "widgets.panel.load_timeout": {
+    "value": "die Medien-Pipeline des TVs hat den Stream nicht rechtzeitig gestartet",
+    "description": "panel load_timeout"
+  },
+  "widgets.reason.load_timeout": {
+    "value": "Dieser TV hat den Videostream nicht rechtzeitig gestartet",
+    "description": "reason load_timeout"
+  },
+  "widgets.runtime.main_thread": {
+    "value": "MAIN THREAD {kind} {milliseconds}ms · {label}",
+    "description": "Developer warning; kind and label are technical diagnostic identifiers",
+    "args": {
+      "kind": "str",
+      "label": "str",
+      "milliseconds": "i64"
+    }
+  },
+  "widgets.ass.start_failed": {
+    "value": "Formatierte Untertitel konnten nicht starten",
+    "description": "Message drawn in place of styled (ASS/SSA) subtitles when they cannot be shown."
+  },
+  "widgets.ass.invalid_file": {
+    "value": "Diese formatierte Untertiteldatei ist ungültig oder zu groß",
+    "description": "Message drawn in place of styled (ASS/SSA) subtitles when they cannot be shown."
+  },
+  "widgets.ass.invalid_track": {
+    "value": "Diese formatierte Untertitelspur ist ungültig oder zu groß",
+    "description": "Message drawn in place of styled (ASS/SSA) subtitles when they cannot be shown."
+  },
+  "widgets.ass.invalid_events": {
+    "value": "Diese formatierte Untertitelspur enthält ungültige Einträge",
+    "description": "Message drawn in place of styled (ASS/SSA) subtitles when they cannot be shown."
+  },
+  "widgets.ass.track_too_large": {
+    "value": "Diese formatierte Untertitelspur ist zu groß",
+    "description": "Message drawn in place of styled (ASS/SSA) subtitles when they cannot be shown."
+  },
+  "widgets.ass.render_failed": {
+    "value": "Dieser formatierte Untertitel ließ sich nicht darstellen",
+    "description": "Message drawn in place of styled (ASS/SSA) subtitles when they cannot be shown."
+  },
+  "widgets.ass.unavailable": {
+    "value": "Formatierte Untertitel sind in dieser Installation nicht verfügbar",
+    "description": "Message drawn in place of styled (ASS/SSA) subtitles when they cannot be shown."
+  },
+  "widgets.ass.fonts_unavailable": {
+    "value": "Untertitel-Schriften konnten nicht geladen werden",
+    "description": "Message drawn in place of styled (ASS/SSA) subtitles when they cannot be shown."
+  },
+  "widgets.ass.init_failed": {
+    "value": "Formatierte Untertitel konnten nicht initialisiert werden",
+    "description": "Message drawn in place of styled (ASS/SSA) subtitles when they cannot be shown."
+  },
+  "widgets.ass.font_too_large": {
+    "value": "Die installierte Untertitel-Schrift ist zu groß",
+    "description": "Message drawn in place of styled (ASS/SSA) subtitles when they cannot be shown."
+  },
+  "widgets.ass.unreadable": {
+    "value": "Diese formatierte Untertiteldatei ist nicht lesbar",
+    "description": "Message drawn in place of styled (ASS/SSA) subtitles when they cannot be shown."
+  },
+  "widgets.ass.font_name": {
+    "value": "Der Name dieser Untertitel-Schrift ist ungültig",
+    "description": "Message drawn in place of styled (ASS/SSA) subtitles when they cannot be shown."
+  },
+  "widgets.ass.track_fonts": {
+    "value": "Schriften dieses Untertitels konnten nicht geladen werden",
+    "description": "Message drawn in place of styled (ASS/SSA) subtitles when they cannot be shown."
+  },
+  "widgets.ass.too_many_events": {
+    "value": "Diese formatierte Untertitelspur enthält zu viele Einträge",
+    "description": "Message drawn in place of styled (ASS/SSA) subtitles when they cannot be shown."
+  },
+  "widgets.ass.invalid_regions": {
+    "value": "Der Untertitel-Renderer lieferte ungültige Bereiche",
+    "description": "Message drawn in place of styled (ASS/SSA) subtitles when they cannot be shown."
+  },
+  "widgets.ass.invalid_pixels": {
+    "value": "Der Untertitel-Renderer lieferte ungültige Pixel",
+    "description": "Message drawn in place of styled (ASS/SSA) subtitles when they cannot be shown."
+  },
+  "widgets.ass.overlapping_regions": {
+    "value": "Der Untertitel-Renderer lieferte überlappende Bereiche",
+    "description": "Message drawn in place of styled (ASS/SSA) subtitles when they cannot be shown."
+  },
+  "widgets.sidecar.fetch_failed": {
+    "value": "Untertitel konnte nicht vom Server geladen werden",
+    "description": "Message drawn in place of an external subtitle file that could not be downloaded."
+  },
+  "widgets.sidecar.empty": {
+    "value": "Diese Untertiteldatei hat keine lesbaren Zeilen",
+    "description": "Message drawn in place of an external subtitle file that contains no readable text."
+  },
+  "widgets.badge.cc": {
+    "value": "CC",
+    "description": "Badge: the title has closed captions. The mark the explanation text browse.detail.closed_captions defines; keep the two in step. Latin CC is the international mark in Spain and in the be catalog's own explanation."
+  },
+  "widgets.badge.sdh": {
+    "value": "SDH",
+    "description": "Badge: subtitles for the deaf and hard of hearing. Must match the abbreviation in browse.detail.sdh, which introduces it."
+  },
+  "widgets.badge.ad": {
+    "value": "AD",
+    "description": "Badge: the title has an audio-description track. Must match the abbreviation in browse.detail.audio_description (es: audiodescripción, AD)."
+  },
+  "widgets.failure.audio_unsupported": {
+    "value": "Wiedergabe fehlgeschlagen – dieser TV kann die Tonspur nicht decodieren",
+    "description": "Player error caption: the selected audio track's format (or channel count) has no decoder on this TV and the app has no software decoder for it yet."
+  },
+  "widgets.reason.audio_unsupported": {
+    "value": "Dieser TV hat keinen Decoder für diese Tonspur; wähle eine andere Tonspur oder einen anderen Stream",
+    "description": "Explanation beneath the playback-failed heading when the audio track cannot be decoded by the TV."
+  },
+  "widgets.panel.audio_unsupported": {
+    "value": "der TV hat keinen Decoder für die Tonspur",
+    "description": "Diagnostics panel verdict suffix: the audio track cannot be decoded by the TV."
+  },
+  "widgets.failure.video_unsupported": {
+    "value": "Wiedergabe fehlgeschlagen – dieser TV kann das Video nicht decodieren",
+    "description": "Player error caption: the stream's video codec has no decoder on this TV."
+  },
+  "widgets.reason.video_unsupported": {
+    "value": "Dieser TV hat keinen Decoder für dieses Videoformat; wähle einen anderen Stream",
+    "description": "Explanation beneath the playback-failed heading when the video codec cannot be decoded by the TV."
+  },
+  "widgets.failure.video_not_streamable": {
+    "value": "Wiedergabe fehlgeschlagen – dieses Videoformat ist auf diesem TV nicht streambar",
+    "description": "Player error caption: the stream's video codec (MPEG-4 Part 2/Xvid/DivX, MPEG-2, H.263, VC-1/WMV, RealVideo) is one the TV's streaming player cannot be fed, though the TV's own file player may know it."
+  },
+  "widgets.reason.video_not_streamable": {
+    "value": "Dieser TV streamt nur H.264, HEVC, AV1, VP9 und VP8 – nicht Xvid/DivX, MPEG-2, H.263, VC-1/WMV oder RealVideo; wähle einen anderen Stream",
+    "description": "Explanation beneath the playback-failed heading when the video codec is one the TV's streaming player cannot take. Keep the codec names untranslated."
+  },
+  "widgets.panel.video_not_streamable": {
+    "value": "der Streaming-Player des TVs kann dieses Videoformat nicht verarbeiten",
+    "description": "Diagnostics panel verdict suffix: the video codec cannot be fed to the TV's streaming player."
+  },
+  "widgets.panel.video_unsupported": {
+    "value": "der TV hat keinen Decoder für das Video",
+    "description": "Diagnostics panel verdict suffix: the video codec cannot be decoded by the TV."
+  },
+  "widgets.failure.dolby_vision": {
+    "value": "Wiedergabe fehlgeschlagen – dieser Dolby-Vision-Stream ist hier nicht korrekt darstellbar",
+    "description": "Player error caption: a Dolby Vision stream whose base layer alone is a wrong picture, on a TV that cannot be told it is Dolby Vision."
+  },
+  "widgets.reason.dolby_vision": {
+    "value": "Dieser Dolby-Vision-Stream hat kein Bild, das dieser TV ohne Dolby Vision zeigen kann; wähle einen anderen Stream",
+    "description": "Explanation beneath the playback-failed heading for a Dolby Vision stream that cannot be shown correctly."
+  },
+  "widgets.panel.dolby_vision": {
+    "value": "Dolby-Vision-Stream ohne darstellbare Basisebene",
+    "description": "Diagnostics panel verdict suffix: a Dolby Vision stream refused because its base layer is not a correct picture."
+  },
+  "widgets.failure.not_video_image": {
+    "value": "Dieser Stream ist ein Bild, kein Video",
+    "description": "Player error caption: the stream link answered an image (PNG/JPEG/GIF/WebP) instead of the video — the addon picked the wrong file in a torrent."
+  },
+  "widgets.failure.not_video_archive": {
+    "value": "Dieser Stream ist ein Archiv (ZIP/RAR), kein Video",
+    "description": "Player error caption: the stream link answered a ZIP or RAR archive instead of the video. Keep ZIP/RAR untranslated."
+  },
+  "widgets.failure.not_video_document": {
+    "value": "Dieser Stream ist eine Textdatei, kein Video",
+    "description": "Player error caption: the stream link answered a text file (JSON, plain text, a subtitle or .nfo) instead of the video."
+  },
+  "widgets.failure.web_page": {
+    "value": "Der Dienst lieferte eine Webseite statt des Videos",
+    "description": "Player error caption: the streaming (debrid) service answered with an HTML web page instead of the video file, even after retrying."
+  },
+  "widgets.reason.wrong_file": {
+    "value": "Das Addon hat die falsche Datei im Torrent gewählt. Versuch ein anderes Release.",
+    "description": "Explanation beneath the not-a-video heading: the addon chose the wrong file from the torrent; the viewer should pick another release (another stream)."
+  },
+  "widgets.reason.web_page": {
+    "value": "Der Dienst bereitet die Datei evtl. noch vor. Versuch es gleich noch mal oder wähle einen anderen Stream.",
+    "description": "Explanation beneath the web-page heading: the debrid service may still be preparing the file; try again shortly or pick another stream."
+  },
+  "widgets.panel.not_video_image": {
+    "value": "der Stream ist ein Bild, kein Video",
+    "description": "Diagnostics panel verdict suffix: the stream is an image, not a video."
+  },
+  "widgets.panel.not_video_archive": {
+    "value": "der Stream ist ein Archiv, kein Video",
+    "description": "Diagnostics panel verdict suffix: the stream is an archive, not a video."
+  },
+  "widgets.panel.not_video_document": {
+    "value": "der Stream ist eine Textdatei, kein Video",
+    "description": "Diagnostics panel verdict suffix: the stream is a text file, not a video."
+  },
+  "widgets.panel.web_page": {
+    "value": "der Dienst lieferte eine Webseite",
+    "description": "Diagnostics panel verdict suffix: the service answered a web page instead of the video."
+  },
+  "widgets.cards.more_failed": {
+    "value": "Mehr laden fehlgeschlagen",
+    "description": "The tile at the end of a row of posters whose next page failed to load (first line)."
+  },
+  "widgets.cards.try_again": {
+    "value": "Erneut versuchen",
+    "description": "The tile at the end of a row of posters whose next page failed: the action line under the reason; OK asks again."
+  }
+}

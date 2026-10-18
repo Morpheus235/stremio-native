@@ -4,7 +4,7 @@
     "description": "Sign-in page: its title (signing in to a Stremio account)."
   },
   "app.signin.copy": {
-    "value": "Inquadra il codice con il telefono, oppure apri link.stremio.com e inserisci il codice qui sotto. Puoi anche accedere con email e password.",
+    "value": "Scansiona il codice con il telefono o inseriscilo su link.stremio.com. Oppure usa email e password.",
     "description": "Sign-in page: the explanation under the title; the QR code and its code follow below it."
   },
   "app.signin.with_email": {
@@ -97,11 +97,11 @@
     "description": "Addons page: its title (the Stremio addons the app uses)."
   },
   "app.addons.copy_signed_in": {
-    "value": "I componenti aggiuntivi installati sul tuo account Stremio, nel loro ordine. Installali o rimuovili in Stremio su un altro dispositivo.",
+    "value": "Gli addon del tuo account Stremio, in ordine. Installali o rimuovili in Stremio su un altro dispositivo.",
     "description": "Addons page, signed in: the explanation under the title."
   },
   "app.addons.copy_signed_out": {
-    "value": "Senza accesso, l’app usa Cinemeta. Accedi per usare i componenti aggiuntivi del tuo account Stremio.",
+    "value": "Senza accesso: solo Cinemeta. Accedi per usare gli addon del tuo account.",
     "description": "Addons page, signed out: the explanation under the title."
   },
   "app.addons.account": {

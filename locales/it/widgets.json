@@ -133,7 +133,7 @@
     "description": "The tile at the end of a row of cards (and the last row of a row shown as a list) that opens the whole row. Must fit one line on a poster card at BODY size in every shipped language."
   },
   "widgets.reason.jail_help": {
-    "value": "La riparazione richiede una TV con root e accesso a Homebrew Channel. Vedi stremionative.com/troubleshooting/#playback-reports-jail_missing_rtkmem per assistenza.",
+    "value": "La riparazione richiede una TV con root e Homebrew Channel.",
     "description": "reason jail_help"
   },
   "widgets.tracks.empty": {

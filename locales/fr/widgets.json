@@ -29,7 +29,7 @@
   "widgets.reason.unknown": "Le lecteur s’est arrêté avant de pouvoir identifier le problème",
   "widgets.hint.hold_options": "Maintenez {key} pour les options",
   "widgets.cards.see_all": "Tout voir",
-  "widgets.reason.jail_help": "La réparation nécessite une TV rootée et Homebrew Channel. Aide : stremionative.com/troubleshooting/#playback-reports-jail_missing_rtkmem",
+  "widgets.reason.jail_help": "La réparation nécessite une TV rootée avec Homebrew Channel.",
   "widgets.tracks.empty": "Aucune piste",
   "widgets.tracks.mbps": "{rate} Mb/s",
   "widgets.tracks.kbps": "{rate} kb/s",

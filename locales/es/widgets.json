@@ -29,7 +29,7 @@
   "widgets.reason.unknown": "El reproductor se detuvo antes de identificar el problema",
   "widgets.hint.hold_options": "Mantén {key} para ver opciones",
   "widgets.cards.see_all": "Ver todo",
-  "widgets.reason.jail_help": "La reparación requiere un televisor con root y acceso a Homebrew Channel. Ayuda: stremionative.com/troubleshooting/#playback-reports-jail_missing_rtkmem.",
+  "widgets.reason.jail_help": "La reparación requiere un televisor con root y Homebrew Channel.",
   "widgets.tracks.empty": "No hay pistas",
   "widgets.tracks.mbps": "{rate} Mbps",
   "widgets.tracks.kbps": "{rate} kbps",

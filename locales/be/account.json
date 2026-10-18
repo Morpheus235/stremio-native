@@ -1,6 +1,6 @@
 {
   "app.signin.title": "Уваход",
-  "app.signin.copy": "Адскануйце код тэлефонам або адкрыйце link.stremio.com і ўвядзіце код ніжэй. Можна ўвайсці і з электроннай поштай і паролем.",
+  "app.signin.copy": "Адсканіруйце код тэлефонам або ўвядзіце яго на link.stremio.com. Або ўвайдзіце праз пошту і пароль.",
   "app.signin.with_email": "Пошта і пароль",
   "app.signin.email": "Пошта",
   "app.signin.password": "Пароль",
@@ -21,8 +21,8 @@
   "app.signin.skip": "Працягнуць без уваходу",
   "app.signin.skip_detail": "Праглядаць толькі з Cinemeta",
   "app.addons.title": "Дапаўненні",
-  "app.addons.copy_signed_in": "Дапаўненні, усталяваныя ў вашым уліковым запісе Stremio, па парадку. Усталёўваць і выдаляць іх можна ў Stremio на іншай прыладзе.",
-  "app.addons.copy_signed_out": "Без уваходу праграма карыстаецца Cinemeta. Увайдзіце, каб карыстацца дапаўненнямі свайго ўліковага запісу Stremio.",
+  "app.addons.copy_signed_in": "Дадаткі вашага ўліковага запісу Stremio па парадку. Усталёўвайце і выдаляйце іх у Stremio на іншай прыладзе.",
+  "app.addons.copy_signed_out": "Без уваходу: толькі Cinemeta. Увайдзіце, каб карыстацца дадаткамі ўліковага запісу.",
   "app.addons.account": "Уліковы запіс",
   "app.addons.restoring": "Правяраем уліковы запіс…",
   "app.addons.sign_in": "Увайсці",

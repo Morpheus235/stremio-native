@@ -6,9 +6,24 @@ TV's hardware decoders instead of the web runtime. Developed and tested on an LG
 
 Not affiliated with Stremio.
 
+<p align="center">
+  <img src="docs/screenshots/home.jpg" width="49%" alt="Home">
+  <img src="docs/screenshots/series.jpg" width="49%" alt="A series with its episodes">
+  <img src="docs/screenshots/discover.jpg" width="49%" alt="Discover">
+  <img src="docs/screenshots/settings.jpg" width="49%" alt="Settings">
+</p>
+
 ## Install
 
-You need a rooted TV with [Homebrew Channel](https://github.com/webosbrew/webos-homebrew-channel).
+You need [Homebrew Channel](https://github.com/webosbrew/webos-homebrew-channel) on the TV.
+A rooted TV is recommended, because root gives you:
+
+- no Developer Mode session to keep renewing;
+- ssh access for logs and debugging;
+- working video on some older chip families. There, Developer Mode's sandbox hides the video
+  device the player needs, and the app offers a repair that needs root.
+
+Developer Mode without root is supported by the code but untested so far.
 
 1. In Homebrew Channel, open **Settings → Add repository** and enter
    `https://morpheus235.github.io/stremio-native/repo.json`
@@ -27,6 +42,7 @@ The packages (ipk + sha256) are also on the [releases page](https://github.com/M
   as stereo or as Pro Logic II.
 - Text subtitles through libass (SRT, WebVTT, ASS/SSA, embedded fonts), plus addon subtitles
 - Skip intro/recap/credits, CH +/- to jump between chapters, Up Next
+- English, Deutsch, Español, Français, Italiano, Беларуская
 - Remote control mapping: [docs/remote-keys.md](docs/remote-keys.md)
 
 Status and plans: [docs/roadmap.md](docs/roadmap.md).

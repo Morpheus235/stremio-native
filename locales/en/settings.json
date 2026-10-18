@@ -12,7 +12,7 @@
     "description": "Settings: the confirmation question for deleting all local data"
   },
   "settings.data.delete_scope": {
-    "value": "This signs you out and removes everything StremioNative stored on this television: your session, settings and caches. Addons keep whatever they already received.",
+    "value": "Signs you out and removes your session, settings and caches from this TV. Addons keep what they already received.",
     "description": "Settings: the confirmation body for deleting all local data"
   }
 }

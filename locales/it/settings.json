@@ -12,7 +12,7 @@
     "description": "Settings: the confirmation question for deleting all local data"
   },
   "settings.data.delete_scope": {
-    "value": "Questa operazione effettua la disconnessione e rimuove tutto ciò che StremioNative ha memorizzato su questo televisore: sessione, impostazioni e cache. I componenti aggiuntivi conservano ciò che hanno già ricevuto.",
+    "value": "Esci e rimuovi da questa TV sessione, impostazioni e cache. Gli addon conservano ciò che hanno già ricevuto.",
     "description": "Settings: the confirmation body for deleting all local data"
   }
 }

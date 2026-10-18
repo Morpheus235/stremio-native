@@ -485,13 +485,13 @@ mod tests {
         let locale = sn_platform::i18n::LocaleContext::resolve(sn_platform::i18n::Preference::Be, None, None, None, None);
         let question = sn_platform::i18n::msg::settings_data_delete_question_in(&locale);
         let body = sn_platform::i18n::msg::settings_data_delete_scope_in(&locale);
-        assert!(body.contains("StremioNative") && body.contains("Дадаткі"), "the complete scope: {body}");
+        assert!(body.contains("сеансу") && body.contains("Дадаткі"), "the complete scope: {body}");
         let question_view = DecisionAlert::question_view(question).with_measure(&measure);
         let body_view = DecisionAlert::body_view(body).with_measure(&measure);
         assert!(!question_view.truncates(BODY_W));
         assert!(!body_view.truncates(BODY_W), "a four-line limit would hide the deletion scope");
         assert!(question_view.measure_h(BODY_W) > measure.line_h(theme::size::TITLE));
-        assert!(body_view.measure_h(BODY_W) > 4.0 * measure.line_h(theme::size::BODY));
+        assert!(body_view.measure_h(BODY_W) > 2.0 * measure.line_h(theme::size::BODY));
         let mut alert = DecisionAlert::new();
         alert.open_with_body(sn_platform::i18n::msg::settings_data_delete_question_c_in(&locale), body);
         let l = alert.measured(&measure);

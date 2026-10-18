@@ -2,5 +2,5 @@
   "settings.language.contribute_body": "Guide de traduction",
   "settings.login.unknown_device": "appareil inconnu",
   "settings.data.delete_question": "Supprimer toutes les données locales ?",
-  "settings.data.delete_scope": "Cela vous déconnecte et supprime tout ce que StremioNative a enregistré sur ce téléviseur : la session, les réglages et le cache. Les extensions conservent ce qu’elles ont déjà reçu."
+  "settings.data.delete_scope": "Vous déconnecte et supprime de cette TV session, réglages et caches. Les addons gardent ce qu’ils ont déjà reçu."
 }

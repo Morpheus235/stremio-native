@@ -320,6 +320,12 @@ pub fn run_account(off: &OffFrame, services: &Services, job: AccountJob) -> Acco
 /// [`run_account`] over any transport and stores (the tests' fakes).
 pub fn run_account_with(fetch: &dyn Fetch, vault: &dyn Vault, files: &dyn Files, job: AccountJob) -> AccountLanding {
     match job {
+        // A debug build started with the `guest` trigger boots signed out (screenshots, demos)
+        // without reading, clearing or logging out the stored session.
+        AccountJob::Restore if sn_base::devtrig::flag("guest") => {
+            log("account: guest trigger, the stored session is left untouched");
+            AccountLanding::Restored(Stored::None { skipped: true })
+        }
         AccountJob::Restore => AccountLanding::Restored(match vault.load() {
             Ok(Some(account)) => {
                 log("account: a stored session was restored");

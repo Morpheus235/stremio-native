@@ -51,7 +51,7 @@
   "app.settings.subtitle_size": "Dimensione sottotitoli",
   "app.settings.subtitle_position": "Posizione sottotitoli",
   "app.settings.subtitle_size_copy": "La dimensione dei sottotitoli disegnati da StremioNative. I sottotitoli a immagine mantengono la propria.",
-  "app.settings.subtitle_position_copy": "Dove si trovano i sottotitoli di testo. Quelli con stile e a immagine mantengono la propria posizione.",
+  "app.settings.subtitle_position_copy": "Dove si trovano i sottotitoli di testo. Quelli stilizzati e a immagine mantengono la loro.",
   "app.settings.size.small": "Piccola",
   "app.settings.size.medium": "Media",
   "app.settings.size.large": "Grande",

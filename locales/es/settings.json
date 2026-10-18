@@ -2,5 +2,5 @@
   "settings.language.contribute_body": "Guía de traducción",
   "settings.login.unknown_device": "televisor desconocido",
   "settings.data.delete_question": "¿Borrar todos los datos locales?",
-  "settings.data.delete_scope": "Esto cierra la sesión y elimina todo lo que StremioNative guardó en este televisor: la sesión, los ajustes y la caché. Los complementos conservan lo que ya recibieron."
+  "settings.data.delete_scope": "Cierra la sesión y borra de esta TV sesión, ajustes y cachés. Los addons conservan lo que ya recibieron."
 }
