@@ -21,6 +21,7 @@
   h2 { font-size: 20px; margin: 48px 0 14px; }
   .shots { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 32px; }
   .shots img { width: 100%; border-radius: 10px; display: block; border: 1px solid var(--line); }
+  .shots img.wide { grid-column: 1 / -1; }
   ol { padding-left: 22px; margin: 0; }
   ol li { margin: 6px 0; }
   .url { display: flex; gap: 8px; margin: 10px 0 4px; }
@@ -50,10 +51,11 @@
   </header>
 
   <div class="shots">
+    <img class="wide" src="screenshots/player.jpg" alt="The player">
     <img src="screenshots/home.jpg" alt="Home">
-    <img src="screenshots/series.jpg" alt="A series and its episodes">
+    <img src="screenshots/movie.jpg" alt="A movie's page">
     <img src="screenshots/discover.jpg" alt="Discover">
-    <img src="screenshots/settings.jpg" alt="Settings">
+    <img src="screenshots/list.jpg" alt="Discover as a list">
   </div>
 
   <h2>Install with Homebrew Channel</h2>

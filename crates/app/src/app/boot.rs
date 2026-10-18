@@ -146,10 +146,11 @@ pub unsafe fn construct(mt: MainThread) -> Result<App, c_int> {
     log("boot: Home requested");
     // A debug build armed with `/tmp/stremionative-playurl` opens the player on that stream.
     #[cfg(feature = "devtriggers")]
-    match sn_media::player::playurl::playurl().map(|p| p.and_then(|p| p.to_start().map_err(|e| format!("{e:?}")))) {
-        Some(Ok(start)) => {
+    match sn_media::player::playurl::playurl().map(|p| p.and_then(|p| p.to_start().map(|s| (s, p.title)).map_err(|e| format!("{e:?}")))) {
+        Some(Ok((start, title))) => {
             bridge.playback.start_dev(start);
-            let arg = sn_screens::registry::PlayerArg { title: "playurl".into(), item: None, addon: String::new(), resumed_ms: 0 };
+            let title = if title.is_empty() { "playurl".to_string() } else { title };
+            let arg = sn_screens::registry::PlayerArg { title, item: None, addon: String::new(), resumed_ms: 0 };
             pages.request(sn_machine::machine::MachineId::Nav, sn_machine::machine::NavOp::Push(AppArg::Player(arg)));
             log("boot: playurl trigger — player opened");
         }

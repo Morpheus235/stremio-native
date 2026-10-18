@@ -168,7 +168,20 @@ impl Catalog {
 
 impl Manifest {
     pub fn parse(body: &[u8]) -> Result<Manifest, String> {
-        serde_json::from_slice(body).map_err(|e| e.to_string())
+        serde_json::from_slice::<Manifest>(body).map(Manifest::named_catalogs).map_err(|e| e.to_string())
+    }
+
+    /// A catalog the addon gave no `name` is called by the addon's own name, not by its id
+    /// ("publicdomainmovies" read as a row title). Idempotent.
+    pub fn named_catalogs(mut self) -> Manifest {
+        if !self.name.trim().is_empty() {
+            for c in &mut self.catalogs {
+                if c.name.as_deref().is_none_or(|n| n.trim().is_empty()) {
+                    c.name = Some(self.name.clone());
+                }
+            }
+        }
+        self
     }
 
     /// Does this addon answer `resource` for an item of `kind` with `id`?
@@ -206,7 +219,7 @@ pub struct Addon {
 impl Addon {
     /// `transport_url` is what a user installs: `https://host/[config/]manifest.json`.
     pub fn new(transport_url: &str, manifest: Manifest) -> Addon {
-        Addon { base: base_of(transport_url), manifest }
+        Addon { base: base_of(transport_url), manifest: manifest.named_catalogs() }
     }
 }
 
@@ -294,4 +307,11 @@ mod tests {
         assert_eq!(base_of("https://a.example/cfg=abc/manifest.json"), "https://a.example/cfg=abc");
         assert_eq!(base_of("https://a.example/"), "https://a.example");
     }
+    #[test]
+    fn a_catalog_without_a_name_is_called_by_its_addon() {
+        let m = Manifest::parse(br#"{"id":"pd","name":"Public Domain Movies","catalogs":[{"type":"movie","id":"publicdomainmovies"},{"type":"movie","id":"top","name":"Top"}]}"#).unwrap();
+        assert_eq!(m.catalogs[0].display_name(), "Public Domain Movies");
+        assert_eq!(m.catalogs[1].display_name(), "Top");
+    }
+
 }

@@ -75,11 +75,12 @@ pub fn poll(app: &mut App, tick: Tick) -> Vec<InputEvent<u32>> {
 }
 
 fn play(app: &mut App) {
-    match sn_media::player::playurl::playurl().map(|p| p.and_then(|p| p.to_start().map_err(|e| format!("{e:?}")))) {
-        Some(Ok(start)) => {
+    match sn_media::player::playurl::playurl().map(|p| p.and_then(|p| p.to_start().map(|s| (s, p.title)).map_err(|e| format!("{e:?}")))) {
+        Some(Ok((start, title))) => {
             app.bridge.playback.start_dev(start);
             if !bridge::player_on_top(&app.pages) {
-                let arg = sn_screens::registry::PlayerArg { title: "playurl".into(), item: None, addon: String::new(), resumed_ms: 0 };
+                let title = if title.is_empty() { "playurl".to_string() } else { title };
+                let arg = sn_screens::registry::PlayerArg { title, item: None, addon: String::new(), resumed_ms: 0 };
                 app.pages.request(MachineId::Nav, NavOp::Push(sn_screens::registry::AppArg::Player(arg)));
             }
             log("memcmd: play");

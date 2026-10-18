@@ -37,6 +37,9 @@ pub struct PlayUrl {
     /// `http(s)://…`.
     #[serde(default)]
     pub url: String,
+    /// The player's title; empty reads "playurl".
+    #[serde(default)]
+    pub title: String,
     /// The Load payload's video codec, FFmpeg's spelling: `"h264"` or empty, `"hevc"`, `"av1"`,
     /// `"vp9"`, `"vp8"` (the last three only on a set whose table lists that decoder).
     #[serde(default)]

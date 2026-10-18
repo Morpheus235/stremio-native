@@ -10,11 +10,13 @@ TV's hardware decoders instead of the web runtime. Developed and tested on an LG
 Not affiliated with Stremio.
 
 <p align="center">
+  <img src="docs/screenshots/player.jpg" width="98%" alt="The player">
   <img src="docs/screenshots/home.jpg" width="49%" alt="Home">
-  <img src="docs/screenshots/series.jpg" width="49%" alt="A series with its episodes">
+  <img src="docs/screenshots/movie.jpg" width="49%" alt="A movie's page">
   <img src="docs/screenshots/discover.jpg" width="49%" alt="Discover">
-  <img src="docs/screenshots/settings.jpg" width="49%" alt="Settings">
+  <img src="docs/screenshots/list.jpg" width="49%" alt="Discover as a list">
 </p>
+<p align="center"><sub>Screenshots use the Public Domain Movies addon and a generated test video.</sub></p>
 
 ## Install
 
@@ -41,14 +43,14 @@ The packages (ipk + sha256) are on the [download page](https://morpheus235.githu
 | | Status |
 | --- | --- |
 | LG C1, webOS 6 (rooted) | Developed and tested on it daily |
-| Other LG TVs, webOS 4.5 – 5 and 7+ | Expected to work, untested on a TV. CI checks each package against webosbrew's firmware symbol data. |
+| Other LG TVs, webOS 4.4 – 11 | The package passes `webosbrew-ipk-verify` for every release from 4.4.2 to 11.2.0, checked in CI against webosbrew's firmware data (static, so a strong hint, not proof). Not yet tested on such a TV. |
 | Developer Mode (unrooted) | Supported by the code, untested. Some older chip families need root for video. |
 | Build hosts | macOS (arm64, x86_64) and Linux aarch64, where the webOS NDK is published |
 
 **CI** ([`.github/workflows`](.github/workflows)):
 - `ci.yml` runs on every push and pull request. It runs the host tests, the shipping feature set,
   the packaging selftests and an ARM compile check, then does a full package build on an arm64
-  runner and reports `webosbrew-ipk-verify` on it.
+  runner and checks it with `webosbrew-ipk-verify` (it fails on an incompatibility).
 - `release.yml` runs on a `v*` tag. It builds, tests and publishes the release.
 - `hbrepo.yml` publishes the Homebrew Channel repository and the download page on GitHub Pages.
 

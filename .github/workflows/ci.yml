@@ -81,10 +81,9 @@ jobs:
       - name: Firmware compatibility (webosbrew-ipk-verify)
         # webosbrew's static check of the finished package against every firmware release it has
         # symbol data for (the tool the Homebrew Channel repository uses). It reads the package, it
-        # does not run it: a strong hint, not proof. Reported, not gating, until its verdict on this
-        # package is known; the toolbox release and each .deb's sha256 are pinned in
+        # does not run it: a strong hint, not proof. Gating: the first run passed every release from
+        # 4.4.2 to 11.2.0 (2026-10-18). The toolbox release and each .deb's sha256 are pinned in
         # ci/dependencies.json (entry webosbrew-toolbox).
-        continue-on-error: true
         run: |
           set -euo pipefail
           debs=$(python3 ci/deps.py fetch webosbrew-toolbox --asset fw-symbols --asset ipk-verify)
