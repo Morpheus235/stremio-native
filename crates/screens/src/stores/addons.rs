@@ -121,7 +121,7 @@ impl AddonsStore {
     /// **The addons the app uses.**
     pub fn in_use(&self) -> InUse<'_> {
         match &self.collection {
-            Collection::Defaults => InUse::Defaults(DEFAULT_ADDONS),
+            Collection::Defaults => InUse::Defaults(defaults()),
             Collection::Cached(a) | Collection::Fresh(a) => InUse::Installed(a),
         }
     }
@@ -265,6 +265,22 @@ impl AddonsStore {
             Collection::Cached(a) | Collection::Fresh(a) => Some(a),
         }
     }
+}
+
+/// The signed-out addons: [`DEFAULT_ADDONS`], or in a debug build the URLs the `guest` trigger
+/// holds (whitespace-separated, `https://` only), so screenshots can show a public-domain catalog
+/// without an account.
+fn defaults() -> &'static [&'static str] {
+    static URLS: std::sync::OnceLock<&'static [&'static str]> = std::sync::OnceLock::new();
+    URLS.get_or_init(|| {
+        let listed: Vec<&'static str> = sn_base::devtrig::read("guest")
+            .unwrap_or_default()
+            .split_whitespace()
+            .filter(|u| u.starts_with("https://"))
+            .map(|u| &*Box::leak(u.to_string().into_boxed_str()))
+            .collect();
+        if listed.is_empty() { DEFAULT_ADDONS } else { Box::leak(listed.into_boxed_slice()) }
+    })
 }
 
 #[cfg(test)]

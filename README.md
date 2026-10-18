@@ -1,5 +1,8 @@
 # StremioNative
 
+[![CI](https://github.com/Morpheus235/stremio-native/actions/workflows/ci.yml/badge.svg)](https://github.com/Morpheus235/stremio-native/actions/workflows/ci.yml)
+[![Download](https://img.shields.io/badge/download-ipk-6e4ee8)](https://morpheus235.github.io/stremio-native/)
+
 An unofficial native [Stremio](https://www.stremio.com) client for rooted LG webOS TVs. It's
 written in Rust with a small C boot shim, draws its own UI with OpenGL ES and plays through the
 TV's hardware decoders instead of the web runtime. Developed and tested on an LG C1 (webOS 6).
@@ -32,6 +35,22 @@ Developer Mode without root is supported by the code but untested so far.
    repository.
 
 The packages (ipk + sha256) are on the [download page](https://morpheus235.github.io/stremio-native/) and the [releases page](https://github.com/Morpheus235/stremio-native/releases).
+
+## Platform support
+
+| | Status |
+| --- | --- |
+| LG C1, webOS 6 (rooted) | Developed and tested on it daily |
+| Other LG TVs, webOS 4.5 – 5 and 7+ | Expected to work, untested on a TV. CI checks each package against webosbrew's firmware symbol data. |
+| Developer Mode (unrooted) | Supported by the code, untested. Some older chip families need root for video. |
+| Build hosts | macOS (arm64, x86_64) and Linux aarch64, where the webOS NDK is published |
+
+**CI** ([`.github/workflows`](.github/workflows)):
+- `ci.yml` runs on every push and pull request. It runs the host tests, the shipping feature set,
+  the packaging selftests and an ARM compile check, then does a full package build on an arm64
+  runner and reports `webosbrew-ipk-verify` on it.
+- `release.yml` runs on a `v*` tag. It builds, tests and publishes the release.
+- `hbrepo.yml` publishes the Homebrew Channel repository and the download page on GitHub Pages.
 
 ## Features
 

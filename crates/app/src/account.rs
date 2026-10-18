@@ -321,7 +321,8 @@ pub fn run_account(off: &OffFrame, services: &Services, job: AccountJob) -> Acco
 pub fn run_account_with(fetch: &dyn Fetch, vault: &dyn Vault, files: &dyn Files, job: AccountJob) -> AccountLanding {
     match job {
         // A debug build started with the `guest` trigger boots signed out (screenshots, demos)
-        // without reading, clearing or logging out the stored session.
+        // without reading, clearing or logging out the stored session; addon URLs written into
+        // the trigger replace the signed-out defaults (`sn_screens::stores::addons`).
         AccountJob::Restore if sn_base::devtrig::flag("guest") => {
             log("account: guest trigger, the stored session is left untouched");
             AccountLanding::Restored(Stored::None { skipped: true })
