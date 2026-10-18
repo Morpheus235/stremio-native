@@ -6,7 +6,7 @@ use super::shared::{PauseCompletion, PrimeKind, SeekPause, Stage};
 use super::{seek_mode, SeekMode, ACB_OK, SHARED, TX};
 use sn_base::task::MainThread;
 use std::os::raw::c_char;
-use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
+use std::sync::atomic::Ordering::{Acquire, Relaxed, Release, SeqCst};
 use std::time::Duration;
 
 /// issue #74 D.1.4: the longest the `loadCompleted` arm will wait for `sf_load` to actually
@@ -84,6 +84,30 @@ pub(super) fn seek_reloads(mode: SeekMode) -> bool {
     mode == SeekMode::Reload
 }
 
+/// The stuck watchdog's floor: a real reopen + `av_seek` + first keyframe on 4K HEVC over a LAN is
+/// ~700 ms (see the coalesce note in `pump`).
+pub(super) const SEEK_STUCK_MS: u32 = 1200;
+/// Its ceiling, however slow the server measured: past it a retry is cheaper than waiting.
+pub(super) const SEEK_STUCK_CAP_MS: u32 = 10_000;
+
+/// The stuck watchdog's timeout for this playback's server: the floor plus three measured range
+/// reopens (`SHARED.reopen_ms_est`, from `ff::seek_cb`) — a landed seek may still need a reopen or
+/// two before its keyframe (an MP4's first read after the seek; a heal) — capped.
+pub(super) fn seek_stuck_ms() -> u32 {
+    stuck_ms_for(SHARED.reopen_ms_est.load(Relaxed))
+}
+
+fn stuck_ms_for(reopen_ms_est: u32) -> u32 {
+    SEEK_STUCK_MS.saturating_add(reopen_ms_est.saturating_mul(3)).min(SEEK_STUCK_CAP_MS)
+}
+
+/// The demuxer has taken the last published av_seek target and returned from it. The mailbox is
+/// read FIRST: `ff::demux` raises `demux_seeking` before emptying it, so an empty mailbox seen
+/// before a lowered flag cannot be a seek that has not started yet.
+fn retarget_ready() -> bool {
+    SHARED.seek_to_ns.load(SeqCst) < 0 && !SHARED.demux_seeking.load(SeqCst)
+}
+
 fn take_coalesced() -> u32 {
     TX.seek_reqs.swap(0, Relaxed).saturating_sub(1)
 }
@@ -103,8 +127,15 @@ fn place_exported(mt: &MainThread, eng: &mut super::engine::Engine) {
     }
     let (w, h) = SHARED.video_raster();
     let src = if w > 0 && h > 0 { (w, h) } else { (1920, 1080) };
-    let rv = unsafe { super::sink().place_window(mt, src.0, src.1, 0, 0, 1920, 1080) };
+    // The viewer's aspect mode crops the SOURCE; the window is always the screen. A window larger
+    // than the screen at a negative origin (the first cut of the zooms) twitched the picture.
+    let mode = super::aspect_mode();
+    let screen = super::video_geometry::Aspect::from_raster(1920, 1080).expect("a positive raster");
+    let part = mode.crop(super::picture_aspect(src), src.0, src.1, screen);
+    let dst = super::video_geometry::Viewport { x: 0, y: 0, width: 1920, height: 1080 };
+    let rv = unsafe { super::sink().place_window(mt, part.x, part.y, part.width, part.height, dst.x, dst.y, dst.width, dst.height) };
     eng.placed_src = src;
+    PLACED_MODE.store(mode.index(), Relaxed);
     // RECORD it, do not merely log it. These three fields had no writer anywhere in the tree, so
     // `dg_place_rv` sat at its `i32::MIN` "never called" sentinel for the life of the process and
     // the diagnostics read-out rendered `Placed: not placed` in DANGER bold on every webOS 5+ set
@@ -115,10 +146,13 @@ fn place_exported(mt: &MainThread, eng: &mut super::engine::Engine) {
     SHARED.dg_placed_w.store(src.0, Relaxed);
     SHARED.dg_placed_h.store(src.1, Relaxed);
     super::log(&format!(
-        "vplane: exported window placed src={}x{} rv={rv}",
-        src.0, src.1
+        "vplane: exported window placed src={}x{} mode={mode:?} part={},{} {}x{} -> {},{} {}x{} rv={rv}",
+        src.0, src.1, part.x, part.y, part.width, part.height, dst.x, dst.y, dst.width, dst.height
     ));
 }
+
+/// The aspect mode the exported window was last placed in, so a change re-places it.
+static PLACED_MODE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
 /// Mirror Engine-confined observations into `Shared` for diagnostics and handled-error context.
 ///
@@ -337,6 +371,31 @@ fn acb_bind_frames_needed(preroll_open: bool) -> i32 {
 /// nothing; the ladder reports `PlaybackState::Paused` (the normal paused transport) instead.
 /// A Load still opening (`Stage::Loading` -> Connecting) is real work and is decided before this
 /// is asked.
+/// How long a Profile 7 → 8.1 trial may sit after `loadCompleted` without a presented frame
+/// before the player gives up on it. A working Load presents within a second or two (4K HEVC
+/// included); the margin is for a slow source, and falling back costs only a reload.
+pub const DV_TRIAL_FRAME_MS: u32 = 12_000;
+
+/// PURE: why the Profile 7 → 8.1 trial has failed, if it has — the Load failed outright (or ran
+/// out its budget), or `loadCompleted` (`loaded_at`, SDL ticks, 0 until it arrives) is
+/// [`DV_TRIAL_FRAME_MS`] old with no frame presented. The caller has already seen `frames == 0`.
+fn dv_trial_failed(load_failed: bool, loaded_at: u32, now: u32) -> Option<&'static str> {
+    if load_failed {
+        return Some("the Load failed");
+    }
+    (loaded_at != 0 && now.wrapping_sub(loaded_at) > DV_TRIAL_FRAME_MS).then_some("no frame presented within 12 s of loadCompleted")
+}
+
+#[cfg(test)]
+#[test]
+fn a_profile_7_trial_fails_on_a_failed_load_or_no_frame_in_time() {
+    assert_eq!(dv_trial_failed(true, 0, 5), Some("the Load failed"));
+    assert_eq!(dv_trial_failed(false, 0, 99_000), None, "no loadCompleted yet: the Load budget owns that wait");
+    assert_eq!(dv_trial_failed(false, 1_000, 1_000 + DV_TRIAL_FRAME_MS), None);
+    assert!(dv_trial_failed(false, 1_000, 1_001 + DV_TRIAL_FRAME_MS).is_some());
+    assert!(dv_trial_failed(false, u32::MAX - 10, DV_TRIAL_FRAME_MS).is_some(), "the tick counter wraps");
+}
+
 fn paused_and_idle() -> bool {
     TX.paused.load(Acquire) && !TX.feed_allowed() && TX.seek_to_ns.load(Relaxed) < 0
 }
@@ -379,6 +438,21 @@ pub fn pump(ps: &mut crate::session::PlaybackSession, pa: &mut super::adapter::P
     // without them.
     if super::subside::take_failure() {
         super::log("subside: the side reader failed; its subtitles are off");
+    }
+    // The Dolby Vision Profile 7 → 8.1 start (Settings > Playback, Try Dolby Vision): a first frame
+    // settles it; a failed Load or no frame in time reloads the same stream as its HDR10 base
+    // layer. BEFORE the failure arm below, which would otherwise end the playback.
+    if ps.dv_on_trial() && !ps.is_preview() {
+        if SHARED.frames.load(Relaxed) > 0 {
+            ps.settle_dv_trial();
+        } else if let Some(why) = dv_trial_failed(SHARED.load_failed.load(Acquire), SHARED.dg_load_at.load(Relaxed), now) {
+            if ps.fall_back_to_base_layer(why) {
+                let pos = SHARED.playpos_ns.load(Relaxed);
+                let target = if pos > 0 { pos } else { ps.start_ns() };
+                settle_reload(super::engine::reload_at(ps, pa, target), "dv profile 7 fallback");
+                return; // REPLACED the engine
+            }
+        }
     }
     // `sf_load == 0` may leave no callable object, so this must precede the sf_ready wait below;
     // otherwise the pump returns Connecting forever and never consumes the explicit failure.
@@ -446,15 +520,40 @@ pub fn pump(ps: &mut crate::session::PlaybackSession, pa: &mut super::adapter::P
     // SEEK_STUCK_MS must comfortably exceed a real reopen+av_seek+first-keyframe on 4K HEVC over a
     // LAN (~700ms): the retry closes the demux socket, so a premature watchdog KILLS an open that
     // was about to succeed and restarts it — at 500ms a rapid tap-burst self-DoS'd into the
-    // reload fallback every time.
-    const SEEK_STUCK_MS: u32 = 1200;
+    // reload fallback every time. It is the FLOOR: `seek_stuck_ms` scales it by the server's
+    // measured reopen latency.
+    //
     // The watchdog measures time the seek COULD progress. While the feed gate is shut (a viewer
     // Pause with no preroll open) the keyframe can never be fed, so the reopen is not "lost" and
     // neither a retry nor a reload (itself gated the same way) could help: keep the clock at zero.
-    if eng.flushed && eng.rebase_pending && !TX.feed_allowed() {
+    // The same while the demux thread is inside `av_seek_frame` (`demux_seeking`): it is making
+    // progress, and a retry or reload then only aborts the reopen that was about to land.
+    if eng.flushed && eng.rebase_pending && (!TX.feed_allowed() || SHARED.demux_seeking.load(Acquire)) {
         eng.seek_armed_at = now;
     }
-    if eng.flushed && eng.rebase_pending && now.wrapping_sub(eng.seek_armed_at) > SEEK_STUCK_MS {
+    // A newer target arrived while this seek was in flight: once the demuxer has LANDED (taken the
+    // mailbox and left `av_seek_frame`), point it at the newest target. Nothing is aborted, and
+    // the landed position's AUs are dropped (the rebase guard keys on the new target).
+    if eng.flushed && eng.rebase_pending && !seek_reloads(seek_mode()) && retarget_ready() {
+        let pending = TX.seek_to_ns.swap(-1, Relaxed);
+        if pending >= 0 {
+            let coalesced = take_coalesced();
+            if pending != SHARED.seek_target_ns.load(Relaxed) {
+                drain_aq(eng);
+                SHARED.seek_target_ns.store(pending, Relaxed);
+                SHARED.seek_to_ns.store(pending, Release);
+                SHARED.playpos_ns.store(pending, Relaxed);
+                eng.seek_armed_at = now;
+                eng.seek_retries = 0;
+                eng.rebase_drops = 0;
+                super::log(&format!(
+                    "seek: retarget to {}s after the in-flight seek landed coalesced={coalesced}",
+                    pending / 1_000_000_000
+                ));
+            }
+        }
+    }
+    if eng.flushed && eng.rebase_pending && now.wrapping_sub(eng.seek_armed_at) > seek_stuck_ms() {
         // Adopt the NEWEST coalesced target if later taps landed while this seek was resolving
         // (TX.seek_to_ns holds the latest request): retrying/reloading at the original armed
         // target would land where the user already tapped away from, then seek AGAIN.
@@ -827,11 +926,13 @@ pub fn pump(ps: &mut crate::session::PlaybackSession, pa: &mut super::adapter::P
     // ---------- webOS 5+ (VP_EXPORTED): correct the placement if the real frame size only
     // became known after Load. The demuxer publishes the coded size when it opens the stream,
     // which races the load thread — so the placement above may have used the fallback. Re-placing
-    // costs one call, and Kodi re-places on every render-area change anyway.
+    // costs one call, and Kodi re-places on every render-area change anyway. The viewer's aspect
+    // mode moving (`…` > Aspect ratio) is the same kind of change.
     // ----------
     if eng.stage >= Stage::Playing && eng.placed_src != (0, 0) {
         let now = SHARED.video_raster();
-        if now.0 > 0 && now.1 > 0 && now != eng.placed_src {
+        let raster_moved = now.0 > 0 && now.1 > 0 && now != eng.placed_src;
+        if raster_moved || PLACED_MODE.load(Relaxed) != super::aspect_mode().index() {
             place_exported(mt, eng);
         }
     }
@@ -872,17 +973,60 @@ pub fn pump(ps: &mut crate::session::PlaybackSession, pa: &mut super::adapter::P
     });
 
     const EOS_TAIL_NS: i64 = 1_000_000_000;
-    if eng.eos_pushed && !SHARED.ended.load(Relaxed) {
+    if !SHARED.ended.load(Relaxed) {
         let dur = SHARED.duration_ns.load(Relaxed);
         let pos = SHARED.playpos_ns.load(Relaxed);
-        if dur > 0 && pos >= dur - EOS_TAIL_NS {
+        let demux_done = eng.aq_video.as_mut().is_some_and(|q| crate::aq::aq_producer_done(&mut **q));
+        if eng.eos_pushed && dur > 0 && pos >= dur - EOS_TAIL_NS {
             SHARED.ended.store(true, Relaxed);
             super::log(&format!(
                 "EOS reached: playpos={}s/{}s → ended",
                 pos / 1_000_000_000,
                 dur / 1_000_000_000
             ));
+        } else if !demux_done || TX.paused.load(Acquire) || SHARED.seeking.load(Relaxed) {
+            eng.eos_stall = None; // still reading, or the playhead is held by the viewer
+        } else if eos_stalled(&mut eng.eos_stall, pos, now) {
+            // The whole file has been read and the playhead has stopped short of its end: nothing
+            // more will present. End to the stream list rather than show "Buffering" forever.
+            SHARED.ended.store(true, Relaxed);
+            super::log(&format!(
+                "EOS stalled: playpos={}ms/{}ms unchanged for {}s after the demux ended (eos_pushed={}) → ended",
+                pos / 1_000_000,
+                dur / 1_000_000,
+                EOS_STALL_MS / 1000,
+                eng.eos_pushed
+            ));
         }
+    }
+}
+
+/// How long a playhead may stand still once the demux has ended before the playback is ended anyway.
+const EOS_STALL_MS: u32 = 10_000;
+
+/// Whether the playhead `pos` has stood still for [`EOS_STALL_MS`] at `now`; `seen` is the
+/// position last seen and when it first was.
+fn eos_stalled(seen: &mut Option<(i64, u32)>, pos: i64, now: u32) -> bool {
+    match *seen {
+        Some((p, at)) if p == pos => now.wrapping_sub(at) >= EOS_STALL_MS,
+        _ => {
+            *seen = Some((pos, now));
+            false
+        }
+    }
+}
+
+#[cfg(test)]
+mod eos_stall_tests {
+    #[test]
+    fn a_playhead_standing_still_after_eos_ends_only_after_the_stall_window() {
+        let mut seen = None;
+        assert!(!super::eos_stalled(&mut seen, 5, 1_000));
+        assert!(!super::eos_stalled(&mut seen, 5, 1_000 + super::EOS_STALL_MS - 1));
+        assert!(super::eos_stalled(&mut seen, 5, 1_000 + super::EOS_STALL_MS));
+        // a moving playhead restarts the window
+        assert!(!super::eos_stalled(&mut seen, 6, 20_000));
+        assert!(!super::eos_stalled(&mut seen, 6, 20_000 + super::EOS_STALL_MS - 1));
     }
 }
 
@@ -892,6 +1036,20 @@ pub fn pump(ps: &mut crate::session::PlaybackSession, pa: &mut super::adapter::P
 /// armed (which reports `VP_EXPORTED`). `reload_at` has no route to reload in a unit rig (an empty
 /// URL is ignored), so each call is read off `engine::RELOAD_AT_LOG`; the rig stands in for the
 /// reload's EFFECT (a new Engine) where the next seek needs one.
+#[cfg(test)]
+mod stuck_timeout_tests {
+    use super::*;
+
+    #[test]
+    fn the_stuck_timeout_is_the_floor_plus_three_reopens_capped() {
+        assert_eq!(stuck_ms_for(0), SEEK_STUCK_MS, "no sample yet: today's value");
+        assert_eq!(stuck_ms_for(100), SEEK_STUCK_MS + 300);
+        assert_eq!(stuck_ms_for(330), 2_190, "a ~330 ms debrid reopen");
+        assert_eq!(stuck_ms_for(5_000), SEEK_STUCK_CAP_MS);
+        assert_eq!(stuck_ms_for(u32::MAX), SEEK_STUCK_CAP_MS);
+    }
+}
+
 #[cfg(all(test, feature = "hostsim"))]
 mod native_seek_pump_tests {
     use super::*;
@@ -1160,6 +1318,60 @@ mod native_seek_pump_tests {
         assert!(crate::player::pause(&mut rig.pa));
         rig.frame();
         assert_eq!(MID_SEEK_CLAIMS.load(Relaxed), 1);
+    }
+
+    /// A slow debrid host: each range reopen measured ~2 s. The watchdog waits the floor plus three
+    /// of them (7.2 s) before retrying, where it used to retry after 1.2 s whatever the server.
+    #[test]
+    fn the_stuck_watchdog_scales_with_the_measured_reopen_latency() {
+        let _serial = sn_base::testlock::serial();
+        let mut rig = Rig::new(None);
+        SHARED.reopen_ms_est.store(2_000, Relaxed);
+        rig.arm(TARGET_NS);
+        SHARED.seek_to_ns.store(-1, Release); // the demuxer took the mailbox and landed
+        rig.now += 5_000;
+        rig.frame();
+        assert_eq!(SHARED.seek_to_ns.load(Relaxed), -1, "no retry inside the scaled timeout");
+        rig.now += 3_000;
+        rig.frame();
+        assert_eq!(SHARED.seek_to_ns.load(Relaxed), TARGET_NS, "the retry once it has passed");
+        assert!(reloads().is_empty());
+    }
+
+    /// The field log: a Matroska file's first seek spent 2966 ms inside `av_seek_frame` (Cues at
+    /// 102 GB, then back), the watchdog retried twice into it and then reloaded, and the reload's
+    /// teardown aborted the reopen that was landing (`curlio: seek … failed: Aborted`). A seek in
+    /// flight is now never retried or reloaded, and a target that arrived meanwhile is applied
+    /// once it has landed — nothing aborted, one av_seek per target.
+    #[test]
+    fn a_seek_in_flight_is_never_retried_or_reloaded_and_a_newer_target_follows_its_landing() {
+        let _serial = sn_base::testlock::serial();
+        let mut rig = Rig::new(None);
+        rig.arm(TARGET_NS);
+        // The demux thread takes the mailbox and enters av_seek_frame (ff::demux's order).
+        SHARED.demux_seeking.store(true, SeqCst);
+        SHARED.seek_to_ns.store(-1, SeqCst);
+        crate::player::request_seek(NEXT_NS); // the viewer seeks again meanwhile
+        for _ in 0..20 {
+            rig.now += 1_000;
+            rig.frame();
+        }
+        assert!(reloads().is_empty(), "no reload tears down the seek in flight");
+        assert_eq!(SHARED.seek_to_ns.load(Relaxed), -1, "nothing is published into the seek in flight");
+        assert_eq!(SHARED.seek_target_ns.load(Relaxed), TARGET_NS);
+        SHARED.demux_seeking.store(false, SeqCst); // landed
+        rig.frame();
+        assert_eq!(SHARED.seek_to_ns.load(Relaxed), NEXT_NS, "retargeted at the newest request");
+        assert_eq!(SHARED.seek_target_ns.load(Relaxed), NEXT_NS, "the rebase guard keys on it");
+        assert_eq!(TX.seek_to_ns.load(Relaxed), -1, "the request was consumed");
+        rig.frame();
+        assert_eq!(SHARED.seek_to_ns.load(Relaxed), NEXT_NS, "and retargeted once, not again per tick");
+        rig.land_keyframe(NEXT_NS);
+        for _ in 0..5 {
+            rig.frame();
+        }
+        assert_eq!(ffi_host::seek_log_for_test(), vec![NEXT_NS / 1_000_000], "anchored at the newest target");
+        assert!(reloads().is_empty());
     }
 
     #[test]

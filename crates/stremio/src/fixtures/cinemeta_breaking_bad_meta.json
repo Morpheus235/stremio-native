@@ -1,0 +1,136 @@
+{
+ "meta": {
+  "id": "tt0903747",
+  "imdb_id": "tt0903747",
+  "type": "series",
+  "name": "Breaking Bad",
+  "poster": "https://images.metahub.space/poster/small/tt0903747/img",
+  "background": "https://images.metahub.space/background/medium/tt0903747/img",
+  "logo": "https://images.metahub.space/logo/medium/tt0903747/img",
+  "description": "A chemistry teacher diagnosed with inoperable lung cancer turns to manufacturing and selling methamphetamine with a former student to secure his family's future.",
+  "releaseInfo": "2008–2013",
+  "released": "2008-01-20T00:00:00.000Z",
+  "year": "2008–2013",
+  "runtime": "49 min",
+  "imdbRating": "9.5",
+  "genre": [
+   "Crime",
+   "Drama",
+   "Thriller"
+  ],
+  "genres": [
+   "Crime",
+   "Drama",
+   "Thriller"
+  ],
+  "cast": [
+   "Bryan Cranston",
+   "Aaron Paul",
+   "Anna Gunn"
+  ],
+  "director": null,
+  "writer": [
+   "Vince Gilligan"
+  ],
+  "links": [
+   {
+    "name": "9.5",
+    "category": "imdb",
+    "url": "https://imdb.com/title/tt0903747"
+   },
+   {
+    "name": "Breaking Bad",
+    "category": "share",
+    "url": "https://www.strem.io/s/series/breaking-bad-0903747"
+   },
+   {
+    "name": "Crime",
+    "category": "Genres",
+    "url": "stremio:///discover/https%3A%2F%2Fv3-cinemeta.strem.io%2Fmanifest.json/series/top?genre=Crime"
+   },
+   {
+    "name": "Drama",
+    "category": "Genres",
+    "url": "stremio:///discover/https%3A%2F%2Fv3-cinemeta.strem.io%2Fmanifest.json/series/top?genre=Drama"
+   },
+   {
+    "name": "Thriller",
+    "category": "Genres",
+    "url": "stremio:///discover/https%3A%2F%2Fv3-cinemeta.strem.io%2Fmanifest.json/series/top?genre=Thriller"
+   },
+   {
+    "name": "Bryan Cranston",
+    "category": "Cast",
+    "url": "stremio:///search?search=Bryan%20Cranston"
+   },
+   {
+    "name": "Aaron Paul",
+    "category": "Cast",
+    "url": "stremio:///search?search=Aaron%20Paul"
+   },
+   {
+    "name": "Anna Gunn",
+    "category": "Cast",
+    "url": "stremio:///search?search=Anna%20Gunn"
+   },
+   {
+    "name": "Vince Gilligan",
+    "category": "Writers",
+    "url": "stremio:///search?search=Vince%20Gilligan"
+   }
+  ],
+  "trailers": [
+   {
+    "source": "VFkjBy2b50Q",
+    "type": "Trailer"
+   }
+  ],
+  "status": "Ended",
+  "country": "United States",
+  "awards": "Won 16 Primetime Emmys. 172 wins & 269 nominations total",
+  "videos": [
+   {
+    "name": "Pilot",
+    "season": 1,
+    "number": 1,
+    "firstAired": "2008-01-21T05:00:00.000Z",
+    "tvdb_id": 349232,
+    "rating": "7.7",
+    "overview": "When an unassuming high school chemistry teacher discovers he has a rare form of lung cancer, he decides to team up with a former student and create a top of the line crystal meth in a used RV, to provide for his family once he is gone.",
+    "thumbnail": "https://episodes.metahub.space/tt0903747/1/1/w780.jpg",
+    "id": "tt0903747:1:1",
+    "released": "2008-01-21T05:00:00.000Z",
+    "episode": 1,
+    "description": "When an unassuming high school chemistry teacher discovers he has a rare form of lung cancer, he decides to team up with a former student and create a top of the line crystal meth in a used RV, to provide for his family once he is gone."
+   },
+   {
+    "name": "Gray Matter",
+    "season": 1,
+    "number": 5,
+    "firstAired": "2008-02-25T05:00:00.000Z",
+    "tvdb_id": 349238,
+    "rating": "7.6",
+    "overview": "Walter and Skyler attend a former colleague's birthday party. Jesse tries to free himself from drugs, while Skyler organizes an intervention.",
+    "thumbnail": "https://episodes.metahub.space/tt0903747/1/5/w780.jpg",
+    "id": "tt0903747:1:5",
+    "released": "2008-02-25T05:00:00.000Z",
+    "episode": 5,
+    "description": "Walter and Skyler attend a former colleague's birthday party. Jesse tries to free himself from drugs, while Skyler organizes an intervention."
+   },
+   {
+    "name": "Seven Thirty-Seven",
+    "season": 2,
+    "number": 1,
+    "firstAired": "2009-03-09T05:00:00.000Z",
+    "tvdb_id": 438912,
+    "rating": "7.7",
+    "overview": "Walt and Jesse are reminded of Tuco’s volatile nature, and try to figure a way out of their business partnership. Hank attempts to mend fences between the estranged Marie and Skyler.",
+    "thumbnail": "https://episodes.metahub.space/tt0903747/2/1/w780.jpg",
+    "id": "tt0903747:2:1",
+    "released": "2009-03-09T05:00:00.000Z",
+    "episode": 1,
+    "description": "Walt and Jesse are reminded of Tuco’s volatile nature, and try to figure a way out of their business partnership. Hank attempts to mend fences between the estranged Marie and Skyler."
+   }
+  ]
+ }
+}

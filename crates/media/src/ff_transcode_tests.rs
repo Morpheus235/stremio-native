@@ -11,7 +11,7 @@
 
 use super::image_subtitle_tests::{bind_host_ffmpeg, HostFfmpeg};
 use super::late_audio_tests::{tool_present, FileServer, Scratch};
-use super::transcode::{Ac3Frame, DtsToAc3, TranscodeError, AC3_FRAME_SAMPLES};
+use super::transcode::{Ac3Frame, ToAc3, TranscodeError, AC3_FRAME_SAMPLES};
 use super::*;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -79,7 +79,7 @@ fn the_bundled_build_carries_the_dts_to_ac3_path() {
     let _g = sn_base::testlock::serial();
     let _b = Bound::new();
     assert!(transcode::available());
-    assert_eq!(crate::stream::SoftwareAudio::detected(), crate::stream::SoftwareAudio { dts_to_ac3: true });
+    assert_eq!(crate::stream::SoftwareAudio::detected(), crate::stream::SoftwareAudio { ac3_encoder: true, decoders: transcode::decoders(), ..crate::stream::SoftwareAudio::NONE });
 }
 
 /// **The transcoder's contract.** Ten DTS core frames (5120 samples of 5.1) in, AC-3 out: every
@@ -90,7 +90,7 @@ fn the_bundled_build_carries_the_dts_to_ac3_path() {
 fn a_dts_core_track_becomes_640k_5_1_ac3_with_monotonic_pts() {
     let _g = sn_base::testlock::serial();
     let _b = Bound::new();
-    let mut t = unsafe { DtsToAc3::open(std::ptr::null()) }.expect("open the transcoder");
+    let mut t = unsafe { ToAc3::open(std::ptr::null(), "dts") }.expect("open the transcoder");
     let start_ns = 10_000_000_000i64;
     let mut out = Vec::new();
     for i in 0..10 {
@@ -118,7 +118,7 @@ fn a_dts_core_track_becomes_640k_5_1_ac3_with_monotonic_pts() {
 fn a_seek_or_a_timeline_jump_reanchors_the_ac3_pts() {
     let _g = sn_base::testlock::serial();
     let _b = Bound::new();
-    let mut t = unsafe { DtsToAc3::open(std::ptr::null()) }.expect("open the transcoder");
+    let mut t = unsafe { ToAc3::open(std::ptr::null(), "dts") }.expect("open the transcoder");
     let frame_ns = DTS_FRAME_SAMPLES * 1_000_000_000 / 48_000;
     let mut first = Vec::new();
     for i in 0..6 {
@@ -148,7 +148,7 @@ fn a_seek_or_a_timeline_jump_reanchors_the_ac3_pts() {
 fn undecodable_packets_are_skipped_then_refused() {
     let _g = sn_base::testlock::serial();
     let _b = Bound::new();
-    let mut t = unsafe { DtsToAc3::open(std::ptr::null()) }.expect("open the transcoder");
+    let mut t = unsafe { ToAc3::open(std::ptr::null(), "dts") }.expect("open the transcoder");
     let junk = [0x5au8; 400];
     assert_eq!(t.push(&junk, 0), Ok(vec![]), "one bad packet is skipped");
     assert!(t.push(DTS_FRAME, 0).is_ok(), "and good ones decode after it");
@@ -221,7 +221,7 @@ fn the_probe_reads_the_declaration_off_the_container() {
     let mut caps = sn_platform::devcaps::Caps::assumed();
     caps.audio = "aac,ac3,eac3".into(); // no DTS row: the transcode case
     let sw = crate::stream::SoftwareAudio::detected();
-    let (decl, track) = crate::stream::derive_declaration(&probed, None, |a| {
+    let (decl, track) = crate::stream::derive_declaration(&probed, None, &Default::default(), |a| {
         crate::stream::AudioFeed::decide(&a.codec, a.channels, &caps, sw)
     })
     .unwrap();
@@ -255,7 +255,7 @@ fn demux_feeds_a_dts_track_as_ac3_when_the_session_says_transcode() {
     SHARED.demux_failed.store(false, Ordering::Relaxed);
     SHARED.demux_io_failed.store(false, Ordering::Relaxed);
     FEED_AUDIO.store(true, Ordering::Relaxed);
-    set_transcode_dts(true);
+    set_transcode_ac3(true);
 
     let (video_cap, audio_cap) = crate::player::engine::aq_caps();
     let mut video = crate::aq::aq_new(video_cap as c_long);
@@ -291,7 +291,7 @@ fn demux_feeds_a_dts_track_as_ac3_when_the_session_says_transcode() {
     th.join().unwrap();
     pop_all(&mut audio, &mut aus);
     pop_all(&mut video, &mut vids);
-    set_transcode_dts(false);
+    set_transcode_ac3(false);
 
     assert!(!SHARED.demux_failed.load(Ordering::Acquire), "the transcoded demux must not fail");
     assert!(vids.len() >= 45, "the video lane carries the video ({} AUs)", vids.len());
@@ -337,8 +337,8 @@ fn begin_playback_probes_an_undeclared_start_and_loads_its_dts_as_ac3() {
     assert_eq!(ps.audio(), &crate::stream::AudioFeed::TranscodeAc3 { source: "dts".into(), channels: 6 });
     let d = ps.stream();
     assert_eq!((d.vcodec.as_str(), d.acodec.as_str(), d.raster), ("h264", "dts", (640, 360)));
-    assert_eq!(SHARED.dg_load_a.load(Ordering::Relaxed), 5, "the Load declared AC3 (from DTS)");
+    assert_eq!(SHARED.dg_load_a.load(Ordering::Relaxed), 5, "the Load declared AC3 (transcoded)");
     assert_eq!(ps.probed().map(|p| p.audio.len()), Some(1));
     crate::player::stop_bufferfeed(&mut ps, &mut pa);
-    set_transcode_dts(false);
+    set_transcode_ac3(false);
 }

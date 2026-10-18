@@ -328,10 +328,10 @@ impl AccountStore {
                         self.sign_in = SignIn::Idle;
                         jobs.push(self.signed_in(key, user));
                     }
-                    Err(e) if e.is_network() => self.sign_in = SignIn::Offline(e.to_string()),
+                    Err(e) if e.is_network() => self.sign_in = SignIn::Offline(super::api_reason(&e)),
                     Err(e) => {
                         self.retry = None;
-                        self.sign_in = SignIn::Rejected(e.to_string());
+                        self.sign_in = SignIn::Rejected(super::api_reason(&e));
                     }
                 }
             }
@@ -341,7 +341,7 @@ impl AccountStore {
                 }
                 self.link = match result {
                     Ok(code) => Link::Waiting { code, since_ms: now_ms },
-                    Err(e) => Link::Failed(e.to_string()),
+                    Err(e) => Link::Failed(super::api_reason(&e)),
                 };
                 self.link_last_read = now_ms;
             }
@@ -369,7 +369,7 @@ impl AccountStore {
                         self.link = Link::Off;
                         jobs.push(self.signed_in(key, user));
                     }
-                    Err(e) => self.link = Link::Failed(e.to_string()),
+                    Err(e) => self.link = Link::Failed(super::api_reason(&e)),
                 }
             }
             AccountLanding::Saved(ok) => {
@@ -436,7 +436,7 @@ mod tests {
     fn a_network_failure_offers_a_retry_with_the_same_credentials() {
         let mut s = signing_in();
         s.land(AccountLanding::LoggedIn(Err(ApiError::Fetch(FetchError::Transport("timed out".into())))), 0);
-        assert_eq!(s.sign_in(), &SignIn::Offline("transport: timed out".into()));
+        assert_eq!(s.sign_in(), &SignIn::Offline(sn_platform::i18n::msg::app_reason_timeout().into()), "the UI language's word, not the transport's");
         let jobs = s.command(AccountCmd::Retry);
         assert!(matches!(&jobs[..], [AccountJob::Login { email, password }] if email == "a@b.c" && password.expose() == "pw"));
         assert_eq!(s.sign_in(), &SignIn::Working);

@@ -80,6 +80,10 @@ static ATOT: AtomicI64 = AtomicI64::new(0);
 // ATTEMPTS — the log's own cadence, kept separate because its `reply=` field is the only record
 // of a REJECTED feed and `tests/run.py` greps `feed v#` / `feed a#`.
 static VATT: AtomicI64 = AtomicI64::new(0);
+
+/// Set by the probe when the stream's timeline starts far from 0 (`stream::needs_fresh_rebase`);
+/// the next engine consumes it into `rebase_pending`.
+pub(crate) static FRESH_REBASE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static AATT: AtomicI64 = AtomicI64::new(0);
 
 /// AUs fed to the Starfish pipeline this SESSION, video and audio.
@@ -122,17 +126,20 @@ pub const fn feed_leads_ms() -> (i64, i64) {
 // frames are tiny) yet large enough to cushion the single demux thread briefly blocking on a full
 // video lane.
 //
-// **The video cap is 10 MiB, and it stopped matching the Load payload's `srcBufferLevelVideo`
+// **The video cap is 48 MiB, and it stopped matching the Load payload's `srcBufferLevelVideo`
 // (8 MiB) on purpose.** Those are two different buffers: this one sits between our demux thread
 // and our pump, and that one is what Starfish will hold. They were equal because 8 MiB was copied
 // from the payload, not because anything requires it — feeding past Starfish's own level returns
 // `'B'` and the pump retries, which is the backpressure path every playback already uses.
 //
-// **What the 2 MiB buys.** The reserve the pipeline can ever hold ahead of the playhead is
-// `B_max = feed_lead + queue_bytes*8 / R_elementary`, a queue term that falls as `1/R`: at 8 MiB a
-// high-bitrate stream (about 15.7 Mbit/s of media and up) holds almost none. `requiredMemory` is
-// 160 MB, so +2 MiB RSS on a 32-bit set is inside the budget already declared.
-const AQ_VIDEO_BYTES: c_long = 10 * 1024 * 1024;
+// **Why 48 MiB.** The reserve the pipeline can ever hold ahead of the playhead is
+// `B_max = feed_lead + queue_bytes*8 / R_elementary`, a queue term that falls as `1/R`. At the old
+// 10 MiB a 30 Mbit/s H.264 remux held ~2.8 s, and the beta log (2026-10-18) showed it run dry in
+// the last minute of an anime episode — the high-bitrate ending outran the debrid link, the lane
+// fell from 10.5 MB to 0.3 MB and the sink dropped 180 frames. 48 MiB is ~13 s at 30 Mbit/s and
+// ~27 s at 15 Mbit/s (a 4K HEVC web-dl); a 60-80 Mbit/s UHD remux still gets ~5-6 s.
+// ponytail: fixed bytes, not seconds; size it from the probed bitrate if RAM gets tight.
+const AQ_VIDEO_BYTES: c_long = 48 * 1024 * 1024;
 const AQ_AUDIO_BYTES: c_long = 1024 * 1024;
 
 pub struct SampleBuf {
@@ -170,6 +177,9 @@ pub struct Engine {
     /// re-place happens exactly once if the demuxer publishes the real one later. 0 = never placed.
     pub placed_src: (c_int, c_int),
     pub eos_pushed: bool, // Kodi VIDEO_DRAIN: pushEOS() sent once at true EOF
+    /// Once the demux has ended: the playhead last seen and when it was first seen there (pump
+    /// `now`, ms). The pump ends a playback whose playhead stands still for `EOS_STALL_MS`.
+    pub eos_stall: Option<(i64, u32)>,
     pub rebase_pending: bool, // g_rebase_pending
     // In-place seek only: keyframes this far AHEAD of the seek target are stale frames the demuxer
     // produced from its pre-flush read position before the reopen+av_seek won the race (playback
@@ -194,6 +204,9 @@ pub struct Engine {
     /// The feed-ahead throttle's reference position, run on between the pipeline's 5 Hz
     /// position reports (see [`FeedPace`]).
     pub feed_pace: FeedPace,
+    /// One video frame at the declared rate, in ns; 0 when the declaration names no rate. Sets the
+    /// video lane's floor in frames ([`video_span_ns`]).
+    pub video_frame_ns: i64,
     pub seek_base_pts: i64,     // fed pts of the first post-seek keyframe (prime measures buffer
     // depth as max_fed_video_pts - seek_base_pts, since the in-place seek feeds REAL pts, not 0-based)
     // prime-then-play: after a seek/resume the pipeline is PAUSED and data is buffered before
@@ -736,6 +749,11 @@ pub(crate) enum LoadVideo {
     H265,
     Av1,
     Vp9,
+    /// VP8: the other codec libpf's buffer feed builds working caps for (`CustomPipeline::
+    /// getVideoCaps`, `findVideoCodecType`'s `VP8`), a 1080p30 decoder on the sets that list it.
+    /// Its `VC1` caps carry no `wmvversion`, and a VC-1 feed stops at the first buffer (`Playing
+    /// error`, measured on an LG C1 from Matroska, ASF and Blu-ray MPEG-TS), so VC-1 is not here.
+    Vp8,
 }
 
 impl LoadVideo {
@@ -750,6 +768,7 @@ impl LoadVideo {
             "hevc" | "h265" => Some(Self::H265),
             "av1" => Some(Self::Av1),
             "vp9" => Some(Self::Vp9),
+            "vp8" => Some(Self::Vp8),
             _ => None,
         }
     }
@@ -763,26 +782,29 @@ impl LoadVideo {
             Self::H265 => "H265",
             Self::Av1 => "AV1",
             Self::Vp9 => "VP9",
+            Self::Vp8 => "VP8",
         }
     }
-    /// `SHARED.dg_load_v`'s code (video 1 = H264, 2 = H265, 3 = AV1, 4 = VP9).
+    /// `SHARED.dg_load_v`'s code (video 1 = H264, 2 = H265, 3 = AV1, 4 = VP9, 5 = VP8).
     pub(crate) fn diag_code(self) -> u8 {
         match self {
             Self::H264 => 1,
             Self::H265 => 2,
             Self::Av1 => 3,
             Self::Vp9 => 4,
+            Self::Vp8 => 5,
         }
     }
 }
 
-/// True when the Load must be refused: an AV1 or VP9 stream on a set whose table lists no such
-/// decoder. Only reachable when a server ignores the profile we sent, so the refusal is a refusal
+/// True when the Load must be refused: an AV1, VP9 or VP8 stream on a set whose table lists no
+/// such decoder. Only reachable when a server ignores the profile we sent, so the refusal is a refusal
 /// to declare a codec the set may not have, never a fallback to H.264 for another bitstream.
 pub(crate) fn load_video_refused(lv: LoadVideo, caps: &sn_platform::devcaps::Caps) -> bool {
     match lv {
         LoadVideo::Av1 => !caps.av1,
         LoadVideo::Vp9 => !caps.vp9,
+        LoadVideo::Vp8 => !caps.vp8,
         LoadVideo::H264 | LoadVideo::H265 => false,
     }
 }
@@ -856,6 +878,7 @@ fn sink_envelope(
             LoadVideo::H265 => caps.hevc_row,
             LoadVideo::Av1 => caps.av1_row,
             LoadVideo::Vp9 => caps.vp9_row,
+            LoadVideo::Vp8 => caps.vp8_row,
         };
         let clamp = |v: u32, bound: u32| if bound == 0 { v } else { v.min(bound) };
         env.w = clamp(env.w, rw);
@@ -875,7 +898,7 @@ fn sink_envelope(
 /// initializer. The test below pins these to the strings themselves.
 fn static_envelope(video: LoadVideo) -> SinkEnvelope {
     match video {
-        LoadVideo::H264 => SinkEnvelope {
+        LoadVideo::H264 | LoadVideo::Vp8 => SinkEnvelope {
             w: 1920,
             h: 1080,
             fps: 30,
@@ -884,11 +907,26 @@ fn static_envelope(video: LoadVideo) -> SinkEnvelope {
     }
 }
 
-/// The `PAYLOAD_H265` template with its codec renamed: the static Load for an AV1 or VP9 stream on
-/// the no-audio path, which keeps that template's envelope and transport.
+/// A static template with its codec renamed: the no-audio Load for an AV1 or VP9 stream (from
+/// `PAYLOAD_H265`, its 4K60 envelope) or a VP8 one (from `PAYLOAD_V`, 1080p30, the most that
+/// decoder takes), keeping the template's envelope and transport.
+/// The Load payload for a stream with no audio to declare: the static template for its codec,
+/// plus the Dolby node for HEVC — a video-only Dolby Vision file (a test pattern) is otherwise
+/// engaged as HDR10.
+fn video_only_payload(video: LoadVideo, dv: crate::stream::DvPresentation) -> String {
+    match video {
+        LoadVideo::H264 => PAYLOAD_V.to_string(),
+        LoadVideo::H265 => with_dolby_hdr_info(PAYLOAD_H265, "H265", dv),
+        LoadVideo::Av1 | LoadVideo::Vp9 | LoadVideo::Vp8 => renamed_static_payload(video),
+    }
+}
+
 fn renamed_static_payload(video: LoadVideo) -> String {
     let to = format!(r#""video":"{}""#, video.payload_name());
-    PAYLOAD_H265.replacen(r#""video":"H265""#, &to, 1)
+    match video {
+        LoadVideo::Vp8 => PAYLOAD_V.replacen(r#""video":"H264""#, &to, 1),
+        _ => PAYLOAD_H265.replacen(r#""video":"H265""#, &to, 1),
+    }
 }
 
 /// The broadcast/film rate class (24, 25, 30, 50, 60) a stream's reported rate belongs to, else
@@ -944,6 +982,19 @@ fn parse_sinkmax(spec: &str) -> Option<SinkEnvelope> {
 }
 
 
+/// The `contents.pcmInfo` node for a `"PCM"` feed (`AudioFeed::SoftPcm`): S16LE 48 kHz in the
+/// channel shape the decoder produces. PlxNative's shape (webosbrew ss4s), beside `"format"`.
+fn with_pcm_info(payload: &str, feed: &crate::stream::AudioFeed) -> String {
+    match feed {
+        crate::stream::AudioFeed::SoftPcm { channels, .. } => payload.replacen(
+            r#""format":"RAW""#,
+            &format!(r#""format":"RAW","pcmInfo":{}"#, crate::ff::adec::pcm_info_json(*channels, crate::ff::adec::PCM_RATE)),
+            1,
+        ),
+        _ => payload.to_string(),
+    }
+}
+
 /// The pipeline reads the true dimensions from the SPS (Phase 0 HEVC probe), so mw/mh are only
 /// the sink envelope.
 fn build_av_payload(
@@ -989,7 +1040,26 @@ fn build_av_payload(
         log(&format!("esInfo: videoFps {num}/{den} + adaptiveResolution (src {:.3})", decl.fps));
     }
     let p = with_dolby_hdr_info(&p, video, dv);
+    let p = with_aac_info(&p, audio, decl.audio_channels, decl.audio_sample_rate);
     with_immersive(&p, audio, decl.atmos)
+}
+
+/// The `contents.aacInfo` node for an AAC feed: channels, profile 2, ADTS framing (the feed always
+/// is: raw AAC is reframed, ADTS passes through) and the frequency in kHz — the node Kodi and ss4s
+/// send and libpf parses (`docs`: PlxNative's Kodi-parity notes, verified in `libpf-1.0.so`).
+/// Without it the TV reported a 5.1 AAC channel as `0.000000 0 … aac 0` and its audio stuttered.
+/// Spliced only when both numbers are known.
+fn with_aac_info(p: &str, audio: &str, channels: i64, sample_rate: i64) -> String {
+    if audio != "AAC" || channels <= 0 || sample_rate <= 0 {
+        return p.to_string();
+    }
+    let anchor = r#""provider":"stremionative""#;
+    if !p.contains(anchor) {
+        return p.to_string();
+    }
+    let khz = sample_rate as f64 / 1000.0;
+    log(&format!("aac: contents.aacInfo channels={channels} frequency={khz}"));
+    p.replace(anchor, &format!(r#"{anchor},"aacInfo":{{"channels":{channels},"profile":2,"format":"adts","frequency":{khz}}}"#))
 }
 
 /// The `contents.immersive` node — **the Dolby Atmos half of the same envelope**, and the reason
@@ -1303,8 +1373,8 @@ fn start_bufferfeed_inner(ps: &mut crate::session::PlaybackSession, pa: &mut sup
     AATT.store(0, Ordering::Relaxed);
     // Resolve the playback, in precedence order: the session's installed start wins, then
     // /tmp/stremionative-playurl (a URL + its declaration), then /tmp/stremionative-url (a URL
-    // alone), then a local sample. The dev triggers are read HERE rather than at the app entry
-    // point because a reload comes back through this function and must re-apply them.
+    // alone), then a local sample. A debug build's boot (`app::boot`) also starts the playurl
+    // trigger itself; read here too, a start with an empty session URL still finds it.
     if ps.url().is_empty() {
         match crate::player::playurl::playurl() {
             Some(Ok(p)) => match p.to_start() {
@@ -1325,7 +1395,8 @@ fn start_bufferfeed_inner(ps: &mut crate::session::PlaybackSession, pa: &mut sup
         if let Some(t) = sn_base::devtrig::read("url") {
             // The bare-URL trigger keeps its baseline declaration (H.264, video only) rather
             // than probing: it is the pipeline tier's "a URL and nothing else" case.
-            // `stremionative-playurl` declares the rest; a real start probes.
+            // `stremionative-playurl` declares the rest (or, with `"probe": true`, probes as a
+            // real start does).
             let mut start = crate::session::PlaybackStart::new(t);
             start.stream = Some(crate::stream::StreamDeclaration::default());
             if !start.url.is_empty() && ps.begin(start).is_err() {
@@ -1369,15 +1440,20 @@ fn start_bufferfeed_inner(ps: &mut crate::session::PlaybackSession, pa: &mut sup
     }
     let stream = sample.is_none();
     let decl = ps.stream();
-    // For a stream, the Load codecs come from the declaration: video H264/H265/AV1/VP9, audio
+    // For a stream, the Load codecs come from the declaration: video H264/H265/AV1/VP9/VP8, audio
     // from the session's frozen `AudioFeed` decision. (The local sample paths keep their fixed
     // payloads.) A track the session decided is `Silent` gets the video-only Load.
     // dev A/B: /tmp/stremionative-noaudio feeds video only (needAudio:false + skip es=2).
     let audio_payload = ps.audio().payload();
     let no_audio = sn_base::devtrig::flag("noaudio") || audio_payload.is_none();
     crate::ff::set_feed_audio(!no_audio);
-    // A DTS track the television will not take, transcoded to the AC-3 this Load declares.
-    crate::ff::set_transcode_dts(matches!(ps.audio(), crate::stream::AudioFeed::TranscodeAc3 { .. }));
+    // A track decoded on the CPU and re-encoded as the AC-3 this Load declares.
+    crate::ff::set_transcode_ac3(matches!(ps.audio(), crate::stream::AudioFeed::TranscodeAc3 { .. }));
+    // A track decoded on the CPU, fed as the PCM this Load declares (a Pro Logic II matrix flagged).
+    crate::ff::set_soft_pcm(match ps.audio() {
+        crate::stream::AudioFeed::SoftPcm { channels, dplii, .. } => *channels | if *dplii { crate::ff::adec::DPLII } else { 0 },
+        _ => 0,
+    });
     let stream_payload;
     // Every arm below assigns this — the static payloads through `static_envelope`, the streamed
     // one through `sink_envelope_now` — so a new arm that forgets it fails to compile.
@@ -1412,14 +1488,8 @@ fn start_bufferfeed_inner(ps: &mut crate::session::PlaybackSession, pa: &mut sup
                 SHARED.dg_load_a.store(0, Ordering::Relaxed);
                 // A static payload declares its own envelope; say so on the `load:` line.
                 sink_env = static_envelope(lv);
-                match lv {
-                    LoadVideo::H264 => PAYLOAD_V,
-                    LoadVideo::H265 => PAYLOAD_H265,
-                    LoadVideo::Av1 | LoadVideo::Vp9 => {
-                        stream_payload = renamed_static_payload(lv);
-                        stream_payload.as_str()
-                    }
-                }
+                stream_payload = video_only_payload(lv, ps.dv());
+                stream_payload.as_str()
             }
             Some((ac, diagnostic)) => {
                 SHARED.dg_load_a.store(diagnostic, Ordering::Relaxed);
@@ -1428,7 +1498,7 @@ fn start_bufferfeed_inner(ps: &mut crate::session::PlaybackSession, pa: &mut sup
                 // webOS 10.3.1 the pipeline allocates against the declaration, so `sink_envelope`
                 // is deliberately no wider than what was measured.
                 sink_env = sink_envelope_now(&decl, lv);
-                stream_payload = build_av_payload(&decl, ps.dv(), lv.payload_name(), ac, sink_env);
+                stream_payload = with_pcm_info(&build_av_payload(&decl, ps.dv(), lv.payload_name(), ac, sink_env), ps.audio());
                 &stream_payload
             }
         }
@@ -1444,11 +1514,16 @@ fn start_bufferfeed_inner(ps: &mut crate::session::PlaybackSession, pa: &mut sup
     // substitution happens BEFORE the splice: `with_window_id`'s anchor is the composed
     // `"appId":"<id>"`.
     let payload_c = std::ffi::CString::new(with_window_id(pa.mt(), &with_app_id(payload_str))).unwrap();
+    // Profile 7 as its base layer (the demuxer drops the RPU/EL units) or converted to 8.1 (it
+    // drops the EL and rewrites the RPU). Every Load says, so a reload out of the conversion
+    // (`pump`'s fallback) turns stripping on and conversion off.
+    SHARED.dv_strip_layers.store(stream && ps.dv().strips_layers(), Ordering::Relaxed);
+    SHARED.dv_convert_p7.store(stream && ps.dv().converts_p7(), Ordering::Relaxed);
     if stream {
         // What the payload ACTUALLY declared, once, in the event log. Carries no URL.
         let dv = decl.dovi;
         log(&format!(
-            "load: v={} a={:?} fps={:.3} dv=present:{} P{}/{} el:{} atmos:{} max={}x{}@{}",
+            "load: v={} a={:?} fps={:.3} dv=present:{} P{}/{} el:{} mode:{}{} atmos:{} max={}x{}@{}",
             video_declared,
             audio_declared,
             decl.fps,
@@ -1456,7 +1531,9 @@ fn start_bufferfeed_inner(ps: &mut crate::session::PlaybackSession, pa: &mut sup
             dv.profile,
             dv.bl_compat,
             dv.el_present as i32,
-            decl.atmos as i32,
+            ps.dv().label(),
+            if ps.dv().converts_p7() { "(p7→8.1)" } else { "" },
+            (decl.atmos && audio_declared == "AC3 PLUS") as i32,
             sink_env.w,
             sink_env.h,
             sink_env.fps
@@ -1594,11 +1671,15 @@ fn start_bufferfeed_inner(ps: &mut crate::session::PlaybackSession, pa: &mut sup
         bound_at_frames: None,
         placed_src: (0, 0),
         eos_pushed: false,
+        eos_stall: None,
         // if a seek is armed for the FIRST open (resume, or reload_at), rebase the first
         // post-seek keyframe to fed-pts 0 so the pipeline sees a 0-based timeline identical
         // to fresh play (disp_base carries the content offset). Plain fresh play leaves this
         // false (first keyframe is already ~0).
-        rebase_pending: SHARED.seek_to_ns.load(Ordering::Relaxed) >= 0,
+        // …and a fresh start whose timeline starts far from 0 (a live channel joined mid-stream,
+        // `FRESH_REBASE`, set by the probe) is rebased the same way: the audio lane holds until
+        // the first keyframe sets the shift both lanes then use.
+        rebase_pending: SHARED.seek_to_ns.load(Ordering::Relaxed) >= 0 || FRESH_REBASE.swap(false, Ordering::Relaxed),
         rebase_drops: 0,
         seek_armed_at: 0,
         seek_retries: 0,
@@ -1608,6 +1689,7 @@ fn start_bufferfeed_inner(ps: &mut crate::session::PlaybackSession, pa: &mut sup
         max_fed_audio_pts: 0,
         audio_start_fp: None,
         feed_pace: FeedPace::default(),
+        video_frame_ns: frame_ns_of(decl.fps),
         seek_base_pts: 0,
         prime_play: false,
         aq_video: aqv_box,
@@ -1951,7 +2033,7 @@ fn drain_one(q: Option<&mut Box<AuQueue>>) {
 /// keyframe; drop stale AUs past the B-frame reorder distance.
 /// prime-then-play buffer depth: how much of the post-seek stream to buffer (paused) before
 /// starting the clock. Enough to cover the pipeline's decode latency so the first frame is ready.
-const PRIME_NS: i64 = 700_000_000;
+pub(crate) const PRIME_NS: i64 = 700_000_000;
 // Prime the AUDIO lane too before starting the (audioSync master) clock — else a rapid-seek drain
 // can start Play on an empty audio queue and leave audio silent until the next seek. Fallback:
 // start anyway once video buffers PRIME_VIDEO_MAX_NS without audio (audioless / briefly starved),
@@ -1968,6 +2050,22 @@ const AUDIO_SLACK_NS: i64 = 2_000_000_000;
 // A fed pts this far below a lane's high-water is a stale pre-seek AU (past the B-frame reorder
 // distance) → drop it rather than feed a backward jump.
 const STALE_BACKJUMP_NS: i64 = 2_000_000_000;
+
+/// One frame at `fps`, in ns; 0 for an unknown rate.
+fn frame_ns_of(fps: f64) -> i64 {
+    if fps > 0.0 && fps.is_finite() { (1e9 / fps) as i64 } else { 0 }
+}
+
+/// The most frames an H.264/HEVC decoder may hold before it outputs one (the largest DPB).
+const DPB_FRAMES: i64 = 16;
+
+/// A video-lane span in media time — the feed-ahead lead or the stale-backjump distance — never
+/// shorter than [`DPB_FRAMES`] frames. The fixed spans are sized for film rates, where 16 frames
+/// are under 0.7 s; at 1 fps (a debrid "still downloading" clip) the B-pyramid alone reaches 4 s
+/// ahead in decode order, and a 1.6 s lead held the decoder at two frames, so it never output one.
+fn video_span_ns(span_ns: i64, frame_ns: i64) -> i64 {
+    span_ns.max(DPB_FRAMES.saturating_mul(frame_ns))
+}
 // In-place-seek rebase guard: a first-keyframe this far from the seek target is a stale pre-reopen
 // frame from the drifted read position, not the real post-seek keyframe. av_seek(BACKWARD) lands
 // AT/BEFORE the target, so a valid anchor is never ahead and is at most ~one GOP behind — hence a
@@ -2528,7 +2626,7 @@ fn feed_stream(mt: &MainThread, eng: &mut Engine) {
             }
         }
         let mut fp = pts + SHARED.pts_shift.load(Ordering::Relaxed) + pts_nudge_ns();
-        if fp < eng.max_fed_video_pts - STALE_BACKJUMP_NS {
+        if fp < eng.max_fed_video_pts - video_span_ns(STALE_BACKJUMP_NS, eng.video_frame_ns) {
             eng.pending_video = None; // stale (a big backward jump)
             continue;
         }
@@ -2543,7 +2641,7 @@ fn feed_stream(mt: &MainThread, eng: &mut Engine) {
         let pres = eng.feed_pace.reference(SHARED.pres_fed.load(Ordering::Relaxed), super::vclock_ms());
         if !eng.prime_play {
             let budget = if es == 1 {
-                MAX_FEED_AHEAD_NS
+                video_span_ns(MAX_FEED_AHEAD_NS, eng.video_frame_ns)
             } else {
                 MAX_FEED_AHEAD_NS + AUDIO_SLACK_NS
             };
@@ -2645,6 +2743,18 @@ fn audio_lead_in(fp: i64, opens: bool, start: Option<i64>) -> bool {
     opens || start.is_some_and(|s| fp >= s && fp - s < AUDIO_LEAD_IN_NS)
 }
 
+/// A rate-limited line for an audio AU the lane did not feed: the first 8 of a session, then one
+/// in 200, with the fed pts and what it was measured against (live streams have shown audio
+/// timelines seconds away from their video's).
+fn audio_note(why: &str, fp: i64, video_fed: i64, pres: i64) {
+    static N: AtomicI64 = AtomicI64::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+    if n <= 8 || n % 200 == 0 {
+        let pres = if pres == PRES_NONE { "none".to_string() } else { format!("{}ms", pres / 1_000_000) };
+        log(&format!("feed: audio #{n} {why} (fp={}ms video_fed={}ms pres={pres})", fp / 1_000_000, video_fed / 1_000_000));
+    }
+}
+
 /// AUDIO lane feeder (two-lane ff path only). Independent of the video lane: its own queue, its
 /// own fed-pts high-water, its own BufferFull retry — so a video BufferFull never starves audio.
 /// HOLDS while a seek rebase is pending (the VIDEO lane sets pts_shift on its first post-seek
@@ -2662,7 +2772,9 @@ fn feed_audio_lane(mt: &MainThread, eng: &mut Engine) {
     // hoisted out of the loop: pts_shift is stable once rebase clears (only the video lane's rebase
     // arm writes it, on this same thread), and one pres_fed sample per tick is plenty against the
     // multi-second audio budget.
-    let shift = SHARED.pts_shift.load(Ordering::Relaxed);
+    // the viewer's audio sync rides the same shift: every fed audio PTS, and so every check below
+    // (the hold-ahead, the stale guards, the prime depth), is on the shifted clock
+    let shift = SHARED.pts_shift.load(Ordering::Relaxed) + super::audio_offset_ns();
     let pres = eng.feed_pace.reference(SHARED.pres_fed.load(Ordering::Relaxed), super::vclock_ms());
     let slice = FeedSlice::begin();
     let mut fed = 0;
@@ -2687,10 +2799,12 @@ fn feed_audio_lane(mt: &MainThread, eng: &mut Engine) {
         // start as well as from the video (see AUDIO_LEAD_IN_NS).
         let stale_ref = eng.max_fed_video_pts.max(eng.audio_start_fp.unwrap_or(i64::MIN));
         if !lead_in && eng.max_fed_video_pts > 0 && fp > stale_ref + AUDIO_STALE_AHEAD_NS {
+            audio_note("dropped: far ahead of the video", fp, eng.max_fed_video_pts, pres);
             eng.pending_audio = None;
             continue;
         }
         if fp < eng.max_fed_audio_pts - STALE_BACKJUMP_NS {
+            audio_note("dropped: behind the audio fed", fp, eng.max_fed_video_pts, pres);
             eng.pending_audio = None; // stale (a big backward jump)
             continue;
         }
@@ -2702,6 +2816,7 @@ fn feed_audio_lane(mt: &MainThread, eng: &mut Engine) {
             && pres != PRES_NONE
             && fp - pres > MAX_FEED_AHEAD_NS + AUDIO_SLACK_NS
         {
+            audio_note("held: ahead of the presented position", fp, eng.max_fed_video_pts, pres);
             break;
         }
         let starved = lane_starved(eng.prime_play, eng.max_fed_audio_pts, eng.seek_base_pts, PRIME_AUDIO_NS, pres);
@@ -3140,6 +3255,25 @@ mod payload_tests {
 
     const UHD: SinkEnvelope = SinkEnvelope { w: 3840, h: 2160, fps: 60 };
 
+    /// A soft-decoded track's Load declares `"PCM"` and carries `contents.pcmInfo` in the decoder's
+    /// shape; every other feed's payload is untouched.
+    #[test]
+    fn a_pcm_feed_declares_pcm_with_its_pcm_info() {
+        use crate::stream::AudioFeed;
+        let decl = StreamDeclaration { vcodec: "h264".into(), acodec: "flac".into(), audio_channels: 2, ..StreamDeclaration::default() };
+        let feed = AudioFeed::SoftPcm { source: "truehd".into(), channels: 6, dplii: false };
+        let p = super::with_pcm_info(&build_av_payload(&decl, DvPresentation::NotDv, "H264", "PCM", UHD), &feed);
+        let v: serde_json::Value = serde_json::from_str(&p).expect("valid JSON");
+        let contents = &v["args"][0]["option"]["externalStreamingInfo"]["contents"];
+        assert_eq!(contents["codec"]["audio"], "PCM");
+        assert_eq!(contents["format"], "RAW");
+        assert_eq!(contents["pcmInfo"]["channelMode"], "6-channel");
+        assert_eq!(contents["pcmInfo"]["format"], "S16LE");
+        assert_eq!(contents["pcmInfo"]["sampleRate"], 48.0);
+        let ac3 = build_av_payload(&decl, DvPresentation::NotDv, "H264", "AC3", UHD);
+        assert_eq!(super::with_pcm_info(&ac3, &AudioFeed::Native { payload: "AC3", diag: 1 }), ac3);
+    }
+
     #[test]
     fn dv_payload_matches_the_frozen_session_decision() {
         let decl = hevc_p8();
@@ -3247,6 +3381,16 @@ mod payload_tests {
         assert!(PAYLOAD_AV.contains(r#""provider":"stremionative"},"streamQualityInfo""#));
     }
 
+    /// A video-only HEVC stream (a Dolby Vision test pattern has no audio) takes the static
+    /// payload, which must still carry the Dolby node: without it the TV engages HDR10 only.
+    #[test]
+    fn a_video_only_hevc_load_still_declares_dolby_vision() {
+        let dv = p8().presentation(true, sn_platform::devcaps::dv::DvCapability::Supported, true);
+        let out = super::video_only_payload(super::LoadVideo::H265, dv);
+        assert!(out.contains(r#""DolbyHdrInfo":{"trackType":"single","encryptionType":"clear","profileId":8}"#), "{out}");
+        assert_eq!(super::video_only_payload(super::LoadVideo::H264, dv), PAYLOAD_V, "H.264 is never Dolby Vision");
+    }
+
     /// **What we actually send for a Profile 5 direct play.** The three fields at the path the
     /// television's own parser reads, `profileId` as a bare JSON integer (`getInt` — a quoted "5"
     /// would leave the pipeline's -1 sentinel), and the whole node inside `contents`.
@@ -3279,8 +3423,8 @@ mod payload_tests {
     }
 
     /// The three ways the node is NOT sent, each of which must leave the payload byte-identical:
-    /// a file with no Dolby Vision, a Dolby Vision file we refuse (the dual-layer P7 — declaring a
-    /// layer we cannot feed is worse than refusing it), and the disarmed trigger, which is what a
+    /// a file with no Dolby Vision, the dual-layer P7 played by default as its HDR10 base layer
+    /// (`DvPresentation::BaseLayer`), and the disarmed trigger, which is what a
     /// `RELEASE=1` build compiles in and what every boot without `/tmp/stremionative-dv` does today.
     #[test]
     fn nothing_is_spliced_unless_the_stream_is_declared() {
@@ -3298,6 +3442,27 @@ mod payload_tests {
         ] {
             assert_eq!(with_dolby_hdr_info(PAYLOAD_AV, "H265", dv), PAYLOAD_AV);
         }
+    }
+
+    /// Profile 7: by default the base layer, declared as plain HEVC (no node); Try Dolby Vision
+    /// converts it to 8.1 and declares `profileId` 8 in the same single-track node a native
+    /// Profile 8 gets; and the Atmos node rides only an E-AC-3 JOC declaration.
+    #[test]
+    fn profile_7_declares_dolby_vision_8_1_only_when_converted_and_atmos_only_for_joc() {
+        use crate::prefs::DvProfile7::{Hdr10, TryNative};
+        use sn_platform::devcaps::dv::DvCapability::Supported;
+        let p7 = Dovi { present: true, profile: 7, bl_compat: 6, el_present: true };
+        let decl = StreamDeclaration { vcodec: "hevc".into(), acodec: "eac3".into(), fps: 23.976, dovi: p7, atmos: true, ..StreamDeclaration::default() };
+        let hdr10 = build_av_payload(&decl, p7.presentation_with(true, Supported, true, Hdr10), "H265", "AC3 PLUS", UHD);
+        assert!(!hdr10.contains("DolbyHdrInfo"), "{hdr10}");
+        assert!(hdr10.contains(r#""immersive":"ATMOS""#));
+        let native = build_av_payload(&decl, p7.presentation_with(true, Supported, true, TryNative), "H265", "AC3 PLUS", UHD);
+        assert!(native.contains(r#""DolbyHdrInfo":{"trackType":"single","encryptionType":"clear","profileId":8}"#), "{native}");
+        let p8 = Dovi { present: true, profile: 8, bl_compat: 1, el_present: false };
+        let real_p8 = build_av_payload(&StreamDeclaration { dovi: p8, ..decl.clone() }, p8.presentation(true, Supported, true), "H265", "AC3 PLUS", UHD);
+        assert_eq!(native, real_p8, "a converted Profile 7 Load is a native Profile 8.1 Load");
+        let plain = StreamDeclaration { atmos: false, ..decl.clone() };
+        assert!(!build_av_payload(&plain, DvPresentation::BaseLayer, "H265", "AC3 PLUS", UHD).contains("immersive"));
     }
 
     /// **What we actually send for a Dolby Atmos track**, at the key path `libpf` reads
@@ -3446,6 +3611,7 @@ mod prime_livelock_tests {
             bound_at_frames: None,
             placed_src: (0, 0),
             eos_pushed: false,
+            eos_stall: None,
             rebase_pending: false,
             rebase_drops: 0,
             seek_armed_at: 0,
@@ -3456,6 +3622,7 @@ mod prime_livelock_tests {
             max_fed_audio_pts: 0,
             audio_start_fp: None,
             feed_pace: FeedPace::default(),
+            video_frame_ns: 0,
             seek_base_pts: 0,
             prime_play: true,
             aq_video: Some(crate::aq::aq_new(AQ_VIDEO_BYTES)),
@@ -3682,6 +3849,36 @@ mod prime_livelock_tests {
             "one tick fed {v_fed} video and {a_fed} audio AUs; the slice allows {per_lane_max} per lane",
         );
         SHARED.pres_fed.store(PRES_NONE, Ordering::Relaxed);
+    }
+
+    /// **The audio sync offset shifts every AU the audio lane feeds**: the AU that opens the
+    /// timeline (PTS 0) is fed at the offset, later and earlier alike, clamped to the range.
+    #[test]
+    fn the_audio_sync_offset_shifts_the_fed_audio_pts() {
+        let _serial = sn_base::testlock::serial();
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                crate::player::set_audio_offset(0);
+                SHARED.first_audio_pts.store(i64::MIN, Ordering::Relaxed);
+                SHARED.pres_fed.store(PRES_NONE, Ordering::Relaxed);
+            }
+        }
+        let _reset = Reset;
+        let _slow = SlowFeed::arm(0);
+        let mt = unsafe { sn_base::task::MainThread::assume() };
+        assert_eq!(crate::player::clamp_audio_offset_ms(9_000), crate::player::AUDIO_OFFSET_RANGE_MS);
+        assert_eq!(crate::player::clamp_audio_offset_ms(-9_000), -crate::player::AUDIO_OFFSET_RANGE_MS);
+        for offset in [0, 1_500, -2_000] {
+            SHARED.pres_fed.store(PRES_NONE, Ordering::Relaxed);
+            SHARED.seek_to_ns.store(-1, Ordering::Relaxed);
+            SHARED.first_audio_pts.store(5_000_000_000, Ordering::Relaxed);
+            crate::player::set_audio_offset(offset);
+            let mut eng = engine_after_reload();
+            push_segment_at(&mut eng, 5_000_000_000);
+            tick(&mt, &mut eng);
+            assert_eq!(eng.audio_start_fp, Some(5_000_000_000 + offset * 1_000_000), "offset {offset} ms");
+        }
     }
 
     /// **A playing lane below low-water is fed past its slice**: at 4 ms a `Feed()` the slice
@@ -5026,6 +5223,22 @@ mod sink_envelope_tests {
         assert!(!p.contains(r#""maxFrameRate":30"#), "the template's 30 must be replaced: {p}");
     }
 
+    /// A 5.1 AAC live channel was declared with no format at all, and the TV reported its audio
+    /// as `0.000000 0 … aac 0` and stuttered. The AAC node Kodi and ss4s send (and libpf parses).
+    #[test]
+    fn an_aac_payload_carries_the_tracks_format() {
+        let decl = crate::stream::StreamDeclaration { audio_channels: 6, audio_sample_rate: 48_000, ..Default::default() };
+        let p = build_av_payload(&decl, crate::stream::DvPresentation::NotDv, "H264", "AAC", ENVELOPE_FHD60);
+        assert!(p.contains(r#""aacInfo":{"channels":6,"profile":2,"format":"adts","frequency":48}"#), "{p}");
+        let unknown = crate::stream::StreamDeclaration::default();
+        assert!(!build_av_payload(&unknown, crate::stream::DvPresentation::NotDv, "H264", "AAC", ENVELOPE_FHD60).contains("aacInfo"));
+        assert!(!build_av_payload(&decl, crate::stream::DvPresentation::NotDv, "H264", "AC3", ENVELOPE_FHD60).contains("aacInfo"));
+        let p = build_av_payload(
+            &crate::stream::StreamDeclaration { audio_channels: 2, audio_sample_rate: 44_100, ..Default::default() },
+            crate::stream::DvPresentation::NotDv, "H264", "AAC", ENVELOPE_FHD60);
+        assert!(p.contains(r#""frequency":44.1}"#), "{p}");
+    }
+
     /// The static payloads' declared envelopes, read out of the strings that are actually sent.
     #[test]
     fn the_static_envelopes_are_the_static_payloads_own_numbers() {
@@ -5049,8 +5262,9 @@ mod sink_envelope_tests {
     }
 
     #[test]
-    fn load_video_maps_exactly_today_plus_av1_and_vp9() {
+    fn load_video_maps_exactly_the_buffer_feeds_video_caps() {
         for (vcodec, want) in [
+            ("vp8", LoadVideo::Vp8),
             ("hevc", LoadVideo::H265),
             ("h264", LoadVideo::H264),
             ("av1", LoadVideo::Av1),
@@ -5063,12 +5277,12 @@ mod sink_envelope_tests {
             assert_eq!(LoadVideo::of_stream(vcodec), Some(want), "{vcodec:?}");
         }
         // an unknown codec is refused, never declared as H.264
-        for vcodec in ["mpeg2video", "vc1", "vp8", "theora", "mpeg4", "avc", "x"] {
+        for vcodec in ["mpeg2video", "vc1", "wmv3", "msmpeg4v3", "h263", "rv40", "theora", "mpeg4", "avc", "x"] {
             assert_eq!(LoadVideo::of_stream(vcodec), None, "{vcodec:?}");
         }
-        let all = [LoadVideo::H264, LoadVideo::H265, LoadVideo::Av1, LoadVideo::Vp9];
-        assert_eq!(all.map(LoadVideo::payload_name), ["H264", "H265", "AV1", "VP9"]);
-        assert_eq!(all.map(LoadVideo::diag_code), [1, 2, 3, 4]);
+        let all = [LoadVideo::H264, LoadVideo::H265, LoadVideo::Av1, LoadVideo::Vp9, LoadVideo::Vp8];
+        assert_eq!(all.map(LoadVideo::payload_name), ["H264", "H265", "AV1", "VP9", "VP8"]);
+        assert_eq!(all.map(LoadVideo::diag_code), [1, 2, 3, 4, 5]);
     }
 
     #[test]
@@ -5146,7 +5360,7 @@ mod sink_envelope_tests {
         assert_eq!(load_v_name(3), "AV1");
         assert_eq!(load_v_name(4), "VP9");
         assert_eq!(load_v_name(0), "—");
-        for video in [LoadVideo::H264, LoadVideo::H265, LoadVideo::Av1, LoadVideo::Vp9] {
+        for video in [LoadVideo::H264, LoadVideo::H265, LoadVideo::Av1, LoadVideo::Vp9, LoadVideo::Vp8] {
             assert_eq!(load_v_name(video.diag_code()), video.payload_name());
         }
     }
@@ -5338,6 +5552,59 @@ mod late_audio_start_tests {
         assert!(eng.max_fed_video_pts > 0, "PRECONDITION FAILED: the host sink fed no video");
         assert_eq!(eng.max_fed_audio_pts, 0, "stale audio must not reach the sink");
         assert_eq!(eng.audio_start_fp, None);
+    }
+}
+
+/// **A 1 fps, video-only clip must reach the decoder past its reorder depth.** AIOStreams' "still
+/// downloading" placeholder (H.264, 1 fps, B-pyramid, no audio) arrives in decode order
+/// 0 4 2 1 3 8 6 5 7 …: the beta log fed `v#1 fed=0`, `v#2 fed=3999999999`, `primed`, and then
+/// nothing for a minute. Nothing has presented (`pres_fed` 0), so the throttle held B(2 s) at
+/// 1.6 s past the playhead, while the decoder, holding two frames, never output one. At 24 fps the
+/// same reorder fits in 170 ms. The lane must take the decoder's whole frame store, and a B-frame
+/// three frames behind its P must not read as a stale backward jump.
+#[cfg(all(test, feature = "hostsim"))]
+mod low_fps_video_only_tests {
+    use super::*;
+
+    const FRAME_NS: i64 = 1_000_000_000;
+    /// The clip's first 17 AUs in decode order, in frames: 16 s of media past the first.
+    const DECODE_ORDER: [i64; 17] = [0, 4, 2, 1, 3, 8, 6, 5, 7, 12, 10, 9, 11, 16, 14, 13, 15];
+
+    struct Restore;
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            crate::player::ffi_host::force_clocksink_for_test(false);
+            SHARED.pres_fed.store(0, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn a_one_fps_clip_feeds_its_whole_reorder_before_a_frame_presents() {
+        let _serial = sn_base::testlock::serial();
+        crate::player::ffi_host::force_clocksink_for_test(true);
+        let _restore = Restore;
+        SHARED.pres_fed.store(0, Ordering::Relaxed);
+        SHARED.seek_to_ns.store(-1, Ordering::Relaxed);
+        let mut eng = super::prime_livelock_tests::engine_after_reload();
+        eng.video_frame_ns = FRAME_NS;
+        let au = [0u8; 64];
+        let qv = &mut **eng.aq_video.as_mut().unwrap() as *mut crate::aq::AuQueue;
+        for (i, f) in DECODE_ORDER.iter().enumerate() {
+            crate::aq::aq_push(qv, au.as_ptr(), au.len() as c_int, f * FRAME_NS, c_int::from(i == 0), 1);
+        }
+        let before = VTOT.load(Ordering::Relaxed);
+        let mt = unsafe { sn_base::task::MainThread::assume() };
+        for _ in 0..8 {
+            feed_both_lanes(&mt, &mut eng);
+        }
+        assert!(!eng.prime_play, "PRECONDITION FAILED: the video-only escape did not start the clock");
+        assert_eq!(
+            VTOT.load(Ordering::Relaxed) - before,
+            DECODE_ORDER.len() as i64,
+            "every AU of the first 16 frames reaches the decoder (fed to {} ns, next pending {:?})",
+            eng.max_fed_video_pts,
+            eng.pending_video.as_ref().map(|n| unsafe { crate::aq::au_fields(n.0) }.2)
+        );
     }
 }
 

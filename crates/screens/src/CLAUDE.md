@@ -8,8 +8,8 @@ The crate `sn_screens`: every screen the dispatcher mounts, the [`Bundle`] host 
 | module | may name |
 |---|---|
 | `stores/` | `sn_stremio`, `sn_machine::machine` — never a screen, never `sn_ui` |
-| a screen (`home.rs`, `search.rs`, `livetv.rs`, `library.rs`, `addons.rs`, `settings.rs`, `grid.rs`, `menu.rs`, `detail.rs`, `player.rs`, `signin.rs`) | `sn_ui`, `stores/`, `sn_stremio` types, `registry`, `tabs`, `cards`, `item_cards` — never a sibling screen, never the app |
-| `tabs.rs`, `cards.rs`, `chrome.rs`, `item_cards.rs` (shared, not screens) | `sn_ui`, `stores/`, `registry` |
+| a screen (`home.rs`, `search.rs`, `discover.rs`, `library.rs`, `addons.rs`, `settings.rs`, `grid.rs`, `continue_page.rs`, `menu.rs`, `detail.rs`, `player/` (the page, its `hud` model, its `tracks` menus, the subtitle menu, the Episodes panel and the show info), `signin.rs`) | `sn_ui`, `stores/`, `sn_stremio` types, `registry`, `tabs`, `cards`, `item_cards`, `item_list`, `type_filter`, `dropdown`, `episodes` — never a sibling screen, never the app |
+| `tabs.rs`, `cards.rs`, `chrome.rs`, `item_cards.rs`, `item_list.rs`, `type_filter.rs`, `dropdown.rs`, `episodes.rs` (shared, not screens) | `sn_ui`, `stores/`, `registry` |
 | `registry.rs` | the screens (it is the one `mount` match) |
 
 **The addons the app uses** are ONE answer: `stores::addons::AddonsStore::in_use()` (the account's
@@ -42,16 +42,20 @@ and BACK all read it. Home is the root of the shared stack and every other tab i
 - a page whose content lands after it mounts seats it with `registry::FirstSeat`, counting only a
   seat `tabs::rests` accepts (the pill the remote arrived on is a seat nobody chose).
 
-Adding a destination (the account page, say) is one `TABS` line, its `AppArg` variant and its
-`mount` arm. The Search pill must stay LAST: the strip draws its last pill as the magnifier.
+Adding a destination is one `TABS` line, its `AppArg` variant and its `mount` arm. Settings and
+the Addons list are no pills: they are `Tab::Settings`, whose stop is the **account pill**
+(`tabs::ACCOUNT_ELEM`, first in the bar, drawn by `chrome` with `widgets::profile_chip_with`); OK on
+it opens the account menu (`tabs::open_account_menu`, `MenuKind::Account`: Settings, Addons, the
+account line, Sign out confirmed in place, or Sign in). No colour key names it. The Search pill must stay LAST: the strip draws its last pill as the magnifier.
 
 The addons every page plans against are `Views::addons()` (and `Bridge::addons()` on the rig
 side): the catalog store the application builds from `AddonsStore::in_use()` — the account's
-collection signed in, the defaults otherwise. Search's chips and the Addons page's *Include in
+collection signed in, the defaults otherwise. Search's addon dropdown and the Addons page's *Include in
 search* toggle the same `AddonsStore::filter()`. `Views::account` is the session (Settings' and the
 Addons page's account rows, sign-out through `AccountCmd::SignOut`); `Views::session` is its
-signed-in bit (the item menu's Add to library reads it, with `LibraryStore::add_state`; the press
-is `LibraryCmd::Add`, the account's `datastorePut`).
+signed-in bit (the item menu's and the Detail page's Add/Remove from library read it, with
+`LibraryStore::add_state`; the presses are `LibraryCmd::Add` / `Remove` / `Rewind`, the account's
+`datastorePut`, optimistic in the store and rolled back with a toast when refused).
 
 ## Adding a screen
 

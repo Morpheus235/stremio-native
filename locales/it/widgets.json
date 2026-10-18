@@ -128,6 +128,10 @@
       "key": "str"
     }
   },
+  "widgets.cards.see_all": {
+    "value": "Vedi tutto",
+    "description": "The tile at the end of a row of cards (and the last row of a row shown as a list) that opens the whole row. Must fit one line on a poster card at BODY size in every shipped language."
+  },
   "widgets.reason.jail_help": {
     "value": "La riparazione richiede una TV con root e accesso a Homebrew Channel. Vedi stremionative.com/troubleshooting/#playback-reports-jail_missing_rtkmem per assistenza.",
     "description": "reason jail_help"
@@ -282,5 +286,101 @@
   "widgets.badge.ad": {
     "value": "AD",
     "description": "Badge: the title has an audio-description track. Must match the abbreviation in browse.detail.audio_description (es: audiodescripción, AD)."
+  },
+  "widgets.failure.audio_unsupported": {
+    "value": "Riproduzione non riuscita: questa TV non può decodificare la traccia audio",
+    "description": "Player error caption: the selected audio track's format (or channel count) has no decoder on this TV and the app has no software decoder for it yet."
+  },
+  "widgets.reason.audio_unsupported": {
+    "value": "Questa TV non ha un decoder per questa traccia audio; scegli un’altra traccia audio o un altro flusso",
+    "description": "Explanation beneath the playback-failed heading when the audio track cannot be decoded by the TV."
+  },
+  "widgets.panel.audio_unsupported": {
+    "value": "la TV non ha un decoder per la traccia audio",
+    "description": "Diagnostics panel verdict suffix: the audio track cannot be decoded by the TV."
+  },
+  "widgets.failure.video_unsupported": {
+    "value": "Riproduzione non riuscita: questa TV non può decodificare il video",
+    "description": "Player error caption: the stream's video codec has no decoder on this TV."
+  },
+  "widgets.reason.video_unsupported": {
+    "value": "Questa TV non ha un decoder per questo formato video; scegli un altro flusso",
+    "description": "Explanation beneath the playback-failed heading when the video codec cannot be decoded by the TV."
+  },
+  "widgets.failure.video_not_streamable": {
+    "value": "Riproduzione non riuscita: questo formato video non può essere trasmesso su questa TV",
+    "description": "Player error caption: the stream's video codec (MPEG-4 Part 2/Xvid/DivX, MPEG-2, H.263, VC-1/WMV, RealVideo) is one the TV's streaming player cannot be fed, though the TV's own file player may know it."
+  },
+  "widgets.reason.video_not_streamable": {
+    "value": "Questa TV trasmette solo video H.264, HEVC, AV1, VP9 e VP8, non Xvid/DivX, MPEG-2, H.263, VC-1/WMV o RealVideo; scegli un altro flusso",
+    "description": "Explanation beneath the playback-failed heading when the video codec is one the TV's streaming player cannot take. Keep the codec names untranslated."
+  },
+  "widgets.panel.video_not_streamable": {
+    "value": "il lettore di streaming della TV non accetta questo formato video",
+    "description": "Diagnostics panel verdict suffix: the video codec cannot be fed to the TV's streaming player."
+  },
+  "widgets.panel.video_unsupported": {
+    "value": "la TV non ha un decoder per il video",
+    "description": "Diagnostics panel verdict suffix: the video codec cannot be decoded by the TV."
+  },
+  "widgets.failure.dolby_vision": {
+    "value": "Riproduzione non riuscita: questo flusso Dolby Vision non può essere mostrato correttamente qui",
+    "description": "Player error caption: a Dolby Vision stream whose base layer alone is a wrong picture, on a TV that cannot be told it is Dolby Vision."
+  },
+  "widgets.reason.dolby_vision": {
+    "value": "Questo flusso Dolby Vision non ha un’immagine che questa TV possa mostrare senza Dolby Vision; scegli un altro flusso",
+    "description": "Explanation beneath the playback-failed heading for a Dolby Vision stream that cannot be shown correctly."
+  },
+  "widgets.panel.dolby_vision": {
+    "value": "flusso Dolby Vision senza livello base visualizzabile",
+    "description": "Diagnostics panel verdict suffix: a Dolby Vision stream refused because its base layer is not a correct picture."
+  },
+  "widgets.failure.not_video_image": {
+    "value": "Questo flusso è un’immagine, non un video",
+    "description": "Player error caption: the stream link answered an image (PNG/JPEG/GIF/WebP) instead of the video — the addon picked the wrong file in a torrent."
+  },
+  "widgets.failure.not_video_archive": {
+    "value": "Questo flusso è un archivio (ZIP/RAR), non un video",
+    "description": "Player error caption: the stream link answered a ZIP or RAR archive instead of the video. Keep ZIP/RAR untranslated."
+  },
+  "widgets.failure.not_video_document": {
+    "value": "Questo flusso è un file di testo, non un video",
+    "description": "Player error caption: the stream link answered a text file (JSON, plain text, a subtitle or .nfo) instead of the video."
+  },
+  "widgets.failure.web_page": {
+    "value": "Il servizio ha risposto con una pagina web invece del video",
+    "description": "Player error caption: the streaming (debrid) service answered with an HTML web page instead of the video file, even after retrying."
+  },
+  "widgets.reason.wrong_file": {
+    "value": "L’addon ha scelto il file sbagliato in questo torrent. Prova un’altra release.",
+    "description": "Explanation beneath the not-a-video heading: the addon chose the wrong file from the torrent; the viewer should pick another release (another stream)."
+  },
+  "widgets.reason.web_page": {
+    "value": "Il servizio potrebbe stare ancora preparando il file. Riprova tra un momento o scegli un altro flusso.",
+    "description": "Explanation beneath the web-page heading: the debrid service may still be preparing the file; try again shortly or pick another stream."
+  },
+  "widgets.panel.not_video_image": {
+    "value": "il flusso è un’immagine, non un video",
+    "description": "Diagnostics panel verdict suffix: the stream is an image, not a video."
+  },
+  "widgets.panel.not_video_archive": {
+    "value": "il flusso è un archivio, non un video",
+    "description": "Diagnostics panel verdict suffix: the stream is an archive, not a video."
+  },
+  "widgets.panel.not_video_document": {
+    "value": "il flusso è un file di testo, non un video",
+    "description": "Diagnostics panel verdict suffix: the stream is a text file, not a video."
+  },
+  "widgets.panel.web_page": {
+    "value": "il servizio ha risposto con una pagina web",
+    "description": "Diagnostics panel verdict suffix: the service answered a web page instead of the video."
+  },
+  "widgets.cards.more_failed": {
+    "value": "Impossibile caricarne altri",
+    "description": "The tile at the end of a row of posters whose next page failed to load (first line)."
+  },
+  "widgets.cards.try_again": {
+    "value": "Riprova",
+    "description": "The tile at the end of a row of posters whose next page failed: the action line under the reason; OK asks again."
   }
 }

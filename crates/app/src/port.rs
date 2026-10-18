@@ -20,6 +20,7 @@ static PORT: sn_platform::tv::Port = sn_platform::tv::Port {
     open: sn_platform::keymanager::open,
     remove: sn_platform::keymanager::remove,
     system_locale: sn_platform::webos::system_locale,
+    sound_settings: sn_platform::webos::sound_settings,
     go_home: sn_platform::webos::go_home,
     poll_home: sn_platform::webos::poll_home,
     deliver_toast: sn_platform::webos::toast::deliver,

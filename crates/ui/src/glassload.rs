@@ -535,7 +535,7 @@ impl Dial {
                         r,
                         0.0,
                         PANEL_RADIUS,
-                        [1.0, 1.0, 1.0, 1.0],
+                        theme::TINT_WHITE,
                         sn_gfx::gfx::GlassRim::Bevelled,
                         sn_gfx::gfx::GlassFace::NONE,
                         theme::Material::Regular.deep(),
@@ -562,11 +562,11 @@ impl Dial {
                         sn_gfx::gfx::UV_FULL,
                         r,
                         theme::CARD_RING_RAD,
-                        [1.0, 1.0, 1.0, 1.0],
+                        theme::TINT_WHITE,
                         f,
                     );
                 }
-                Kind::Image => p.tex(self.card_tex(i), r, 0.0, [1.0, 1.0, 1.0, 1.0]),
+                Kind::Image => p.tex(self.card_tex(i), r, 0.0, theme::TINT_WHITE),
                 // The real popover is drawn by its own surface on the container tree; `layout` returns no
                 // rects for it, so this arm is unreachable and says so rather than drawing a stand-in.
                 Kind::Account => unreachable!("an Account step lays out no surfaces of its own"),

@@ -26,14 +26,14 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 PREFIX="$ROOT/vendor/ffmpeg-prefix-host"
 
 if [ "$(uname -s)" != Darwin ]; then
-  for lib in libavutil-sn.so.61 libavcodec-sn.so.63 libavformat-sn.so.63; do
+  for lib in libavutil-sn.so.61 libswresample-sn.so.7 libavcodec-sn.so.63 libavformat-sn.so.63; do
     [ -e "$PREFIX/lib/$lib" ] || { echo "no host $lib in $PREFIX/lib — run 'HOST=1 ci/build-ffmpeg.sh'" >&2; exit 1; }
   done
   echo "SN_FFMPEG_DIR=$PREFIX/lib"
   exit 0
 fi
 
-LIBS='libavutil-sn.61 libavcodec-sn.63 libavformat-sn.63 libswscale-sn.10'
+LIBS='libavutil-sn.61 libswresample-sn.7 libavcodec-sn.63 libavformat-sn.63 libswscale-sn.10'
 name=$1
 src=$(ls "$PREFIX/lib/$name".*.*.dylib 2>/dev/null | head -1)
 [ -n "$src" ] || { echo "no host $name in $PREFIX — run 'HOST=1 ci/build-ffmpeg.sh'" >&2; exit 1; }

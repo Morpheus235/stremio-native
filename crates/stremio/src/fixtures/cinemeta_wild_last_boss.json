@@ -1,0 +1,38 @@
+{
+ "meta": {
+  "id": "tt33258199",
+  "type": "series",
+  "name": "A Wild Last Boss Appeared!",
+  "moviedb_id": 280042,
+  "videos": [
+   {
+    "id": "tt33258199:1:1",
+    "name": "A Wild Last Boss Appears!",
+    "season": 1,
+    "episode": 1,
+    "released": "2025-10-04T13:30:00.000Z"
+   },
+   {
+    "id": "tt33258199:1:2",
+    "name": "We Came to Svel!",
+    "season": 1,
+    "episode": 2,
+    "released": "2025-10-11T13:30:00.000Z"
+   },
+   {
+    "id": "tt33258199:1:12",
+    "name": "There Was Something Incredible in My Homeland!",
+    "season": 1,
+    "episode": 12,
+    "released": "2025-12-20T13:30:00.000Z"
+   },
+   {
+    "id": "tt33258199:2:1",
+    "name": "Episode 1",
+    "season": 2,
+    "episode": 1,
+    "released": null
+   }
+  ]
+ }
+}

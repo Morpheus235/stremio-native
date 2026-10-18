@@ -15,6 +15,9 @@ pub enum GroupState {
     Loading,
     Ready(Vec<Stream>),
     Failed(FetchError),
+    /// Switched off for stream queries on this device (the Streams page's long-press on its chip):
+    /// not asked.
+    Off,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -99,6 +102,33 @@ mod tests {
         groups[0].load(&fetch);
         assert_eq!(groups[0].state, GroupState::Failed(FetchError::Status(500)));
         assert!(!none_found(&groups), "a failure is not 'no streams'");
+    }
+
+    /// *A Wild Last Boss Appeared!* season 2, every id scheme it reaches the page with, against
+    /// the stream declarations of the user's AIOStreams and MediaFusion (URLs are placeholders).
+    /// Each request carries the EPISODE id, the page's type and `:` encoded as `%3A`, as
+    /// stremio-core's `ResourcePath` URL does; an addon whose prefixes miss the id is not asked.
+    #[test]
+    fn a_second_season_episode_asks_each_serving_addon_for_that_episode() {
+        let a = |url: &str, json: &str| Addon::new(url, Manifest::parse(json.as_bytes()).unwrap());
+        let addons = vec![
+            a("https://aio.example/u/manifest.json", r#"{"id":"aiostreams","name":"AIOStreams","resources":[{"name":"stream","types":["movie","series","anime","tv","events"],"idPrefixes":["tt","imdb","mal","tvdb","tmdb","kitsu","tmdb:","tvdb:","mal:","mf","dl"]}],"types":["movie","series","anime","tv","events"]}"#),
+            a("https://mf.example/u/manifest.json", r#"{"id":"mediafusion","name":"MediaFusion","resources":[{"name":"stream","types":["movie","series","tv","events"],"idPrefixes":["tt","tmdb:","tvdb:","mal:","mf","dl"]}],"types":["movie","series","tv","events"]}"#),
+        ];
+        let urls = |kind: &str, id: &str| plan(&addons, kind, id).into_iter().map(|g| g.url).collect::<Vec<_>>();
+        // Cinemeta's numbering
+        assert_eq!(
+            urls("series", "tt33258199:2:1"),
+            ["https://aio.example/u/stream/series/tt33258199%3A2%3A1.json", "https://mf.example/u/stream/series/tt33258199%3A2%3A1.json"]
+        );
+        // the TMDB addon's (one TMDB season of 24 under the IMDb id): what it lists is what is asked
+        assert_eq!(
+            urls("series", "tt33258199:1:13"),
+            ["https://aio.example/u/stream/series/tt33258199%3A1%3A13.json", "https://mf.example/u/stream/series/tt33258199%3A1%3A13.json"]
+        );
+        // Kitsu's second-season entry: MediaFusion declares no `kitsu` prefix
+        assert_eq!(urls("series", "kitsu:50404:1"), ["https://aio.example/u/stream/series/kitsu%3A50404%3A1.json"]);
+        assert_eq!(urls("anime", "kitsu:50404:1"), ["https://aio.example/u/stream/anime/kitsu%3A50404%3A1.json"], "nor the anime type");
     }
 
     #[test]

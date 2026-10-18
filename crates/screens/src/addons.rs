@@ -5,7 +5,8 @@
 //! Both are route pages over a `TableView` (`TableScreen`), built by pure functions of the stores
 //! ([`build_list`], [`build_addon`]) so the host suite grades them:
 //!
-//! - **the list** opens with the account: who is signed in and *Sign out*, or *Sign in*; a failed
+//! - **the list** opens with the account: who is signed in (signing out is the top bar's account
+//!   menu's, which asks first), or *Sign in*; a failed
 //!   refresh of the collection says so with *Try again*. Then one row per addon in the
 //!   collection's order: its name, version and what it serves (resources and types), and
 //!   whether it is configurable. OK opens the addon.
@@ -16,13 +17,14 @@
 //! Installing and removing addons is not offered on the television: Stremio's own apps do that
 //! (the copy says so).
 //!
-//! The list is the top bar's Addons destination (`crate::tabs`): under the bar, no crumb, UP from
-//! its first row to the bar, BACK to its pill. An addon is a page pushed over it (crumb *Addons*).
+//! The list is a page pushed from Settings' *Addons* row or the account menu's (BACK returns to
+//! where it was pushed from); it wears the top bar, on the account pill (`tabs::Tab::of_arg`). An
+//! addon is a page pushed over it (crumb *Addons*).
 
 use std::borrow::Cow;
 
 use sn_machine::machine::{
-    Canon, Cx, Edge, Effects, EntryId, Fx, GroupId, Handled, InputEvent, InputKind, Key, LogicalState, Machine,
+    Canon, Cx, Effects, EntryId, Fx, GroupId, Handled, LogicalState, Machine,
     NavOp,
 };
 use sn_machine::present::Provenance;
@@ -36,15 +38,13 @@ use sn_ui::table_screen::{Header, TableScreen};
 use sn_ui::{theme, Rect};
 
 use crate::registry::{kind_label, word, AddonsCmd, AppArg, AppFx, Bundle, FirstSeat, Views};
-use crate::stores::account::{AccountCmd, SessionState};
+use crate::stores::account::SessionState;
 use crate::stores::addons::{InUse, Refresh};
 use crate::stores::StoreId;
-use crate::tabs::Tab;
 
 const GROUP: GroupId = GroupId(0);
 
 pub const SIGN_IN: u32 = 1;
-pub const SIGN_OUT: u32 = 2;
 pub const RETRY: u32 = 3;
 pub const SEARCH: u32 = 4;
 /// Addon rows: this plus the addon's position.
@@ -66,7 +66,6 @@ pub enum Mode {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
     SignIn,
-    SignOut,
     Retry,
     Open(String),
     ToggleSearch(String),
@@ -183,7 +182,7 @@ pub fn build_list(views: &Views<'_>) -> Built {
             if views.account.save_failed() {
                 out.note(&mut account, msg::app_addons_not_kept());
             }
-            out.push(&mut account, Row::new(msg::app_addons_sign_out()).destructive(true), SIGN_OUT, Some(Action::SignOut));
+            // signing out is the top bar's account menu's (it asks first): no second path here
         }
     }
     out.sections.push(account);
@@ -255,8 +254,6 @@ pub struct AddonsScreen {
     title: String,
     copy: String,
     seat: FirstSeat,
-    /// The viewer has moved focus themselves (the list's seat is then theirs).
-    chose: bool,
 }
 
 impl AddonsScreen {
@@ -281,7 +278,6 @@ impl AddonsScreen {
             title: msg::app_addons_title().to_string(),
             copy: String::new(),
             seat: FirstSeat::new(),
-            chose: false,
         }
     }
 
@@ -289,22 +285,20 @@ impl AddonsScreen {
         &self.built
     }
 
-    fn is_tab(&self) -> bool {
-        self.mode == Mode::List
-    }
-
     fn crumb(&self) -> Option<&'static str> {
         match self.mode {
+            // a page of the top bar's (the account pill's): no crumb, the bar says where it is
             Mode::List => None,
             Mode::Addon(_) => Some(msg::app_addons_title()),
         }
     }
 
+    /// The list wears the top bar (it is the account pill's page, `tabs::Tab::of_arg`); one addon
+    /// is a route page over it.
     fn layout(&self) -> RouteLayout {
-        if self.is_tab() {
-            RouteLayout::below_top_bar()
-        } else {
-            RouteLayout::screen()
+        match self.mode {
+            Mode::List => RouteLayout::below_top_bar(),
+            Mode::Addon(_) => RouteLayout::screen(),
         }
     }
 
@@ -316,7 +310,6 @@ impl AddonsScreen {
     fn activate(&mut self, elem: u32, fx: &mut Effects<'_, Bundle>) {
         match self.built.action_of(elem).cloned() {
             Some(Action::SignIn) => fx.push(Fx::Nav(NavOp::Push(AppArg::SignIn))),
-            Some(Action::SignOut) => fx.push(Fx::App(AppFx::Account(AccountCmd::SignOut))),
             Some(Action::Retry) => fx.push(Fx::App(AppFx::Addons(AddonsCmd::Retry))),
             Some(Action::Open(id)) => fx.push(Fx::Nav(NavOp::Push(AppArg::Addon(id)))),
             Some(Action::ToggleSearch(id)) => fx.push(Fx::App(AppFx::Addons(AddonsCmd::ToggleSearch(id)))),
@@ -388,17 +381,12 @@ impl Machine<Bundle> for AddonsScreen {
             ScreenEvent::Tick(t) => {
                 self.sync(cx, fx);
                 let target = Some(FocusTarget::FirstInGroup(GROUP));
-                let seated = if self.is_tab() {
-                    crate::tabs::rests(self.entry, Tab::Addons, cx, self.chose, true)
-                } else {
-                    cx.focus.current.is_some_and(|k| k.entry == self.entry)
-                };
+                let seated = cx.focus.current.is_some_and(|k| k.entry == self.entry);
                 self.seat.tick(seated, target, fx);
                 self.table.update(t.dt(), self.layout().sectioned_table().h);
                 Handled::Yes
             }
-            ScreenEvent::FocusMoved { from, to, by } => {
-                self.chose |= crate::tabs::deliberate(self.entry, *from, *by);
+            ScreenEvent::FocusMoved { to, .. } => {
                 if let Some(i) = self.built.index_of(RowKey(to.elem)) {
                     self.table.sel = i as i32;
                     self.sel = Some(RowKey(to.elem));
@@ -406,23 +394,13 @@ impl Machine<Bundle> for AddonsScreen {
                 fx.invalidate(Provenance::Input);
                 Handled::Yes
             }
-            ScreenEvent::Activate(elem) if self.is_tab() && crate::tabs::on_strip(*elem) => {
-                crate::tabs::on_pill(*elem, Tab::Addons, Some(GROUP), fx);
+            ScreenEvent::Activate(elem) if crate::tabs::on_strip(*elem) => {
+                crate::tabs::on_pill(*elem, crate::tabs::Tab::Settings, Some(GROUP), cx, fx);
                 Handled::Yes
             }
             ScreenEvent::Activate(elem) => {
                 self.activate(*elem, fx);
                 Handled::Yes
-            }
-            ScreenEvent::PressCommit(_) if self.is_tab() => {
-                if let Some(k) = cx.focus.current.filter(|k| k.entry == self.entry && crate::tabs::on_strip(k.elem)) {
-                    crate::tabs::on_pill(k.elem, Tab::Addons, Some(GROUP), fx);
-                }
-                Handled::Yes
-            }
-            ScreenEvent::Input(InputEvent { kind: InputKind::Key { key: Key::Back, edge: Edge::Down, .. }, .. }) if self.is_tab() => {
-                self.chose = true;
-                crate::tabs::on_back(self.entry, Tab::Addons, cx, fx)
             }
             ScreenEvent::Enter(_) | ScreenEvent::Uncover => {
                 fx.invalidate(Provenance::Nav);
@@ -449,7 +427,7 @@ impl Screen<Bundle> for AddonsScreen {
         AddonsScreen::crumb(self).map(Cow::Borrowed)
     }
     fn links(&self, out: &mut Vec<Link>) {
-        if self.is_tab() {
+        if matches!(self.mode, Mode::List) {
             crate::tabs::links(GROUP, out);
         }
     }

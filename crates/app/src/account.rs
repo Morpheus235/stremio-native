@@ -277,6 +277,8 @@ impl Files for DataDir {
 pub const SKIPPED_FILE: &str = "signin-skipped.json";
 /// Search's per-addon switches.
 pub const SEARCH_FILE: &str = "search-addons.json";
+/// The Streams page's per-addon switches (addons not asked for streams).
+pub const STREAMS_FILE: &str = "stream-addons.json";
 
 /// The device copy of `user_id`'s addon collection: named by a hash, never by the id itself.
 pub fn collection_file(user_id: &str) -> String {
@@ -401,6 +403,11 @@ pub fn run_addons_with(fetch: &dyn Fetch, files: &dyn Files, job: AddonsJob) -> 
             files.write(SEARCH_FILE, &filter_json(&filter));
             None
         }
+        AddonsJob::ReadStreamFilter => Some(AddonsLanding::StreamFilterRead(files.read(STREAMS_FILE).map(|b| parse_filter(&b)).unwrap_or_default())),
+        AddonsJob::WriteStreamFilter(filter) => {
+            files.write(STREAMS_FILE, &filter_json(&filter));
+            None
+        }
     }
 }
 
@@ -425,6 +432,21 @@ pub fn run_library_with(fetch: &dyn Fetch, job: LibraryJob) -> LibraryLanding {
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
             let result = sn_stremio::library::add_to_library(fetch, auth_key.expose(), &entry, &sn_stremio::library::rfc3339_ms(now));
             LibraryLanding::Added { user_id, id: entry.id, result }
+        }
+        LibraryJob::Edit { user_id, auth_key, id, edit } => {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+            let result = sn_stremio::library::edit_library(fetch, auth_key.expose(), &id, edit, &sn_stremio::library::rfc3339_ms(now));
+            LibraryLanding::Edited { user_id, id, result }
+        }
+        LibraryJob::Mark { user_id, auth_key, entry, edit } => {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+            let result = sn_stremio::library::mark_library(fetch, auth_key.expose(), &entry, edit, &sn_stremio::library::rfc3339_ms(now));
+            LibraryLanding::Edited { user_id, id: entry.id, result }
+        }
+        LibraryJob::Progress { user_id, auth_key, progress, last } => {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+            let result = sn_stremio::library::put_progress(fetch, auth_key.expose(), &progress, &sn_stremio::library::rfc3339_ms(now));
+            LibraryLanding::Progressed { user_id, last, result }
         }
     }
 }

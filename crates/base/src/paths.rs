@@ -492,6 +492,8 @@ pub unsafe extern "C" fn sn_runtime_path(
 /// data with a stale second list.
 pub mod runtime_file {
     pub const EVENTS: &str = "stremionative-events.log";
+    /// The previous session's event log, kept by `native/main.c` at launch.
+    pub const EVENTS_PREV: &str = "stremionative-events.prev.log";
     pub const CRASH: &str = "stremionative-crash.log";
     pub const STDERR: &str = "stremionative-stderr.log";
     pub const STORAGE_DIAGNOSTICS: &str = "stremionative-diag.log";
@@ -500,8 +502,9 @@ pub mod runtime_file {
     pub const GPU_TIME: &str = "stremionative-gputime.jsonl";
     pub const HARDWARE_COUNTERS: &str = "stremionative-hwcnt.jsonl";
 
-    pub const LOGS: [&str; 8] = [
+    pub const LOGS: [&str; 9] = [
         EVENTS,
+        EVENTS_PREV,
         CRASH,
         STDERR,
         STORAGE_DIAGNOSTICS,

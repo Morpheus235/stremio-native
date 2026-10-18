@@ -1,6 +1,6 @@
 //! **HLS (RFC 8216) in Rust**, for the streams the bundled FFmpeg cannot open itself: it has no
 //! `hls` demuxer and no network protocols (`--disable-network`; its demuxers are matroska, mov,
-//! mpegts, h264 and hevc). Live-TV addons answer with exactly this — an `.m3u8` master or media
+//! mpegts, h264, hevc, avi, asf, mpegps and rm). Live-TV addons answer with exactly this — an `.m3u8` master or media
 //! playlist of MPEG-TS segments (sometimes fMP4 with an `EXT-X-MAP`, sometimes AES-128), behind
 //! request headers the origin insists on for every playlist, key and segment.
 //!

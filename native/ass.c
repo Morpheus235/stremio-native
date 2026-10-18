@@ -1,6 +1,6 @@
 /* Compiled INTO libass-sn, never linked into the app. The implementation reads
  * ASS_Image/ASS_Track through the exact pinned libass headers used to build it. */
-#include "../include/ass.h"
+#include "ass.h"
 #include "ass_composite.h"
 #include "ass_internal.h"
 #include <ass/ass.h>
@@ -34,6 +34,7 @@ struct SnAss {
     ASS_Track *track;
     uint8_t *rgba;
     size_t bytes, font_bytes;
+    size_t lent_fonts;  /* the library's first fonts, lent by sn_ass_add_font, not owned */
     SnAssBitmap regions[SN_ASS_MAX_REGIONS];
     struct ImageKey *images;
     size_t image_capacity, image_count, region_count;
@@ -61,7 +62,10 @@ void sn_ass_destroy(SnAss *ctx)
     if (!ctx) return;
     if (ctx->track) ass_free_track(ctx->track);
     if (ctx->renderer) ass_renderer_done(ctx->renderer);
-    if (ctx->library) ass_library_done(ctx->library);
+    if (ctx->library) {
+        sni_return_fonts(ctx->library, ctx->lent_fonts);
+        ass_library_done(ctx->library);
+    }
     free(ctx->rgba);
     free(ctx->images);
     free(ctx->default_font);
@@ -94,7 +98,8 @@ int sn_ass_add_font(SnAss *ctx, const char *name, const uint8_t *data, size_t le
     if (!ctx || ctx->track || ctx->fonts_set || !name || !*name || !data || !len ||
         len > MAX_FONT_BYTES || ctx->font_bytes > MAX_FONT_BYTES - len)
         return -1;
-    ass_add_font(ctx->library, name, (char *)data, (int)len);
+    if (sni_lend_font(ctx->library, name, (const char *)data, len) < 0) return -1;
+    ++ctx->lent_fonts;
     ctx->font_bytes += len;
     return 0;
 }

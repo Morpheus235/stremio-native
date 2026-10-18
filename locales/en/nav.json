@@ -1,11 +1,63 @@
 {
+  "app.filter.type": {
+    "value": "Type",
+    "description": "Dropdowns: the type selector's popover title."
+  },
+  "app.filter.all_types": {
+    "value": "All types",
+    "description": "Home and Library: the type dropdown's button while every type is shown."
+  },
+  "app.discover.catalog": {
+    "value": "Catalog",
+    "description": "Discover: the catalog dropdown's popover title."
+  },
+  "app.discover.genre": {
+    "value": "Genre",
+    "description": "Discover: the genre dropdown's popover title."
+  },
+  "app.discover.all_genres": {
+    "value": "All genres",
+    "description": "Discover: the genre dropdown's button while no genre narrows the catalog."
+  },
+  "app.search.addons": {
+    "value": "Addons",
+    "description": "Search: the addon filter's popover title."
+  },
+  "app.search.addons_all": {
+    "value": "All addons",
+    "description": "Search: the addon filter's button while every addon is searched."
+  },
+  "app.search.addons_some": {
+    "value": "{on} of {total} addons",
+    "description": "Search: the addon filter's button while only some addons are searched.",
+    "args": {
+      "on": "i64",
+      "total": "i64"
+    }
+  },
+  "app.search.select_all": {
+    "value": "Select all",
+    "description": "Search: the addon filter's row that switches every addon on."
+  },
+  "app.search.select_none": {
+    "value": "Select none",
+    "description": "Search: the addon filter's row that switches every addon off."
+  },
+  "app.detail.seasons": {
+    "value": "Seasons",
+    "description": "Detail: the season dropdown's popover title."
+  },
   "app.tab.home": {
     "value": "Home",
     "description": "Top bar: the Home destination's pill."
   },
+  "app.tab.discover": {
+    "value": "Discover",
+    "description": "Top bar: the Discover destination's pill (the addons' catalogs by type, catalog and genre)."
+  },
   "app.tab.live_tv": {
     "value": "Live TV",
-    "description": "Top bar: the Live TV destination's pill (TV channel catalogs)."
+    "description": "Discover: the Live TV sub-tab's chip (the TV channel catalogs)."
   },
   "app.tab.library": {
     "value": "Library",
@@ -37,15 +89,35 @@
   },
   "app.menu.in_library": {
     "value": "In your library",
-    "description": "A card's options menu: the item is already in the user's Stremio library (not pressable)."
+    "description": "The Detail page's library button once the item is in the user's Stremio library (pressing it removes the item)."
   },
   "app.menu.adding": {
     "value": "Adding…",
     "description": "A card's options menu, under Add to library: the item is being added."
   },
   "app.menu.add_failed": {
-    "value": "Couldn't add it. Try again.",
-    "description": "A card's options menu, under Add to library: the last attempt failed; pressing tries again."
+    "value": "Couldn't add it to your library",
+    "description": "A toast after a refused Add to library (the card's menu or the Detail page's button); the item is shown as it was."
+  },
+  "app.menu.remove_from_library": {
+    "value": "Remove from library",
+    "description": "A card's options menu: remove the item from the user's Stremio library."
+  },
+  "app.menu.removing": {
+    "value": "Removing…",
+    "description": "A card's options menu, under Remove from library: the item is being removed."
+  },
+  "app.menu.remove_failed": {
+    "value": "Couldn't remove it from your library",
+    "description": "A toast after a refused Remove from library; the item is shown as it was."
+  },
+  "app.menu.remove_from_continue": {
+    "value": "Remove from Continue Watching",
+    "description": "A card's options menu: drop the item from the Continue Watching row (it stays in the library)."
+  },
+  "app.menu.rewind_failed": {
+    "value": "Couldn't remove it from Continue Watching",
+    "description": "A toast after a refused Remove from Continue Watching; the item is shown as it was."
   },
   "app.grid.loading": {
     "value": "Loading…",
@@ -75,25 +147,13 @@
       "query": "str"
     }
   },
-  "app.live.catalog_chip": {
-    "value": "Catalog",
-    "description": "Live TV: the chip that picks which addon catalog of channels is shown."
+  "app.discover.none": {
+    "value": "Nothing to discover in your addons",
+    "description": "Discover: no installed addon offers a catalog to browse."
   },
-  "app.live.genre_chip": {
-    "value": "Genre",
-    "description": "Live TV: the chip that picks the channels' genre."
-  },
-  "app.live.all_genres": {
-    "value": "All",
-    "description": "Live TV: the genre option that shows every channel."
-  },
-  "app.live.none": {
-    "value": "No live TV in your addons",
-    "description": "Live TV: no installed addon offers TV channels."
-  },
-  "app.live.none_reason": {
-    "value": "Install an addon that offers TV channels and they appear here.",
-    "description": "Live TV: the line under the no-channels read-out."
+  "app.discover.none_reason": {
+    "value": "Install an addon with catalogs and they appear here.",
+    "description": "Discover: the line under the no-catalogs read-out."
   },
   "app.search.placeholder": {
     "value": "Search",
@@ -194,9 +254,17 @@
     "value": "High",
     "description": "Subtitle position rung."
   },
-  "app.settings.remote": {
-    "value": "Remote",
-    "description": "Settings root: section header for the remote control."
+  "app.settings.interface": {
+    "value": "Interface",
+    "description": "Settings root: section header for Stats for nerds and the remote key map."
+  },
+  "app.settings.audio_subtitles": {
+    "value": "Audio & subtitles",
+    "description": "Settings root: section header for the audio and subtitle language lists, the subtitle mode and the subtitle look."
+  },
+  "app.settings.streams": {
+    "value": "Streams",
+    "description": "Settings root: section header for how stream lists are sorted."
   },
   "app.settings.remote_keys": {
     "value": "Remote keys",
@@ -310,7 +378,7 @@
     "description": "Privacy: one line of what leaves the TV."
   },
   "app.privacy.addons": {
-    "value": "Catalog, search, meta, stream and subtitle requests — including your search text and the item you open — go to the addons you installed.",
+    "value": "Catalog, search, meta, stream and subtitle requests — including your search text and the item you open — go to the addons you installed. Subtitle requests also send the video's file name, size and hash, and subtitle files download from the hosts the addon names.",
     "description": "Privacy: one line of what leaves the TV."
   },
   "app.privacy.media": {
@@ -320,6 +388,10 @@
   "app.privacy.artwork": {
     "value": "Artwork requests go to the hosts in the addons’ image addresses.",
     "description": "Privacy: one line of what leaves the TV."
+  },
+  "app.privacy.skip": {
+    "value": "Unless Skip intros is Off, the ID of the episode or film you play goes to api.introdb.app — for anime to api.aniskip.com, kitsu.io and arm.haglund.dev — to find its intro, recap and credits.",
+    "description": "Privacy: one line of what leaves the TV. Skip intros is the Settings row; the hosts are proper names."
   },
   "app.privacy.stays_head": {
     "value": "What stays on the TV",
@@ -424,6 +496,10 @@
     "value": "next tab",
     "description": "Remote keys: a shortcut's action — the top bar's next destination."
   },
+  "app.remote.see_all": {
+    "value": "on a row of cards: see all of it",
+    "description": "Remote keys: what the yellow key does (it opens the whole row the focused card is in)."
+  },
   "app.remote.playback_head": {
     "value": "During playback",
     "description": "Remote keys: heading (shown in capitals)."
@@ -443,5 +519,94 @@
   "app.remote.stop": {
     "value": "stop and go back",
     "description": "Remote keys: what BACK/STOP do during playback."
+  },
+  "app.remote.key_left_right": {
+    "value": "LEFT, RIGHT",
+    "description": "Remote keys: the left and right arrows, during playback."
+  },
+  "app.remote.seek_step": {
+    "value": "10 s back or on; presses add up into one jump",
+    "description": "Remote keys: what LEFT/RIGHT do in the player (each press moves 10 seconds; quick presses become one seek)."
+  },
+  "app.remote.key_rew_ff": {
+    "value": "REW, FF",
+    "description": "Remote keys: the rewind and fast-forward transport keys."
+  },
+  "app.remote.speed_scrub": {
+    "value": "search faster with each press (×2 to ×32); OK plays from there, BACK cancels",
+    "description": "Remote keys: what rewind/fast-forward do in the player."
+  },
+  "app.remote.key_digits": {
+    "value": "0–9",
+    "description": "Remote keys: the number keys."
+  },
+  "app.remote.jump_percent": {
+    "value": "jump to 0–90 % of the video",
+    "description": "Remote keys: what the number keys do in the player (1 is 10 %, 0 the start)."
+  },
+  "app.remote.key_ch": {
+    "value": "CH +, CH −",
+    "description": "Remote keys: the channel keys, during playback."
+  },
+  "app.remote.jump_ten": {
+    "value": "10 minutes on or back",
+    "description": "Remote keys: what the channel keys do in the player."
+  },
+  "app.remote.audio_menu": {
+    "value": "audio track",
+    "description": "Remote keys: what the red key does in the player."
+  },
+  "app.remote.subtitles_toggle": {
+    "value": "subtitles on or off; hold for the subtitle menu",
+    "description": "Remote keys: what the green key does in the player."
+  },
+  "app.remote.episodes": {
+    "value": "episodes (a film: its info)",
+    "description": "Remote keys: what the yellow key does in the player (a series' episodes; for a film, its show info)."
+  },
+  "app.remote.show_info": {
+    "value": "show info",
+    "description": "Remote keys: what the blue key does in the player."
+  },
+  "app.view.name": {
+    "value": "View",
+    "description": "Search, Library and catalog grids: the name on the chip that switches between posters and a list."
+  },
+  "app.view.posters": {
+    "value": "Posters",
+    "description": "The view chip's value while items are shown as posters."
+  },
+  "app.view.list": {
+    "value": "List",
+    "description": "The view chip's value while items are shown as a list."
+  },
+  "app.search.recents": {
+    "value": "Recent searches",
+    "description": "Search: the heading over the recent search pills."
+  },
+  "app.search.clear": {
+    "value": "Clear",
+    "description": "Search: the last recent-search pill, which forgets them all."
+  },
+  "app.search.summary_empty": {
+    "value": "No results from: {addons}",
+    "description": "Search: the closing line naming the catalogs that found nothing.",
+    "args": {
+      "addons": "str"
+    }
+  },
+  "app.search.summary_failed": {
+    "value": "Failed: {addons}",
+    "description": "Search: the closing line naming the catalogs whose search failed, each with a short cause.",
+    "args": {
+      "addons": "str"
+    }
+  },
+  "app.search.no_results": {
+    "value": "No results for “{query}”",
+    "description": "Search: the verdict leading the closing line when every catalog has answered and none found anything. {query} is what was searched (keep the quotation marks of your language).",
+    "args": {
+      "query": "str"
+    }
   }
 }

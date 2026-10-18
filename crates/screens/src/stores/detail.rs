@@ -15,9 +15,9 @@
 use std::collections::HashMap;
 
 use sn_stremio::manifest::Addon;
+use sn_stremio::search::AddonFilter;
 use sn_stremio::streams::{plan, GroupState, StreamGroup};
 use sn_stremio::types::Meta;
-use sn_stremio::url::resource_url;
 use sn_stremio::FetchError;
 
 /// An item, as a meta request names it.
@@ -45,7 +45,9 @@ pub enum MetaState {
 
 #[derive(Clone, Debug)]
 pub enum DetailJob {
-    Meta { key: MetaKey, url: String },
+    /// Every serving addon's meta URL in addon order; the first that answers is the meta
+    /// ([`sn_stremio::meta::fetch_meta`]).
+    Meta { key: MetaKey, urls: Vec<String> },
     /// Load `group` (a planned, `Loading` group) for `key`; `index` is its position in the plan.
     Streams { key: StreamKey, index: usize, group: StreamGroup },
 }
@@ -95,13 +97,11 @@ impl DetailStore {
             h.holders += 1;
             return Vec::new();
         }
-        let source = addons.iter().find(|a| a.manifest.serves("meta", &key.kind, &key.id));
-        let (state, jobs) = match source {
-            Some(a) => {
-                let url = resource_url(&a.base, "meta", &key.kind, &key.id, &[]);
-                (MetaState::Loading, vec![DetailJob::Meta { key: key.clone(), url }])
-            }
-            None => (MetaState::NoSource, Vec::new()),
+        let urls = sn_stremio::meta::meta_urls(addons, &key.kind, &key.id);
+        let (state, jobs) = if urls.is_empty() {
+            (MetaState::NoSource, Vec::new())
+        } else {
+            (MetaState::Loading, vec![DetailJob::Meta { key: key.clone(), urls }])
         };
         self.metas.insert(key, Held { value: state, holders: 1 });
         self.bump();
@@ -118,16 +118,21 @@ impl DetailStore {
         }
     }
 
-    /// A page wants the streams of `key`. The first holder plans one group per serving addon.
-    pub fn open_streams(&mut self, addons: &[Addon], key: StreamKey) -> Vec<DetailJob> {
+    /// A page wants the streams of `key`. The first holder plans one group per serving addon; an
+    /// addon `off` switched off for stream queries is planned [`GroupState::Off`] and not asked.
+    pub fn open_streams(&mut self, addons: &[Addon], off: &AddonFilter, key: StreamKey) -> Vec<DetailJob> {
         if let Some(h) = self.streams.get_mut(&key) {
             h.holders += 1;
             return Vec::new();
         }
-        let groups = plan(addons, &key.kind, &key.video_id);
+        let mut groups = plan(addons, &key.kind, &key.video_id);
+        for g in groups.iter_mut().filter(|g| !off.allows(&g.addon_id)) {
+            g.state = GroupState::Off;
+        }
         let jobs = groups
             .iter()
             .enumerate()
+            .filter(|(_, g)| g.state == GroupState::Loading)
             .map(|(index, group)| DetailJob::Streams { key: key.clone(), index, group: group.clone() })
             .collect();
         self.streams.insert(key, Held { value: groups, holders: 1 });
@@ -145,6 +150,26 @@ impl DetailStore {
         }
     }
 
+    /// Addon `addon_id` was switched off (`on` false) or on again for stream queries: every held
+    /// list drops its answer, or asks it now.
+    pub fn set_addon(&mut self, addon_id: &str, on: bool) -> Vec<DetailJob> {
+        let mut jobs = Vec::new();
+        for (key, held) in &mut self.streams {
+            for (index, g) in held.value.iter_mut().enumerate().filter(|(_, g)| g.addon_id == addon_id) {
+                match (on, g.state == GroupState::Off) {
+                    (false, false) => g.state = GroupState::Off,
+                    (true, true) => {
+                        g.state = GroupState::Loading;
+                        jobs.push(DetailJob::Streams { key: key.clone(), index, group: g.clone() });
+                    }
+                    _ => {}
+                }
+            }
+        }
+        self.bump();
+        jobs
+    }
+
     /// Fold a job's outcome in. `false` for an entry no page holds any more (closed while out).
     pub fn land(&mut self, landing: DetailLanding) -> bool {
         match landing {
@@ -159,6 +184,10 @@ impl DetailStore {
                 let Some(group) = self.streams.get_mut(&key).and_then(|h| h.value.get_mut(index)) else {
                     return false;
                 };
+                // an answer out when the addon was switched off is dropped
+                if group.state == GroupState::Off {
+                    return false;
+                }
                 group.state = state;
             }
         }
@@ -197,19 +226,33 @@ mod tests {
         let mut s = DetailStore::new();
         let key = MetaKey { kind: "series".into(), id: "tt0903747".into() };
         let jobs = s.open_meta(&addons(), key.clone());
-        assert!(matches!(&jobs[..], [DetailJob::Meta { url, .. }]
-            if url == "https://v3-cinemeta.strem.io/meta/series/tt0903747.json"));
+        assert!(matches!(&jobs[..], [DetailJob::Meta { urls, .. }]
+            if urls == &["https://v3-cinemeta.strem.io/meta/series/tt0903747.json"]));
         assert_eq!(s.meta(&key), Some(&MetaState::Loading));
         let none = MetaKey { kind: "tv".into(), id: "live:1".into() };
         assert!(s.open_meta(&addons(), none.clone()).is_empty());
         assert_eq!(s.meta(&none), Some(&MetaState::NoSource));
     }
 
+    /// The real MAL-Stremio manifest declares `meta` for `tt` ids too: placed above Cinemeta, the
+    /// request still reaches Cinemeta (stremio-core asks every serving addon, first answer wins).
+    #[test]
+    fn meta_is_asked_of_every_serving_addon_in_order() {
+        let mal = addon("https://mal.example/u1/manifest.json", include_str!("../../../stremio/src/fixtures/mal_stremio_manifest.json"));
+        let mut list = vec![mal];
+        list.extend(addons());
+        let mut s = DetailStore::new();
+        let key = MetaKey { kind: "series".into(), id: "tt0903747".into() };
+        let jobs = s.open_meta(&list, key);
+        assert!(matches!(&jobs[..], [DetailJob::Meta { urls, .. }]
+            if urls == &["https://mal.example/u1/meta/series/tt0903747.json", "https://v3-cinemeta.strem.io/meta/series/tt0903747.json"]));
+    }
+
     #[test]
     fn each_addon_keeps_its_own_stream_state() {
         let mut s = DetailStore::new();
         let key = StreamKey { kind: "series".into(), video_id: "tt0903747:1:2".into() };
-        let jobs = s.open_streams(&addons(), key.clone());
+        let jobs = s.open_streams(&addons(), &Default::default(), key.clone());
         let urls: Vec<String> = jobs
             .iter()
             .map(|j| match j {
@@ -236,8 +279,8 @@ mod tests {
     fn an_entry_lives_while_any_page_holds_it() {
         let mut s = DetailStore::new();
         let key = StreamKey { kind: "movie".into(), video_id: "tt1".into() };
-        assert_eq!(s.open_streams(&addons(), key.clone()).len(), 1, "only One serves movies");
-        assert!(s.open_streams(&addons(), key.clone()).is_empty(), "a second holder asks nothing");
+        assert_eq!(s.open_streams(&addons(), &Default::default(), key.clone()).len(), 1, "only One serves movies");
+        assert!(s.open_streams(&addons(), &Default::default(), key.clone()).is_empty(), "a second holder asks nothing");
         s.close_streams(&key);
         assert!(s.streams(&key).is_some());
         s.close_streams(&key);
@@ -245,5 +288,21 @@ mod tests {
         let gen = s.gen();
         assert!(!s.land(DetailLanding::Streams { key, index: 0, state: GroupState::Ready(Vec::new()) }), "a late landing for a closed entry is dropped");
         assert_eq!(s.gen(), gen);
+    }
+
+    /// An addon switched off for stream queries is planned Off and not asked; its answer out when
+    /// it was switched off is dropped.
+    #[test]
+    fn an_addon_switched_off_is_not_asked_and_its_late_answer_is_dropped() {
+        let mut s = DetailStore::new();
+        let key = StreamKey { kind: "series".into(), video_id: "tt0903747:1:1".into() };
+        let mut off = AddonFilter::default();
+        off.toggle("two");
+        let jobs = s.open_streams(&addons(), &off, key.clone());
+        assert_eq!(jobs.len(), 1, "only One is asked");
+        assert_eq!(s.streams(&key).unwrap()[1].state, GroupState::Off);
+        assert!(s.set_addon("one", false).is_empty());
+        assert!(!s.land(DetailLanding::Streams { key: key.clone(), index: 0, state: GroupState::Ready(Vec::new()) }), "One's late answer is dropped");
+        assert_eq!(s.set_addon("two", true).len(), 1, "switched on, it is asked");
     }
 }

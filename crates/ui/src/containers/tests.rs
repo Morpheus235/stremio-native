@@ -574,6 +574,13 @@ fn the_lifted_element_reaches_the_page_pass_and_every_change_of_it_retakes_the_s
     let opener = FocusKey { entry: home, elem: 0 };
     let seen = |d: &Dispatcher<FixtureHost>| d.nav.entry(home).unwrap().inst.as_ref().unwrap().screen.as_any().unwrap()
         .downcast_ref::<crate::fixture::FixtureScreen>().unwrap().lifted;
+    // The element the dispatcher's opener lift last drew on the host page since the previous read
+    // (`Screen::redraw_focused`), and whether it ran after the page pass did.
+    let lift = |d: &Dispatcher<FixtureHost>| {
+        let page = d.nav.entry(home).unwrap().inst.as_ref().unwrap().screen.as_any().unwrap()
+            .downcast_ref::<crate::fixture::FixtureScreen>().unwrap();
+        page.redrawn.take().map(|(k, at)| (k, at > page.draw_at))
+    };
     let mut ms = 16;
     // Draw one frame (the production order: frame, then draw), return how often the snapshot was
     // thrown away across it.
@@ -603,6 +610,8 @@ fn the_lifted_element_reaches_the_page_pass_and_every_change_of_it_retakes_the_s
         set_lift_owns(true);
         let retakes = step(&mut d, &mut rig, vec![]);
         assert_eq!(seen(&d), Some(opener), "the page pass must be handed the lifted element");
+        assert_eq!(lift(&d), Some((Some(opener), true)),
+            "…and the card it left out is drawn by the lift, above the page: nobody else draws it");
         assert!(!lift_owns(), "a change of the lifted element clears the card section's flag");
         assert_eq!(retakes, 1, "the mount re-takes the snapshot once");
         // the lift running: nothing changes, so nothing is cleared or re-taken, however long it runs
@@ -611,6 +620,7 @@ fn the_lifted_element_reaches_the_page_pass_and_every_change_of_it_retakes_the_s
             assert_eq!(step(&mut d, &mut rig, vec![]), 0, "an unchanged lifted element re-takes nothing");
             assert!(lift_owns(), "…and clears nothing");
             assert_eq!(seen(&d), Some(opener));
+            assert_eq!(lift(&d), Some((Some(opener), true)), "the lift draws the card every frame");
         }
 
         // Back: the menu is Closing, input is the page's again and its focus is still the opener,
@@ -622,6 +632,7 @@ fn the_lifted_element_reaches_the_page_pass_and_every_change_of_it_retakes_the_s
         assert_eq!(step(&mut d, &mut rig, vec![]), 0);
         assert!(lift_owns());
         assert_eq!(seen(&d), Some(opener));
+        assert_eq!(lift(&d), Some((Some(opener), true)), "the fading menu's opener is still drawn");
 
         if !removal_by_prune {
             // stand-down: focus left the opener while the menu fades. Some -> None.
@@ -632,6 +643,7 @@ fn the_lifted_element_reaches_the_page_pass_and_every_change_of_it_retakes_the_s
             assert_eq!(seen(&d), None, "the page draws the card itself once the lift stood down");
             assert!(!lift_owns());
             assert_eq!(retakes, 1, "the stand-down re-takes the snapshot once");
+            assert_eq!(lift(&d), None, "the stood-down lift draws nothing");
         }
         // run the fade out: the surface is pruned. For the run that never stood down this is the
         // Some -> None change; for the other nothing is left to change.
@@ -645,7 +657,9 @@ fn the_lifted_element_reaches_the_page_pass_and_every_change_of_it_retakes_the_s
         assert_eq!(seen(&d), None, "after prune the page owns every card");
         assert_eq!(changes, u32::from(removal_by_prune), "the removal is one change, and only when the lift still ran");
         if removal_by_prune { assert!(!lift_owns(), "removal clears the flag"); }
+        lift(&d);
         assert_eq!(step(&mut d, &mut rig, vec![]), 0);
+        assert_eq!(lift(&d), None, "with no menu there is no lift");
         set_lift_owns(false);
     }
 }

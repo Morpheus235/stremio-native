@@ -1,0 +1,74 @@
+{
+ "behaviorHints": {
+  "configurable": true,
+  "configurationRequired": true
+ },
+ "cacheMaxAge": 10800,
+ "catalogs": [
+  {
+   "extra": [
+    {
+     "name": "skip"
+    },
+    {
+     "name": "genre",
+     "options": [
+      "Action",
+      "Adventure",
+      "Anthropomorphic"
+     ]
+    }
+   ],
+   "id": "watching",
+   "name": "MAL: Watching",
+   "type": "anime"
+  },
+  {
+   "extra": [
+    {
+     "isRequired": true,
+     "name": "search"
+    },
+    {
+     "name": "skip"
+    },
+    {
+     "isRequired": false,
+     "name": "genre",
+     "options": [
+      "Action",
+      "Adventure",
+      "Anthropomorphic"
+     ]
+    }
+   ],
+   "id": "search_list",
+   "name": "MAL",
+   "type": "anime"
+  }
+ ],
+ "description": "Provides users with watchlist content from MyAnimeList within Stremio. This addon only provides catalogs, with the help of AnimeKitsu",
+ "id": "com.sagetendo.mal-stremio-addon",
+ "idPrefixes": [
+  "mal",
+  "kitsu",
+  "tt",
+  "tvdb",
+  "tmdb"
+ ],
+ "logo": "https://i.imgur.com/zVYdffr.png",
+ "name": "MAL-Stremio Addon",
+ "resources": [
+  "catalog",
+  "meta",
+  "subtitles"
+ ],
+ "staleError": 0,
+ "staleRevalidate": 600,
+ "types": [
+  "anime",
+  "series",
+  "movie"
+ ],
+ "version": "4.0.0"
+}

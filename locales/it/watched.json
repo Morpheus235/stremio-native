@@ -1,0 +1,13 @@
+{
+  "app.watched.mark_failed": "Impossibile modificare lo stato di visione",
+  "app.watched.watched": "Visto",
+  "app.watched.mark_season": "Segna stagione come vista",
+  "app.watched.unmark_season": "Segna stagione come non vista",
+  "app.library.sort": "Ordina",
+  "app.library.sort_last_watched": "Visti di recente",
+  "app.library.sort_name": "A–Z",
+  "app.library.sort_name_reverse": "Z–A",
+  "app.library.sort_times_watched": "Più visti",
+  "app.library.sort_watched": "Visti",
+  "app.library.sort_not_watched": "Non visti"
+}

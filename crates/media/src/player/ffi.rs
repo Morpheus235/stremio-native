@@ -57,6 +57,8 @@ mod sys {
         pub(super) fn vp_create_window() -> *const c_char;
         pub(super) fn vp_window_id() -> *const c_char;
         pub(super) fn vp_place(
+            src_x: c_int,
+            src_y: c_int,
             src_w: c_int,
             src_h: c_int,
             dst_x: c_int,
@@ -205,6 +207,8 @@ impl sn_platform::tv::sink::VideoSink for StarfishSink {
     unsafe fn place_window(
         &self,
         _: &MainThread,
+        src_x: c_int,
+        src_y: c_int,
         src_w: c_int,
         src_h: c_int,
         dst_x: c_int,
@@ -212,7 +216,7 @@ impl sn_platform::tv::sink::VideoSink for StarfishSink {
         dst_w: c_int,
         dst_h: c_int,
     ) -> c_int {
-        sys::vp_place(src_w, src_h, dst_x, dst_y, dst_w, dst_h)
+        sys::vp_place(src_x, src_y, src_w, src_h, dst_x, dst_y, dst_w, dst_h)
     }
     #[inline]
     unsafe fn destroy_window(&self, _: &MainThread) {

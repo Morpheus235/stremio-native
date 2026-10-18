@@ -26,6 +26,10 @@ use std::collections::BTreeMap;
 ///  "atmos":false, "headers":{"Referer":"https://live.example/"}}
 /// ```
 ///
+/// `{"url":"…","probe":true}` declares nothing instead: the stream is probed and decided exactly
+/// as a Stremio stream is. A debug build opens the player on the trigger at boot
+/// (`app::boot`), so relaunching the app with the file in place starts the case.
+///
 /// Deliberately **not** `Debug`: `url` and `headers` are free strings, and a derived `Debug` is how
 /// a credential in either reaches a log the day someone points this trigger at a real addon.
 #[derive(serde::Deserialize, Clone)]
@@ -34,7 +38,7 @@ pub struct PlayUrl {
     #[serde(default)]
     pub url: String,
     /// The Load payload's video codec, FFmpeg's spelling: `"h264"` or empty, `"hevc"`, `"av1"`,
-    /// `"vp9"` (the last two only on a set whose table lists that decoder).
+    /// `"vp9"`, `"vp8"` (the last three only on a set whose table lists that decoder).
     #[serde(default)]
     pub vcodec: String,
     /// The audio codec, in FFmpeg's spelling (`"eac3"`, not `"AC3 PLUS"`) — the engine does the
@@ -59,6 +63,10 @@ pub struct PlayUrl {
     /// The stream's request headers (`behaviorHints.proxyHeaders.request`).
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
+    /// Declare nothing and let the player probe the stream (`player::probe` -> `session::resolve`),
+    /// as a Stremio stream does; the codec fields above are then ignored.
+    #[serde(default)]
+    pub probe: bool,
 }
 
 /// The four Dolby Vision fields the Load payload decides on.
@@ -94,11 +102,16 @@ impl PlayUrl {
         let pairs: Vec<(&str, &str)> = self.headers.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
         let mut start = crate::session::PlaybackStart::new(self.url.clone());
         start.headers = crate::headers::RequestHeaders::from_pairs(&pairs)?;
+        if self.probe {
+            return Ok(start);
+        }
         start.stream = Some(crate::stream::StreamDeclaration {
             vcodec: self.vcodec.clone(),
             acodec: self.acodec.clone(),
             audio_channels: self.channels,
+            audio_sample_rate: 0,
             fps: self.fps,
+            vprofile: -99,
             raster: self.raster.map_or((0, 0), |[w, h]| (w, h)),
             dovi: self.dovi.to_dovi(),
             atmos: self.atmos,
@@ -190,6 +203,18 @@ mod tests {
         let p7 = super::PlayDovi { profile: 7, bl_compat: 6, el_present: true }.to_dovi();
         assert!(p7.present);
         assert_eq!((p7.profile, p7.bl_compat, p7.el_present), (7, 6, true));
+    }
+
+    /// `"probe": true` declares NOTHING: the start is installed unresolved and the real probe ->
+    /// decide path runs, the path every Stremio stream takes. The codec fields are ignored then.
+    #[test]
+    fn probe_leaves_the_declaration_to_the_probe() {
+        let p = super::parse_playurl(r#"{"url":"http://192.0.2.10:8020/a.avi","probe":true,"vcodec":"h264"}"#).unwrap();
+        let start = p.to_start().unwrap();
+        assert!(start.stream.is_none(), "a probed start carries no declaration");
+        assert_eq!(start.url, "http://192.0.2.10:8020/a.avi");
+        let declared = super::parse_playurl(r#"{"url":"http://192.0.2.10:8020/a.avi"}"#).unwrap();
+        assert!(declared.to_start().unwrap().stream.is_some(), "without it the trigger still declares");
     }
 
     /// An empty `url` must be an Err, not an all-defaults object: on `Ok` the engine would take the

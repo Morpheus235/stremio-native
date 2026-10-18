@@ -71,8 +71,8 @@ STORAGE_TDIR = target/arm-storage
 STORAGE_BIN  = $(STORAGE_TDIR)/$(RUST_TARGET)/$(ARM_PROFILE)/stremionative-storage
 
 # Every C file ships but the libass glue (ass.c, ass_fonts.c belong to the bundled renderer, not the
-# application ELF) and the opt-in allocator guard.
-SRCS = $(filter-out native/gpdebug.c native/ass.c native/ass_fonts.c,$(wildcard native/*.c)) native/compat/getauxval.c
+# application ELF; adec.c is libsnadec.so, below) and the opt-in allocator guard.
+SRCS = $(filter-out native/gpdebug.c native/ass.c native/ass_fonts.c native/adec.c,$(wildcard native/*.c)) native/compat/getauxval.c
 OBJS = $(patsubst native/%.c,$(BUILD)/obj/%.o,$(SRCS))
 NANOSVG = vendor/nanosvg/nanosvg.h
 CFLAGS = --sysroot=$(SYSROOT) -O2 -fno-omit-frame-pointer -funwind-tables -Wall -Wextra -Werror \
@@ -90,22 +90,28 @@ LDFLAGS = -Wl,--build-id=sha1 -Wl,--gc-sections -Wl,--export-dynamic-symbol=$(SM
 # ---- the bundled libraries ----------------------------------------------------------------------
 FFMPEG_DEFAULT_DIR = vendor/ffmpeg-prefix/lib
 BUNDLED_LIB_DIR ?= $(FFMPEG_DEFAULT_DIR)
-FFMPEG_REQUIRED = libavutil-sn.so.61 libavcodec-sn.so.63 libavformat-sn.so.63
+FFMPEG_REQUIRED = libavutil-sn.so.61 libswresample-sn.so.7 libavcodec-sn.so.63 libavformat-sn.so.63
+# The software audio decoder (native/adec.c -> ci/build-adec.sh): FLAC/TrueHD/LPCM/Opus/... -> PCM.
+ADEC_SO = $(BUNDLED_LIB_DIR)/libsnadec.so
 # swscale is the dev capture stream's only; a release ships without it.
 FFMPEG_OPTIONAL = $(if $(RELEASE),,libswscale-sn.so.10)
-# libass renders styled (ASS/SSA) subtitles; the player runs without it (plain text subtitles only).
-LIBASS_SO ?= vendor/libass-prefix/lib/libass-sn.so.0
+# libass renders text and styled (SRT/ASS/SSA) subtitles; the player runs without it (no text
+# subtitles). By default `make ipk` builds it with ci/build-libass.sh; LIBASS_SO=<path> takes a
+# prebuilt one instead.
+LIBASS_DEFAULT_SO = vendor/libass-prefix/lib/libass-sn.so.0
+LIBASS_SO ?= $(LIBASS_DEFAULT_SO)
 
 # ---- the payload --------------------------------------------------------------------------------
 ICONDIR   = $(if $(filter stable,$(FLAVOR)),pkg,pkg/$(FLAVOR))
 ICONS     = $(ICONDIR)/icon.png $(ICONDIR)/largeIcon.png
-APP_FILES = $(ICONS) pkg/splash.png pkg/appfont.ttf pkg/appfont-bold.ttf pkg/appfont-cjk.ttf pkg/OFL.txt \
+APP_FILES = $(ICONS) pkg/splash.png pkg/appfont.ttf pkg/appfont-bold.ttf pkg/appfont-cjk.ttf pkg/appfont-emoji.ttf pkg/OFL.txt \
             pkg/le-roots.pem LICENSE NOTICE
+LICENSE_TEXTS = $(sort $(wildcard licenses/*.txt))
 SUBS_FONT_FILES = $(sort $(wildcard pkg/fonts/subs/*.ttf)) pkg/fonts/subs/manifest.json
 STAGE = $(BUILD)/stage/$(FLAVOR)/app
 IPK   = $(BUILD)/$(APPID)_$(IPK_VERSION)_arm.ipk
 
-.PHONY: all ipk check selftest icons setup-env release-guard ffmpeg bundled-libs clean help FORCE \
+.PHONY: all ipk check selftest icons setup-env release-guard ffmpeg libass adec bundled-libs clean help FORCE \
         print-appid print-version print-ipk
 
 all: $(BUILD)/stremionative $(BUILD)/stremionative-storage
@@ -176,15 +182,37 @@ $(BUILD)/stremionative-storage: FORCE | ndk-present
 ffmpeg: | ndk-present
 	RELEASE=$(RELEASE) WEBOS_SDK=$(WEBOS_SDK) sh ci/build-ffmpeg.sh
 
+# ---- libass -------------------------------------------------------------------------------------
+# One pinned ASS renderer and font stack on every firmware: libass, FreeType, FriBidi, HarfBuzz and
+# libunibreak are built static (ci/dependencies.json, group "libass") and linked into ONE shared
+# library with native/ass.c + native/ass_fonts.c, exporting only sn_ass_* (crates/media/src/player/
+# ass.rs dlopens it by its SONAME from the app directory). Nothing binds to a firmware copy, and it
+# needs only libc/libm/libgcc_s. The script is incremental (it rebuilds the stack only when a pin,
+# a patch, the toolchain or the recipe changed; the facade is always relinked).
+LIBASS_INPUTS = ci/build-libass.sh ci/build-libass.py ci/deps.py ci/dependencies.json ci/arm-cc.py \
+                ci/check-link-evidence.py ci/patches/libass-0001-grow-font-faces.patch \
+                native/ass.c native/ass_fonts.c native/ass_internal.h native/ass_composite.h native/ass.h
+$(LIBASS_DEFAULT_SO): $(LIBASS_INPUTS) | ndk-present
+	WEBOS_SDK=$(WEBOS_SDK) sh ci/build-libass.sh
+libass: $(LIBASS_DEFAULT_SO)
+
+# ---- the software audio decoder -----------------------------------------------------------------
+# native/adec.c against the bundled FFmpeg's headers, linked to its -sn libraries by SONAME
+# (crates/media/src/adec.rs dlopens it). ci/build-adec.sh fails on any DT_NEEDED beyond the -sn
+# FFmpeg and libc/libm, and on any export outside sn_adec_*.
+$(FFMPEG_DEFAULT_DIR)/libsnadec.so: native/adec.c ci/build-adec.sh | ndk-present ffmpeg
+	WEBOS_SDK=$(WEBOS_SDK) sh ci/build-adec.sh
+adec: $(FFMPEG_DEFAULT_DIR)/libsnadec.so
+
 # The libraries the package needs, from BUNDLED_LIB_DIR; building them first when that is the
 # default prefix. A missing required one stops here, by name.
-bundled-libs: $(if $(filter $(FFMPEG_DEFAULT_DIR),$(BUNDLED_LIB_DIR)),ffmpeg,)
-	@missing=""; for l in $(FFMPEG_REQUIRED); do test -f "$(BUNDLED_LIB_DIR)/$$l" || missing="$$missing $$l"; done; \
+bundled-libs: $(if $(filter $(FFMPEG_DEFAULT_DIR),$(BUNDLED_LIB_DIR)),ffmpeg adec,) $(if $(filter $(LIBASS_DEFAULT_SO),$(LIBASS_SO)),libass,)
+	@missing=""; for l in $(FFMPEG_REQUIRED) libsnadec.so; do test -f "$(BUNDLED_LIB_DIR)/$$l" || missing="$$missing $$l"; done; \
 	 if [ -n "$$missing" ]; then \
 	   echo "error: the bundled FFmpeg is missing from $(BUNDLED_LIB_DIR):$$missing"; \
 	   echo "       build it (make ffmpeg, ci/build-ffmpeg.sh) or pass BUNDLED_LIB_DIR=<dir with the -sn libraries>"; \
 	   exit 1; fi
-	@test -f "$(LIBASS_SO)" || echo "warning: no libass at $(LIBASS_SO) — the package plays plain-text subtitles only (LIBASS_SO=<path>)"
+	@test -f "$(LIBASS_SO)" || echo "warning: no libass at $(LIBASS_SO) — the package shows no text subtitles (LIBASS_SO=<path>)"
 
 # ---- the package --------------------------------------------------------------------------------
 release-guard:
@@ -196,12 +224,14 @@ ipk: release-guard bundled-libs $(BUILD)/stremionative $(BUILD)/stremionative-st
 	rm -rf $(BUILD)/stage/$(FLAVOR) && mkdir -p $(STAGE)/fonts/subs
 	cp $(BUILD)/stremionative $(APP_FILES) $(STAGE)/
 	cp $(SUBS_FONT_FILES) $(STAGE)/fonts/subs/
-	cp -L $(addprefix $(BUNDLED_LIB_DIR)/,$(FFMPEG_REQUIRED)) $(STAGE)/
+	@# The bundled libraries' licence texts travel with them (LGPL-2.1 §6 for FriBidi): NOTICE.
+	mkdir -p $(STAGE)/licenses && cp $(LICENSE_TEXTS) $(STAGE)/licenses/
+	cp -L $(addprefix $(BUNDLED_LIB_DIR)/,$(FFMPEG_REQUIRED)) $(ADEC_SO) $(STAGE)/
 	@for l in $(FFMPEG_OPTIONAL); do if [ -f "$(BUNDLED_LIB_DIR)/$$l" ]; then cp -L "$(BUNDLED_LIB_DIR)/$$l" $(STAGE)/; fi; done
 	@if [ -f "$(LIBASS_SO)" ]; then cp -L "$(LIBASS_SO)" $(STAGE)/; fi
 	@# Strip the STAGED copies only: build/stremionative keeps its symbols for crash triage.
 	$(TOOLPREFIX)strip --strip-unneeded $(STAGE)/stremionative
-	@for f in $(STAGE)/lib*-sn.so.*; do $(TOOLPREFIX)strip --strip-unneeded "$$f" || exit 1; done
+	@for f in $(STAGE)/lib*-sn.so.* $(STAGE)/libsnadec.so; do $(TOOLPREFIX)strip --strip-unneeded "$$f" || exit 1; done
 	mkdir -p $(BUILD)/stage/$(FLAVOR)/svc
 	cp $(BUILD)/stremionative-storage $(BUILD)/stage/$(FLAVOR)/svc/stremionative-storage
 	$(TOOLPREFIX)strip --strip-unneeded $(BUILD)/stage/$(FLAVOR)/svc/stremionative-storage

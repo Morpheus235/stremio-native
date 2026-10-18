@@ -136,6 +136,21 @@ pub enum Landing {
     Page { row: RowId, result: Result<CatalogPage, FetchError> },
 }
 
+/// What the screen shows: the rows on screen, as positions among the rows of `kind` (every row
+/// when `None`). A row of another kind is not laid out, so it is never asked for (Home's type
+/// filter, `crate::type_filter`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RowWindow {
+    pub rows: Range<usize>,
+    pub kind: Option<String>,
+}
+
+impl From<Range<usize>> for RowWindow {
+    fn from(rows: Range<usize>) -> Self {
+        RowWindow { rows, kind: None }
+    }
+}
+
 /// Where the install list as a whole stands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AddonsState {
@@ -153,8 +168,9 @@ pub struct CatalogStore {
     addons: Vec<Addon>,
     rows: Vec<Row>,
     sched: Scheduler<RowId>,
-    /// The rows the screen shows, as indices into [`Self::rows`].
+    /// The rows the screen shows, as positions among [`Self::rows_of`] `kind`.
     view: Range<usize>,
+    kind: Option<String>,
     gen: u32,
     /// Moves when the install list is replaced: every `RowId` before it names nothing now.
     epoch: u32,
@@ -179,7 +195,7 @@ impl CatalogStore {
     /// Requests in flight belong to the old list ([`Self::epoch`] moves): the application drops
     /// their landings. The window on screen carries over.
     pub fn replace(&mut self, mut next: CatalogStore) {
-        let view = self.view.clone();
+        let view = RowWindow { rows: self.view.clone(), kind: self.kind.clone() };
         let epoch = self.epoch.wrapping_add(1);
         let gen = self.gen.wrapping_add(1);
         let mut old: Vec<Row> = std::mem::take(&mut self.rows);
@@ -220,6 +236,7 @@ impl CatalogStore {
             rows: Vec::new(),
             sched: Scheduler::new(PAGE_SLOTS, LOOKAHEAD_ROWS),
             view: 0..0,
+            kind: None,
             gen: 0,
             epoch: 0,
         }
@@ -257,12 +274,39 @@ impl CatalogStore {
         &self.rows
     }
 
+    /// The pager of the Home row `key` names (no search, no genre): the catalog's grid page opens
+    /// on the cards Home already holds instead of fetching its first page again.
+    pub fn pager_for(&self, key: &crate::stores::grid::GridKey) -> Option<&Pager> {
+        if key.search.is_some() || key.genre.is_some() {
+            return None;
+        }
+        self.rows
+            .iter()
+            .find(|r| {
+                r.pager.catalog.kind == key.kind
+                    && r.pager.catalog.id == key.catalog_id
+                    && matches!(self.sources.get(r.id.source as usize).map(|s| &s.state), Some(SourceState::Ready(a)) if a.manifest.id == key.addon_id)
+            })
+            .map(|r| &r.pager)
+    }
+
     pub fn row(&self, id: RowId) -> Option<&Row> {
         self.index_of(id).map(|i| &self.rows[i])
     }
 
     pub fn index_of(&self, id: RowId) -> Option<usize> {
         self.rows.binary_search_by(|r| r.id.cmp(&id)).ok()
+    }
+
+    /// The rows of `kind` (every row when `None`), each with its position among them: the
+    /// positions a [`RowWindow`] counts in.
+    pub fn rows_of<'a>(&'a self, kind: Option<&'a str>) -> impl Iterator<Item = (usize, &'a Row)> + 'a {
+        self.rows.iter().filter(move |r| kind.is_none_or(|k| r.kind() == k)).enumerate()
+    }
+
+    /// `row`'s position in the window's counting, if it is laid out.
+    fn pos_of(&self, row: RowId) -> Option<usize> {
+        self.rows_of(self.kind.as_deref()).find(|(_, r)| r.id == row).map(|(p, _)| p)
     }
 
     pub fn addons_state(&self) -> AddonsState {
@@ -286,28 +330,35 @@ impl CatalogStore {
 
     /// The rows the screen shows moved: re-aim the scheduler at them (cancelling what left the
     /// window) and ask for the first page of every row in the window that has none.
-    pub fn set_view(&mut self, view: Range<usize>) {
-        if view == self.view {
+    pub fn set_view(&mut self, view: impl Into<RowWindow>) {
+        let RowWindow { rows, kind } = view.into();
+        if rows == self.view && kind == self.kind {
             return;
         }
-        self.view = view.clone();
-        self.sched.set_view(view);
+        if kind != self.kind {
+            // the positions count other rows now: what is still laid out keeps its request
+            self.kind = kind;
+            let pos: std::collections::HashMap<RowId, usize> = self.rows_of(self.kind.as_deref()).map(|(p, r)| (r.id, p)).collect();
+            self.sched.remap(|id| pos.get(id).copied());
+        }
+        self.view = rows.clone();
+        self.sched.set_view(rows);
         self.want_window();
     }
 
     /// The screen wants more of `row` (its shelf reached the end of what is loaded).
     pub fn want_more(&mut self, row: RowId) {
-        let Some(i) = self.index_of(row) else { return };
+        let (Some(i), Some(at)) = (self.index_of(row), self.pos_of(row)) else { return };
         if self.rows[i].pager.has_more() {
-            self.sched.want(row, i);
+            self.sched.want(row, at);
         }
     }
 
     /// Ask again for a row whose last page failed (a press on its read-out).
     pub fn retry(&mut self, row: RowId) {
-        let Some(i) = self.index_of(row) else { return };
+        let (Some(i), Some(at)) = (self.index_of(row), self.pos_of(row)) else { return };
         if matches!(self.rows[i].pager.more, More::Failed { .. }) {
-            self.sched.want(row, i);
+            self.sched.want(row, at);
         }
     }
 
@@ -322,12 +373,14 @@ impl CatalogStore {
     }
 
     fn want_window(&mut self) {
-        let lo = self.view.start.saturating_sub(LOOKAHEAD_ROWS);
-        let hi = self.view.end.saturating_add(LOOKAHEAD_ROWS).min(self.rows.len());
-        for i in lo..hi {
-            if self.rows[i].wants_first_page() {
-                self.sched.want(self.rows[i].id, i);
-            }
+        let window = self.view.start.saturating_sub(LOOKAHEAD_ROWS)..self.view.end.saturating_add(LOOKAHEAD_ROWS);
+        let due: Vec<(RowId, usize)> = self
+            .rows_of(self.kind.as_deref())
+            .filter(|(p, r)| window.contains(p) && r.wants_first_page())
+            .map(|(p, r)| (r.id, p))
+            .collect();
+        for (id, at) in due {
+            self.sched.want(id, at);
         }
     }
 
@@ -486,6 +539,25 @@ mod tests {
         RowId { source, catalog: 0 }
     }
 
+    /// A Home row's grid page opens on the row's pager: the right addon's, never a namesake
+    /// catalog of another addon, and never for a search or a genre.
+    #[test]
+    fn a_home_rows_pager_is_found_by_its_grid_key() {
+        let s = many_rows(3);
+        let key = |addon: &str| crate::stores::grid::GridKey {
+            addon_id: addon.into(),
+            kind: "movie".into(),
+            catalog_id: "top".into(),
+            genre: None,
+            search: None,
+        };
+        let p = s.pager_for(&key("a1")).expect("found");
+        assert!(std::ptr::eq(p, &s.row(rid(1)).unwrap().pager), "a1's own row, not a0's namesake");
+        assert!(s.pager_for(&key("zz")).is_none());
+        assert!(s.pager_for(&crate::stores::grid::GridKey { genre: Some("Action".into()), ..key("a1") }).is_none());
+        assert!(s.pager_for(&crate::stores::grid::GridKey { search: Some("x".into()), ..key("a1") }).is_none());
+    }
+
     #[test]
     fn signed_out_asks_for_cinemeta_and_nothing_else() {
         let mut s = CatalogStore::signed_out();
@@ -522,6 +594,35 @@ mod tests {
         );
         assert_eq!(s.addons().len(), 2);
         assert_eq!(s.addons()[0].manifest.id, "org.example.live", "addons stay in install order");
+    }
+
+    /// Home's type filter: the window counts only the rows of the chosen type, so a hidden row is
+    /// never asked and one in flight when it was hidden is cancelled.
+    #[test]
+    fn a_kind_window_asks_only_the_rows_of_that_kind() {
+        let mut s = CatalogStore::new([LIVE_URL, CINEMETA_URL]);
+        manifest_jobs(&mut s);
+        assert!(s.land(Landing::Manifest { source: 0, result: Ok(LIVE.as_bytes().to_vec()) }));
+        assert!(s.land(Landing::Manifest { source: 1, result: Ok(CINEMETA.as_bytes().to_vec()) }));
+        let first: Vec<(Job, Cancel)> = s
+            .take_jobs()
+            .into_iter()
+            .filter_map(|j| match &j {
+                Job::Page { cancel, .. } => Some((j.clone(), cancel.clone())),
+                Job::Manifest { .. } => None,
+            })
+            .collect();
+        assert_eq!(first.len(), 2, "unfiltered, the top two rows (live TV, movies) are asked");
+        s.set_view(RowWindow { rows: 0..1, kind: Some("series".into()) });
+        assert!(first.iter().all(|(_, c)| c.is_cancelled()), "neither is a series row: both are cancelled");
+        let series = RowId { source: 1, catalog: 1 };
+        assert_eq!(page_jobs(&s.take_jobs()).iter().map(|(r, _)| *r).collect::<Vec<_>>(), [series], "only the series row is asked");
+        s.set_view(RowWindow { rows: 0..1, kind: Some("movie".into()) });
+        let movies: Vec<RowId> = page_jobs(&s.take_jobs()).iter().map(|(r, _)| *r).collect();
+        assert_eq!(movies, [RowId { source: 1, catalog: 0 }, RowId { source: 1, catalog: 3 }], "the two movie rows, never live TV");
+        assert_eq!(s.rows_of(Some("series")).map(|(p, r)| (p, r.id)).collect::<Vec<_>>(), [(0, series)]);
+        assert_eq!(s.rows_of(Some("movie")).map(|(p, _)| p).collect::<Vec<_>>(), [0, 1]);
+        assert_eq!(s.rows_of(None).count(), 4);
     }
 
     #[test]

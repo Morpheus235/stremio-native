@@ -4,12 +4,11 @@ use super::*;
 #[allow(unused_imports)]
 use super::test_support::*;
 
-/// A keyed control carries the HERO's colour without borrowing its darkness. Blue artwork and
-/// amber artwork must therefore produce different hues at the SAME authored face lightness,
-/// while the body stays the same hue one lightness step below the lit top. This is the part of
-/// `components/core/control-focus.card.html` the old static `ACCENT` face could not express.
+/// Focus is Stremio's violet on EVERY page: blue artwork and amber artwork light the same
+/// [`theme::ACCENT`] top, with a body one OKLCH lightness step below it at the same hue. The page's
+/// key still reaches the IDLE face, which is what keeps a control on a keyed hero part of it.
 #[test]
-fn an_ambient_key_tints_both_levels_of_the_focused_face() {
+fn focus_is_the_accent_violet_whatever_the_page_key() {
     let blue = ControlPalette::ambient([
         0x0a as f32 / 255.0,
         0x63 as f32 / 255.0,
@@ -20,21 +19,60 @@ fn an_ambient_key_tints_both_levels_of_the_focused_face() {
         0x72 as f32 / 255.0,
         0x1c as f32 / 255.0,
     ]);
-    let (blue_top, blue_body) = blue.focus_face();
-    let (amber_top, amber_body) = amber.focus_face();
+    assert_eq!(blue.focus_face(), amber.focus_face());
+    let (top, body) = blue.focus_face();
+    assert_eq!(top, theme::ACCENT);
+    let (t, b) = (srgb_to_oklab(top), srgb_to_oklab(body));
+    assert!((t[0] - b[0] - theme::CONTROL_FOCUS_BODY_STEP).abs() < 0.003);
+    assert!((t[1] - b[1]).abs() < 0.003 && (t[2] - b[2]).abs() < 0.003, "same hue and chroma");
+    let (bi, ai) = (srgb_to_oklab(blue.idle), srgb_to_oklab(amber.idle));
+    assert!(bi[2] < 0.0 && ai[2] > 0.0, "the idle faces keep the page's opposite hues");
+}
 
-    let bt = srgb_to_oklab(blue_top);
-    let bb = srgb_to_oklab(blue_body);
-    let at = srgb_to_oklab(amber_top);
-    let ab = srgb_to_oklab(amber_body);
-    assert!((bt[0] - theme::CONTROL_FOCUS_FACE_L).abs() < 0.002);
-    assert!((at[0] - theme::CONTROL_FOCUS_FACE_L).abs() < 0.002);
-    assert!((bt[0] - bb[0] - theme::CONTROL_FOCUS_BODY_STEP).abs() < 0.003);
-    assert!((at[0] - ab[0] - theme::CONTROL_FOCUS_BODY_STEP).abs() < 0.003);
-    assert!(
-        bt[2] < 0.0 && at[2] > 0.0,
-        "blue and amber keys must remain opposite hues"
-    );
+/// **The focus ink clears WCAG 4.5:1 on every fill focus can paint**: the flat [`theme::ACCENT`]
+/// (unkeyed, rows, tabs), a keyed face's lit top AND its shaded body, and the countdown's spent
+/// half. Stremio's violet leaves almost no headroom for white (4.51:1), which is why the ink is pure
+/// `WHITE` and not `TEXT_PRIMARY`; a retuned accent that loses the floor fails here.
+#[test]
+fn focus_ink_clears_4_5_on_every_focus_fill() {
+    fn lin(c: f32) -> f32 {
+        if c <= 0.03928 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+    }
+    fn luma(c: [f32; 4]) -> f32 {
+        0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2])
+    }
+    fn contrast(a: [f32; 4], b: [f32; 4]) -> f32 {
+        let (x, y) = (luma(a), luma(b));
+        (x.max(y) + 0.05) / (x.min(y) + 0.05)
+    }
+    let p = ControlPalette::default();
+    for (name, fill) in [
+        ("ACCENT", theme::ACCENT),
+        ("keyed top", p.focus_top),
+        ("keyed body", p.focus_body),
+        ("keyed spent", p.spent),
+        ("CONTROL_SPENT_FILL", theme::CONTROL_SPENT_FILL),
+    ] {
+        let c = contrast(theme::ACCENT_INK, fill);
+        assert!(c >= 4.5, "ACCENT_INK over {name} at {c:.2}:1");
+        let v = contrast(theme::ROW_VALUE_INK_ON, fill);
+        assert!(v >= 4.5, "ROW_VALUE_INK_ON over {name} at {v:.2}:1");
+    }
+    // The reading inks on the purple-navy ground and the two panel surfaces.
+    for (name, ground) in [
+        ("SURFACE_APP", theme::SURFACE_APP),
+        ("SURFACE_PANEL", theme::SURFACE_PANEL),
+        ("PANEL_BOT", theme::PANEL_BOT),
+    ] {
+        for (ink_name, ink) in [
+            ("TEXT_PRIMARY", theme::TEXT_PRIMARY),
+            ("TEXT_SECONDARY", theme::TEXT_SECONDARY),
+            ("TEXT_TERTIARY", theme::TEXT_TERTIARY),
+        ] {
+            let c = contrast(ink, ground);
+            assert!(c >= 4.5, "{ink_name} over {name} at {c:.2}:1");
+        }
+    }
 }
 
 /// Video is the explicit exception: its pixels live on another plane, so even a supplied key
@@ -359,8 +397,8 @@ fn the_danger_face_wears_no_keyline() {
 
 /// The unkeyed scope drops the ambient contract WHOLE. The player cannot sample its video
 /// plane, so idle becomes the HUD's film and focus becomes flat ACCENT; a keyed page uses the
-/// same focus semantics (bright face, dark ink, pop and cast) but lets both face levels answer
-/// to the page hue. That is one control system with two knowability contracts, not two ranks.
+/// same focus semantics (violet face, white ink, pop and cast) with a lit top and a shaded
+/// body, and lets only the IDLE face answer to the page hue. That is one control system with two knowability contracts, not two ranks.
 #[test]
 fn the_unkeyed_ground_drops_the_ambient_contract_whole() {
     let palette = ControlPalette::ambient([0.04, 0.39, 0.71]);

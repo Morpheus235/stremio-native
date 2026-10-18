@@ -1,5 +1,5 @@
 //! **The grid store** — one paginated catalog view per [`GridKey`] a page holds open: the full
-//! grid a search row's MORE opens, and the Live TV page's catalog under its chosen genre.
+//! grid a search row's MORE opens, and Discover's chosen catalog under its chosen genre.
 //!
 //! Pure like every store here: [`GridStore::open`] and [`GridStore::more`] hand back [`GridJob`]s
 //! (a URL and a [`Cancel`] token), the application runs them over `sn_stremio::Fetch` and folds
@@ -64,6 +64,8 @@ pub enum GridState {
     Failed(FetchError),
     /// Cards to show; `more` says whether the catalog goes on.
     Ready { more: bool },
+    /// Cards to show, and the page after them failed: the catalog may go on, a retry asks it again.
+    MoreFailed,
 }
 
 struct View {
@@ -181,6 +183,7 @@ impl GridStore {
             (More::Failed { error, .. }, true) => GridState::Failed(error.clone()),
             (More::Next(_), true) => GridState::Loading,
             (More::End, true) => GridState::Empty,
+            (More::Failed { .. }, false) => GridState::MoreFailed,
             (more, false) => GridState::Ready { more: matches!(more, More::Next(_)) },
         })
     }
@@ -263,6 +266,21 @@ mod tests {
         s.land(GridLanding { key: k.clone(), result: Err(FetchError::Status(503)) });
         assert_eq!(s.state(&k), Some(GridState::Failed(FetchError::Status(503))));
         assert_eq!(s.retry(&k).len(), 1);
+    }
+
+    /// A later page failing is not the end of the catalog: it reads as its own state (the page
+    /// offers *Try again*) and a retry asks the same page again.
+    #[test]
+    fn a_failed_next_page_is_not_the_end_and_retries() {
+        let mut s = GridStore::new();
+        let k = key(None);
+        s.open(&addons(), k.clone(), None);
+        s.land(GridLanding { key: k.clone(), result: Ok(page(20)) });
+        let next = s.more(&k);
+        s.land(GridLanding { key: k.clone(), result: Err(FetchError::Status(503)) });
+        assert_eq!(s.state(&k), Some(GridState::MoreFailed));
+        assert_eq!(s.retry(&k)[0].url, next[0].url, "the same page, asked again");
+        assert_eq!(s.items(&k).len(), 20, "what loaded stays");
     }
 
     #[test]

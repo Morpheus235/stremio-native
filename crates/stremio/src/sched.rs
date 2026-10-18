@@ -82,6 +82,27 @@ impl<K: Clone + Eq + Hash> Scheduler<K> {
         gone
     }
 
+    /// The caller renumbered its positions (a filter changed which items it lays out): every
+    /// queued and running key moves to its new position, and one with none any more is dropped (a
+    /// running one cancelled). Returns the keys cancelled. Nothing in flight that is still laid
+    /// out is asked again.
+    pub fn remap(&mut self, at: impl Fn(&K) -> Option<usize>) -> Vec<K> {
+        self.queued = std::mem::take(&mut self.queued).into_keys().filter_map(|k| Some((k.clone(), at(&k)?))).collect();
+        let mut gone = Vec::new();
+        for (k, (_, cancel)) in std::mem::take(&mut self.running) {
+            match at(&k) {
+                Some(n) => {
+                    self.running.insert(k, (n, cancel));
+                }
+                None => {
+                    cancel.cancel();
+                    gone.push(k);
+                }
+            }
+        }
+        gone
+    }
+
     /// The next request to start, nearest the viewport first, if a slot is free.
     pub fn next(&mut self) -> Option<(K, Cancel)> {
         if self.running.len() >= self.slots {
@@ -158,6 +179,27 @@ mod tests {
             s.want(row, row);
         }
         assert_eq!(drain(&mut s), [40, 41, 42, 43, 39, 44, 38, 45]);
+    }
+
+    /// A filter renumbers the rows: what stays laid out keeps running at its new position, what
+    /// left the layout is cancelled, and nothing is asked twice.
+    #[test]
+    fn a_remap_moves_what_stays_and_cancels_what_left() {
+        let mut s = Scheduler::new(2, 0);
+        s.set_view(0..4);
+        for k in 0..4 {
+            s.want(k, k);
+        }
+        let (zero, c0) = s.next().unwrap();
+        let (one, c1) = s.next().unwrap();
+        assert_eq!((zero, one), (0, 1), "nearest first, then by position");
+        // keep the odd keys, packed: 1 -> 0, 3 -> 1
+        assert_eq!(s.remap(|k| (k % 2 == 1).then_some(k / 2)), vec![0]);
+        assert!(c0.is_cancelled() && !c1.is_cancelled());
+        assert_eq!((s.running(), s.queued()), (1, 1), "2 dropped, 3 still queued");
+        s.set_view(0..1);
+        assert!(s.done(&1), "1 is at 0 now, inside the view: its landing is kept");
+        assert_eq!(s.queued(), 0, "3 is at 1 now, outside the view");
     }
 
     #[test]

@@ -255,7 +255,7 @@ fn a_card_held_with_repeat_beats_still_delivers_one_hold_and_no_tap() {
 /// app may open it or decline. Either way the card goes from its dip (~0.92, the unpopped size)
 /// back to its pop on the underdamped release spring the OK press gets: a decline leaves no menu
 /// over the card, and a menu that opens is what the card springs UNDER (the press is the one owner
-/// of that motion and the opener lift reads it, `bridge::opener_press`). A one-frame snap from the
+/// of that motion and the opener lift reads it, `Dispatcher::draw_opener_lift`). A one-frame snap from the
 /// dip to 1.0 is a card jumping under the user's thumb, and for a taken hold it is the pop
 /// animation the owner reported lost (0.8.0-rc.3). A hold that is NOT answered (page 700) keeps
 /// the dip until the release, by design.
@@ -343,7 +343,8 @@ fn a_control_that_handles_a_direction_keeps_it_from_the_engine() {
 }
 
 /// §6.2: the strip is the CONTAINER's group, contributed above the page's — UP from the row
-/// lands on the nearest pill — and the page gates it: a page snapped to its grid has no strip
+/// lands on the nearest pill when no pill is the selected destination's (`strip_fallback`, which
+/// wins when set) — and the page gates it: a page snapped to its grid has no strip
 /// to reach.
 #[test]
 fn the_strip_is_the_containers_group_and_the_page_gates_it() {

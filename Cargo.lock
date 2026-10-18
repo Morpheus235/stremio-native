@@ -860,6 +860,7 @@ version = "0.0.0"
 dependencies = [
  "chardetng",
  "encoding_rs",
+ "flate2",
  "libc",
  "serde",
  "serde_json",
@@ -917,8 +918,10 @@ dependencies = [
 name = "sn_stremio"
 version = "0.0.0"
 dependencies = [
+ "flate2",
  "serde",
  "serde_json",
+ "sn_base",
 ]
 
 [[package]]

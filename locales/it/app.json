@@ -20,8 +20,8 @@
     "description": "Home: read-out when the installed addons offer no catalog to browse."
   },
   "app.home.row_failed": {
-    "value": "Impossibile caricare questo catalogo. Verrà richiesto di nuovo quando ci tornerai.",
-    "description": "Home: note in place of a catalog row whose page failed to load."
+    "value": "Impossibile caricare questo catalogo.",
+    "description": "Home: note in place of a catalog row whose first page failed to load; a Try again button follows it."
   },
   "app.home.row_source": {
     "value": "{kind} · {addon}",
@@ -46,6 +46,14 @@
   "app.kind.tv": {
     "value": "TV",
     "description": "A Stremio content type, as a row annotation: live TV."
+  },
+  "app.kind.anime": {
+    "value": "Anime",
+    "description": "A Stremio content type (addon-defined, e.g. Kitsu), as a row annotation and a type filter chip."
+  },
+  "app.filter.all": {
+    "value": "Tutto",
+    "description": "Home and Library: the first type filter chip, which shows every content type."
   },
   "app.nav.home": {
     "value": "Home",
@@ -116,8 +124,736 @@
     "value": "Non riproducibile qui",
     "description": "Detail: trailing read-out of a stream this app cannot play (a torrent, a link to another app)."
   },
+  "app.detail.stream_cached": {
+    "value": "In cache",
+    "description": "Detail: chip on a stream the addon's debrid service already holds (it plays at once)."
+  },
+  "app.detail.stream_uncached": {
+    "value": "Non in cache — avvia un download",
+    "description": "Detail: quiet chip on a stream the debrid service does not hold yet: playing it starts the download and shows the service's placeholder clip."
+  },
+  "app.detail.stream_live": {
+    "value": "IN DIRETTA",
+    "description": "Detail: chip on a live stream (a TV channel, an addon's live stream): it has no length and no resume point."
+  },
+  "app.detail.stream_seeders": {
+    "value": "{count} seeder",
+    "description": "Detail: chip with a torrent stream's seeder count.",
+    "args": {
+      "count": "i64"
+    }
+  },
+  "app.settings.stream_languages": {
+    "value": "Ordine dei flussi",
+    "description": "Settings: row and page title — the languages whose streams a stream list puts first."
+  },
+  "app.settings.stream_languages_copy": {
+    "value": "In ogni addon, i flussi in queste lingue sono elencati per primi, dopo quelli in cache.",
+    "description": "Preferred audio language picker: the line under the title."
+  },
+  "app.settings.stream_languages_same": {
+    "value": "Come l’audio",
+    "description": "Stream sorting: the row value, and the page's switch, when the order follows the audio languages."
+  },
+  "app.settings.audio_languages": {
+    "value": "Lingue audio",
+    "description": "Settings: row and page title — the ordered languages of the audio track a film starts on."
+  },
+  "app.settings.audio_languages_copy": {
+    "value": "Un film parte con la traccia audio nella prima di queste lingue che ha. Senza scelta, si riproduce la traccia predefinita del file.",
+    "description": "Audio languages page: the line under the title."
+  },
+  "app.settings.audio_languages_none": {
+    "value": "Predefinita del file",
+    "description": "Settings: the Audio languages row's value while none is chosen (the file's default track plays)."
+  },
+  "app.settings.subtitle_languages": {
+    "value": "Lingue dei sottotitoli",
+    "description": "Settings: row and page title — the ordered subtitle languages."
+  },
+  "app.settings.subtitle_languages_copy": {
+    "value": "Con i sottotitoli attivi si mostra la prima di queste lingue presente nel file o in un addon di sottotitoli. Senza scelta, la lingua dell’app, poi l’inglese.",
+    "description": "Subtitle languages page: the line under the title."
+  },
+  "app.settings.subtitle_languages_none": {
+    "value": "Lingua dell’app",
+    "description": "Settings: the Subtitle languages row's value while none is chosen (the app's language, then English)."
+  },
+  "app.settings.languages_chosen": {
+    "value": "Le tue lingue",
+    "description": "A language list page: the heading over the chosen languages, in order."
+  },
+  "app.settings.languages_add": {
+    "value": "Aggiungi una lingua",
+    "description": "A language list page: the heading over the languages that can be added."
+  },
+  "app.settings.languages_none": {
+    "value": "Nessuna scelta",
+    "description": "A language list page: the note while no language is chosen."
+  },
+  "app.settings.languages_summary": {
+    "value": "{first} +{more}",
+    "description": "Settings: a language row's value for several languages — the first one's name and how many follow it.",
+    "args": {
+      "first": "str",
+      "more": "i64"
+    }
+  },
+  "app.settings.language_up": {
+    "value": "Sposta su",
+    "description": "A chosen language's menu: move it one place earlier."
+  },
+  "app.settings.language_down": {
+    "value": "Sposta giù",
+    "description": "A chosen language's menu: move it one place later."
+  },
+  "app.settings.language_remove": {
+    "value": "Rimuovi",
+    "description": "A chosen language's menu: take it off the list."
+  },
+  "app.settings.forced_fallback": {
+    "value": "Forzati di riserva",
+    "description": "Settings: row and picker title — whether Forced only also accepts a forced track in a subtitle language."
+  },
+  "app.settings.forced_fallback_copy": {
+    "value": "Con Solo forzati, mostra una traccia forzata in una delle tue lingue dei sottotitoli se la lingua dell’audio non ne ha.",
+    "description": "Forced fallback picker: the line under the title."
+  },
+  "app.settings.forced_fallback_off": {
+    "value": "No",
+    "description": "Forced fallback picker: only the audio language's forced track."
+  },
+  "app.settings.forced_fallback_on": {
+    "value": "Sì",
+    "description": "Forced fallback picker: also a forced track in a subtitle language."
+  },
+  "app.settings.subtitle_mode": {
+    "value": "Sottotitoli",
+    "description": "Settings: row and picker title — whether subtitles show when a film starts."
+  },
+  "app.settings.subtitle_mode_copy": {
+    "value": "Auto mostra i sottotitoli quando l’audio non è nella tua lingua, e solo quelli forzati quando lo è.",
+    "description": "Subtitles picker: the line under the title."
+  },
+  "app.settings.subs_off": {
+    "value": "No",
+    "description": "Subtitles picker: never show subtitles."
+  },
+  "app.settings.subs_on": {
+    "value": "Sì",
+    "description": "Subtitles picker: always show subtitles in the subtitle language."
+  },
+  "app.settings.subs_forced": {
+    "value": "Solo forzati",
+    "description": "Subtitles picker: only forced subtitles (signs, foreign dialogue)."
+  },
+  "app.settings.subs_auto": {
+    "value": "Auto",
+    "description": "Subtitles picker: on when the audio is not in the audio language, forced only when it is."
+  },
+  "app.settings.next_episode": {
+    "value": "Episodio successivo",
+    "description": "Settings: row and picker title — what plays when an episode ends or Up Next is accepted."
+  },
+  "app.settings.next_episode_copy": {
+    "value": "Stessa release riproduce l’episodio successivo dalla release che stai guardando se il suo addon ce l’ha; altrimenti si apre l’elenco degli stream.",
+    "description": "Next episode picker: the line under the title."
+  },
+  "app.settings.next_same": {
+    "value": "Stessa release",
+    "description": "Next episode picker: play the next episode's stream of the same release (shown on the player's Up Next line once found)."
+  },
+  "app.settings.next_choose": {
+    "value": "Scegli sempre",
+    "description": "Next episode picker: always open the next episode's stream list."
+  },
+  "app.detail.upcoming": {
+    "value": "In arrivo",
+    "description": "Detail: trailing read-out of an episode whose release date is still ahead."
+  },
+  "app.detail.all_episodes": {
+    "value": "Tutti gli episodi",
+    "description": "Detail: the button on an episode's Streams page that opens the show's page with all its episodes."
+  },
+  "app.detail.cast": {
+    "value": "Cast: {names}",
+    "description": "Detail: the line naming a title's leading actors; names is a comma-separated list.",
+    "args": {
+      "names": "str"
+    }
+  },
+  "app.detail.director": {
+    "value": "Regia: {names}",
+    "description": "Detail: the line naming a title's directors; names is a comma-separated list.",
+    "args": {
+      "names": "str"
+    }
+  },
+  "app.detail.genres_label": {
+    "value": "Generi",
+    "description": "Detail: the label over a title's genre chips (each opens Discover on that genre)."
+  },
+  "app.detail.cast_label": {
+    "value": "Cast",
+    "description": "Detail: the label over a title's cast chips (each searches for that name)."
+  },
+  "app.detail.director_label": {
+    "value": "Regia",
+    "description": "Detail: the label over a title's director chips (each searches for that name)."
+  },
+  "app.detail.summary_label": {
+    "value": "Trama",
+    "description": "Detail page: the small-caps label over the synopsis (stremio-web's SUMMARY)."
+  },
   "app.player.refused": {
     "value": "Impossibile riprodurre questo flusso",
     "description": "Player: the failure read-out when the stream's own request headers cannot be sent (malformed)."
+  },
+  "app.player.debrid_downloading": {
+    "value": "Download ancora in corso sul tuo servizio debrid: riprova tra qualche minuto",
+    "description": "Player: the system toast after a debrid service's \"still downloading\" placeholder clip played out (the torrent is not cached yet)."
+  },
+  "app.player.audio": {
+    "value": "Audio",
+    "description": "Player: the audio track menu's title, and the Info panel's audio row."
+  },
+  "app.player.subtitles": {
+    "value": "Sottotitoli",
+    "description": "Player: the subtitle track menu's title, and the Info panel's subtitle row."
+  },
+  "app.player.subtitles_off": {
+    "value": "Disattivati",
+    "description": "Player: the subtitle menu's first row, which shows no subtitles; also the Info panel's subtitle value then."
+  },
+  "app.player.subtitle_addon": {
+    "value": "{language} · {addon}",
+    "description": "Player: a subtitles addon's subtitle in the subtitle menu — its language and the addon that offers it (both server text).",
+    "args": {
+      "language": "str",
+      "addon": "str"
+    }
+  },
+  "app.player.subtitle_delay": {
+    "value": "Ritardo sottotitoli",
+    "description": "Player: the subtitle menu's delay row and the title of the delay menu."
+  },
+  "app.player.subtitle_earlier": {
+    "value": "Prima",
+    "description": "Subtitle delay menu: show the subtitles a quarter second earlier."
+  },
+  "app.player.subtitle_later": {
+    "value": "Dopo",
+    "description": "Subtitle delay menu: show the subtitles a quarter second later."
+  },
+  "app.player.subtitle_delay_reset": {
+    "value": "Azzera",
+    "description": "Subtitle delay menu: back to no delay."
+  },
+  "app.player.subtitle_languages": {
+    "value": "Lingue",
+    "description": "Player: the subtitle menu's left column header — the languages subtitles are offered in."
+  },
+  "app.player.subtitles_embedded": {
+    "value": "Incorporati",
+    "description": "Player: the subtitle menu's group of the file's own subtitle tracks, and the mark on such a track among a language's subtitles."
+  },
+  "app.player.subtitles_other": {
+    "value": "Altri",
+    "description": "Player: the subtitle menu's group of addon subtitles that name no language."
+  },
+  "app.player.subtitle_forced": {
+    "value": "Forzati",
+    "description": "Player: the mark on a subtitle that only translates foreign dialogue."
+  },
+  "app.player.subtitle_sdh": {
+    "value": "SDH",
+    "description": "Player: the mark on a subtitle for the deaf and hard of hearing (keep it short: a mark, not a phrase)."
+  },
+  "app.player.subtitle_delay_short": {
+    "value": "Ritardo",
+    "description": "Player: the subtitle menu's delay row, under the languages (the menu is the subtitles', so the one word says it)."
+  },
+  "app.player.seconds": {
+    "value": "{value} s",
+    "description": "Player: a subtitle delay in seconds, signed (+0.25, −1.50).",
+    "args": {
+      "value": "str"
+    }
+  },
+  "app.player.more": {
+    "value": "Altro",
+    "description": "Player: the title of the menu behind the transport's … button."
+  },
+  "app.player.show_info": {
+    "value": "Info sul titolo",
+    "description": "Player: the … menu's row that opens what plays, as its catalog tells it (the show, the episode, its overview, cast and director)."
+  },
+  "app.player.now_playing": {
+    "value": "In riproduzione",
+    "description": "Player: the Episodes panel's mark on the episode that is playing."
+  },
+  "app.player.paused": {
+    "value": "In pausa",
+    "description": "Player: the word under the pause badge in the middle of the picture while the film is paused."
+  },
+  "app.player.subtitles_on": {
+    "value": "Sottotitoli: {name}",
+    "description": "Player: the note after the green key turned subtitles on; {name} is the subtitle's name (its language, the addon).",
+    "args": {
+      "name": "str"
+    }
+  },
+  "app.player.subtitles_turned_off": {
+    "value": "Sottotitoli disattivati",
+    "description": "Player: the note after the green key turned subtitles off."
+  },
+  "app.player.track": {
+    "value": "Traccia {n}",
+    "description": "Player: a track menu row for a track the file names in no language, by its position.",
+    "args": {
+      "n": "i64"
+    }
+  },
+  "app.player.next_episode": {
+    "value": "Episodio successivo",
+    "description": "Player: the button near an episode's end that opens the next episode's streams."
+  },
+  "app.player.watch_credits": {
+    "value": "Guarda i titoli",
+    "description": "Player: the button beside Next episode that keeps watching this one."
+  },
+  "app.player.up_next": {
+    "value": "Prossimo",
+    "description": "Player: the line over the next episode's name near an episode's end."
+  },
+  "app.player.skip_intro": {
+    "value": "Salta intro",
+    "description": "Player: the button shown during an episode's intro; OK jumps to its end."
+  },
+  "app.player.skip_recap": {
+    "value": "Salta riassunto",
+    "description": "Player: the button shown during an episode's recap of earlier episodes; OK jumps to its end."
+  },
+  "app.player.skipped_intro": {
+    "value": "Intro saltata",
+    "description": "Player: the short notice after the intro was skipped automatically."
+  },
+  "app.player.skipped_recap": {
+    "value": "Riassunto saltato",
+    "description": "Player: the short notice after the recap was skipped automatically."
+  },
+  "app.settings.skip_intros": {
+    "value": "Salta le intro",
+    "description": "Settings: row and picker title — whether the player offers to skip intros and recaps."
+  },
+  "app.settings.skip_off": {
+    "value": "Disattivato",
+    "description": "Skip intros picker: never offer to skip."
+  },
+  "app.settings.skip_button": {
+    "value": "Mostra pulsante",
+    "description": "Skip intros picker: show a Skip intro button (the default)."
+  },
+  "app.settings.skip_auto": {
+    "value": "Automatico",
+    "description": "Skip intros picker: skip intros and recaps without asking."
+  },
+  "app.settings.skip_intros_copy": {
+    "value": "Salta la sigla o il riassunto di un episodio quando inizio e fine sono noti. I segnaposto vengono da introdb.app e AniSkip.",
+    "description": "Skip intros picker: the line under the title. introdb.app and AniSkip are proper names."
+  },
+  "app.settings.dv_profile7": {
+    "value": "Dolby Vision Profilo 7",
+    "description": "Settings: row and picker title — how a dual-layer Dolby Vision Profile 7 file plays. 'Dolby Vision' is a trademark, never translated."
+  },
+  "app.settings.dv_hdr10": {
+    "value": "HDR10",
+    "description": "Dolby Vision Profile 7 picker: play the HDR10 base layer (the default). HDR10 is a format name."
+  },
+  "app.settings.dv_try": {
+    "value": "Prova Dolby Vision",
+    "description": "Dolby Vision Profile 7 picker: experimental — declare Dolby Vision to the TV, falling back to HDR10 automatically."
+  },
+  "app.settings.dv_profile7_copy": {
+    "value": "Come viene riprodotto un film Dolby Vision a doppio livello (Profilo 7). HDR10 riproduce il livello di base, che ogni TV mostra. Prova Dolby Vision chiede alla TV il Dolby Vision e torna da sé a HDR10 se la TV lo rifiuta.",
+    "description": "Dolby Vision Profile 7 picker: the line under the title."
+  },
+  "app.settings.multichannel_audio": {
+    "value": "Audio multicanale",
+    "description": "Settings: row and picker title — what a 5.1/7.1 track the app decodes itself is sent to the TV's audio output as."
+  },
+  "app.settings.multichannel_auto": {
+    "value": "Automatico",
+    "description": "Multichannel audio picker: Dolby Digital, or PCM when the TV's sound output is HDMI eARC (the default)."
+  },
+  "app.settings.multichannel_dolby_digital": {
+    "value": "Dolby Digital",
+    "description": "Multichannel audio picker: always Dolby Digital 5.1. 'Dolby Digital' is a trademark, never translated."
+  },
+  "app.settings.multichannel_pcm": {
+    "value": "PCM",
+    "description": "Multichannel audio picker: always multichannel PCM. PCM is a format name."
+  },
+  "app.settings.multichannel_stereo": {
+    "value": "Stereo",
+    "description": "Multichannel audio picker: every surround track downmixed to a plain stereo pair."
+  },
+  "app.settings.multichannel_stereo_hint": {
+    "value": "Per altoparlanti TV, cuffie o Bluetooth",
+    "description": "Multichannel audio picker: the line under Stereo — who it is for."
+  },
+  "app.settings.multichannel_dplii": {
+    "value": "Pro Logic II",
+    "description": "Multichannel audio picker: every surround track folded to Dolby Pro Logic II matrixed stereo. 'Pro Logic II' is a trademark, never translated."
+  },
+  "app.settings.multichannel_dplii_hint": {
+    "value": "Per ricevitori Pro Logic II su un collegamento stereo",
+    "description": "Multichannel audio picker: the line under Pro Logic II — for a receiver that unfolds Pro Logic II, connected by a link that carries stereo only (optical with LG Sound Sync)."
+  },
+  "app.settings.multichannel_audio_copy": {
+    "value": "Come viene inviata una traccia 5.1 o 7.1 che l’app decodifica da sé. Automatico invia Dolby Digital 5.1, che l’ottico e l’ARC trasportano, e PCM tramite HDMI eARC. Dolby Digital e PCM inviano sempre quello. Stereo riduce ogni traccia surround a una semplice coppia stereo; Pro Logic II a una che un ricevitore Pro Logic II riespande.",
+    "description": "Multichannel audio picker: the line under the title."
+  },
+  "app.player.undo": {
+    "value": "INDIETRO · {time}",
+    "description": "Player: the chip after a seek saying that the BACK key returns to {time}, where the seek started. The key's name is in capitals.",
+    "args": {
+      "time": "str"
+    }
+  },
+  "app.player.aspect": "Proporzioni",
+  "app.player.aspect_auto": "Auto",
+  "app.player.aspect_fill": "Riempi",
+  "app.player.aspect_stretch": "Allunga",
+  "app.player.aspect_zoom_4_3": "Zoom 4:3",
+  "app.player.aspect_zoom_21_9": "Zoom 21:9",
+  "app.player.stats": "Statistiche per nerd",
+  "app.player.stats_on": "Attive",
+  "app.player.stats_off": "Disattive",
+  "app.stats.title": "Statistiche per nerd",
+  "app.stats.section_stream": "FLUSSO / USCITA",
+  "app.stats.section_delivery": "CONSEGNA / CONTROLLO",
+  "app.stats.section_device": "DISPOSITIVO",
+  "app.stats.header": "StremioNative {version} · {build} · {os} · DV {dv} · {w}×{h}",
+  "app.stats.build_release": "produzione",
+  "app.stats.build_dev": "sviluppo",
+  "app.stats.idle": "Inattivo",
+  "app.stats.resolving": "Risoluzione del flusso",
+  "app.stats.connecting": "Connessione",
+  "app.stats.buffering": "Buffering",
+  "app.stats.seeking": "Ricerca della posizione",
+  "app.stats.playing": "In riproduzione",
+  "app.stats.error": "Errore di riproduzione",
+  "app.stats.paused": "{state} (in pausa)",
+  "app.stats.stalled": "BLOCCATO {secs} s — {state}",
+  "app.stats.f_source": "Origine",
+  "app.stats.f_transport": "Trasporto",
+  "app.stats.f_container": "Contenitore",
+  "app.stats.f_video": "Video",
+  "app.stats.f_audio": "Audio",
+  "app.stats.f_picture": "Immagine",
+  "app.stats.f_timeline": "Posizione",
+  "app.stats.f_sync": "Invio V−A",
+  "app.stats.f_plane": "Piano video",
+  "app.stats.f_transfer": "Trasferito",
+  "app.stats.f_throughput": "Velocità",
+  "app.stats.f_load": "Caricamento",
+  "app.stats.f_feed": "Invio",
+  "app.stats.f_queues": "Code",
+  "app.stats.f_buffer": "Buffer",
+  "app.stats.f_frames": "Fotogrammi",
+  "app.stats.f_stalls": "Blocchi",
+  "app.stats.f_error": "Errore",
+  "app.stats.f_set": "TV",
+  "app.stats.f_firmware": "Firmware",
+  "app.stats.f_decoder": "Decoder",
+  "app.stats.f_dolby_vision": "Dolby Vision",
+  "app.stats.this_tv": "questo TV",
+  "app.stats.local_network": "rete locale",
+  "app.stats.public_address": "indirizzo pubblico",
+  "app.stats.progressive": "Progressivo",
+  "app.stats.live": "in diretta",
+  "app.stats.torrent": "Torrent tramite server di streaming",
+  "app.stats.not_in_url": "non nell’URL",
+  "app.stats.not_opened": "NON APERTO",
+  "app.stats.fps": "{w}×{h} · {fps} fps ({src})",
+  "app.stats.fps_unknown": "{w}×{h} · fps sconosciuti",
+  "app.stats.pipeline": "pipeline",
+  "app.stats.declared": "dichiarato",
+  "app.stats.exported_window": "finestra esportata",
+  "app.stats.no_window": "NESSUNA FINESTRA",
+  "app.stats.window_ready": "finestra pronta",
+  "app.stats.not_placed": "NON POSIZIONATA",
+  "app.stats.placement_failed": "POSIZIONAMENTO FALLITO",
+  "app.stats.placed": "posizionata {w}×{h} rv={rv}",
+  "app.stats.unavailable": "NON DISPONIBILE",
+  "app.stats.unbound": "non collegato",
+  "app.stats.binding": "collegamento",
+  "app.stats.streaming": "in streaming",
+  "app.stats.no_video_path": "NESSUNO — nessun percorso video",
+  "app.stats.no_connection": "nessuna connessione",
+  "app.stats.received": "{mb} · HTTP {status}",
+  "app.stats.rate": "{now} ora · {avg} in media",
+  "app.stats.waiting": "in attesa",
+  "app.stats.completed": "completato",
+  "app.stats.refused": "RIFIUTATO",
+  "app.stats.no_callbacks": "nessun evento",
+  "app.stats.callbacks": "{n} eventi",
+  "app.stats.callback_error": "{n} eventi · ERRORE {code} al n. {at}",
+  "app.stats.nothing_demuxed": "NIENTE LETTO",
+  "app.stats.fed_rate": "{v} fps · audio {a}/s",
+  "app.stats.feed_accepting": "accetta",
+  "app.stats.feed_full": "decoder pieno",
+  "app.stats.feed_holding": "tiene ~1,6 s di anticipo",
+  "app.stats.feed_empty": "coda vuota",
+  "app.stats.feed_none": "ancora niente inviato",
+  "app.stats.queues": "audio {a} / {ca} MB · video {v} / {cv} MB",
+  "app.stats.buffer_ahead": "{secs} s di anticipo",
+  "app.stats.not_yet": "non ancora noto",
+  "app.stats.none_yet": "ancora nessuno",
+  "app.stats.frames_none": "NESSUNO {secs} s dopo il caricamento",
+  "app.stats.since_seek": "0 dalla ricerca",
+  "app.stats.frames_frozen": "{n} — BLOCCATO {secs} s",
+  "app.stats.stalls": "{n} visti",
+  "app.stats.stalls_now": "{n} visti · BLOCCATO ORA {secs} s",
+  "app.stats.no_error": "nessuno",
+  "app.stats.unknown_device": "NON SEGNALATO",
+  "app.stats.device_table": "tabella del dispositivo",
+  "app.stats.assumed": "PRESUNTO",
+  "app.stats.no_codec": "niente {codec}",
+  "app.stats.chart_queue_v": "Coda video",
+  "app.stats.chart_queue_a": "Coda audio",
+  "app.stats.buffer_low": "{secs} s di anticipo · BASSO",
+  "app.stats.buffer_empty": "VUOTO — niente in anticipo",
+  "app.stats.chart_mean": "{now} · media {mean}",
+  "app.settings.subtitle_color": {
+    "value": "Colore del testo",
+    "description": "Settings: row and picker title — the colour text subtitles are drawn in."
+  },
+  "app.settings.subtitle_color_copy": {
+    "value": "Il colore dei sottotitoli di testo. I sottotitoli a immagine mantengono il proprio.",
+    "description": "Text colour picker: the line under the title."
+  },
+  "app.settings.color_white": {
+    "value": "Bianco",
+    "description": "A subtitle colour: white."
+  },
+  "app.settings.color_yellow": {
+    "value": "Giallo",
+    "description": "A subtitle colour: yellow."
+  },
+  "app.settings.color_cyan": {
+    "value": "Ciano",
+    "description": "A subtitle colour: cyan."
+  },
+  "app.settings.color_green": {
+    "value": "Verde",
+    "description": "A subtitle colour: green."
+  },
+  "app.settings.color_grey": {
+    "value": "Grigio",
+    "description": "A subtitle colour: grey."
+  },
+  "app.settings.color_black": {
+    "value": "Nero",
+    "description": "A subtitle outline colour: black."
+  },
+  "app.settings.subtitle_background": {
+    "value": "Sfondo",
+    "description": "Settings: row and picker title — the box drawn behind text subtitles."
+  },
+  "app.settings.subtitle_background_copy": {
+    "value": "Uno sfondo dietro i sottotitoli di testo li rende più leggibili su un’immagine chiara.",
+    "description": "Background picker: the line under the title."
+  },
+  "app.settings.background_none": {
+    "value": "Trasparente",
+    "description": "Background picker: no box."
+  },
+  "app.settings.background_black_50": {
+    "value": "Nero 50%",
+    "description": "Background picker: a black box at half opacity."
+  },
+  "app.settings.background_black_75": {
+    "value": "Nero 75%",
+    "description": "Background picker: a black box at three-quarter opacity."
+  },
+  "app.settings.background_black": {
+    "value": "Riquadro nero",
+    "description": "Background picker: an opaque black box."
+  },
+  "app.settings.subtitle_outline": {
+    "value": "Colore del contorno",
+    "description": "Settings: row and picker title — the colour of the edge around text subtitles."
+  },
+  "app.settings.subtitle_outline_copy": {
+    "value": "Il bordo attorno a ogni lettera dei sottotitoli di testo.",
+    "description": "Outline colour picker: the line under the title."
+  },
+  "app.settings.subtitle_opacity": {
+    "value": "Opacità",
+    "description": "Settings: row and picker title — how opaque text subtitles are drawn."
+  },
+  "app.settings.subtitle_opacity_copy": {
+    "value": "Quanto sono opachi i sottotitoli di testo, contorno e sfondo compresi.",
+    "description": "Opacity picker: the line under the title."
+  },
+  "app.settings.opacity_100": {
+    "value": "100%",
+    "description": "Opacity picker: fully opaque."
+  },
+  "app.settings.opacity_75": {
+    "value": "75%",
+    "description": "Opacity picker: three-quarters opaque."
+  },
+  "app.settings.opacity_50": {
+    "value": "50%",
+    "description": "Opacity picker: half opaque."
+  },
+  "app.settings.ass_styling": {
+    "value": "Stile dei sottotitoli ASS",
+    "description": "Settings: row and picker title — whether ASS/SSA subtitles keep their own styling."
+  },
+  "app.settings.ass_styling_copy": {
+    "value": "Attivo mantiene i caratteri, i colori e la posizione di una traccia ASS. Disattivo ne mostra i dialoghi in modo semplice, nel tuo stile di sottotitoli.",
+    "description": "Style ASS subtitles picker: the line under the title."
+  },
+  "app.settings.switch_off": {
+    "value": "Disattivo",
+    "description": "A Settings switch's rung: off."
+  },
+  "app.settings.switch_on": {
+    "value": "Attivo",
+    "description": "A Settings switch's rung: on."
+  },
+  "app.settings.auto_play": {
+    "value": "Riproduzione automatica",
+    "description": "Settings: row and picker title — whether the next episode plays by itself when one ends."
+  },
+  "app.settings.auto_play_copy": {
+    "value": "Disattivo torna dove hai iniziato quando un episodio finisce. «Prossimo» viene comunque proposto.",
+    "description": "Auto-play picker: the line under the title."
+  },
+  "app.settings.up_next_at": {
+    "value": "«Prossimo» appare",
+    "description": "Settings: row and picker title — when the player offers the next episode."
+  },
+  "app.settings.up_next_at_copy": {
+    "value": "Ai titoli di coda usa il segno dei titoli dell’episodio se c’è, altrimenti 35 secondi prima della fine.",
+    "description": "Up Next picker: the line under the title."
+  },
+  "app.settings.up_next_credits": {
+    "value": "Ai titoli di coda",
+    "description": "Up Next picker: at the credits marker when known (else 35 s before the end)."
+  },
+  "app.settings.up_next_15": {
+    "value": "15 s prima della fine",
+    "description": "Up Next picker: 15 seconds before the end."
+  },
+  "app.settings.up_next_25": {
+    "value": "25 s prima della fine",
+    "description": "Up Next picker: 25 seconds before the end."
+  },
+  "app.settings.up_next_35": {
+    "value": "35 s prima della fine",
+    "description": "Up Next picker: 35 seconds before the end."
+  },
+  "app.settings.up_next_45": {
+    "value": "45 s prima della fine",
+    "description": "Up Next picker: 45 seconds before the end."
+  },
+  "app.settings.language": {
+    "value": "Lingua dell’interfaccia",
+    "description": "Settings > Interface: the row (and picker title) choosing the language of the app's own text."
+  },
+  "app.settings.language_copy": {
+    "value": "La lingua dei menu e dei messaggi dell’app. Si applica al prossimo avvio dell’app.",
+    "description": "Interface language picker: the line under the title."
+  },
+  "app.player.choose_stream": {
+    "value": "Scegli un altro flusso",
+    "description": "Player failure read-out: the button that returns to the stream list to pick another stream."
+  },
+  "app.player.try_again": {
+    "value": "Riprova",
+    "description": "Player failure read-out: the button that starts the same stream again from where it stopped."
+  },
+  "app.grid.more_failed": {
+    "value": "Impossibile caricarne altri · Riprova",
+    "description": "Catalog grid/list: the button after the last item when the next page failed to load; pressing it asks again."
+  },
+  "app.menu.sign_in_to_add": {
+    "value": "Accedi per aggiungere alla libreria",
+    "description": "Item menu, signed out: the row that opens sign-in (a library needs an account)."
+  },
+  "app.reason.timeout": {
+    "value": "tempo scaduto",
+    "description": "A short failure cause in parentheses or after a dot: the request took too long."
+  },
+  "app.reason.network": {
+    "value": "nessuna connessione",
+    "description": "A short failure cause: the server could not be reached (no connection, DNS, refused)."
+  },
+  "app.reason.bad_response": {
+    "value": "risposta inattesa",
+    "description": "A short failure cause: the server answered something the app could not read."
+  },
+  "app.reason.cancelled": {
+    "value": "annullato",
+    "description": "A short failure cause: the request was cancelled."
+  },
+  "app.reason.api_error": {
+    "value": "errore {code}",
+    "description": "A short failure cause: the Stremio account service answered with error number {code}."
+  },
+  "app.detail.why_torrent": {
+    "value": "I torrent non si possono riprodurre qui: configura un servizio debrid in questo addon per ottenere link riproducibili",
+    "description": "Toast when OK is pressed on a torrent stream: this app has no torrent engine; a debrid service in the addon turns torrents into playable links."
+  },
+  "app.detail.why_youtube": {
+    "value": "I video di YouTube non si possono riprodurre in questa app",
+    "description": "Toast when OK is pressed on a YouTube stream: the app cannot play YouTube."
+  },
+  "app.detail.why_external": {
+    "value": "Questo flusso si apre in un’altra app o sito web, non qui",
+    "description": "Toast when OK is pressed on a stream that is a link to another app or website."
+  },
+  "app.detail.quiet_addons": {
+    "value": {
+      "one": "{count} addon senza flussi",
+      "other": "{count} addon senza flussi"
+    },
+    "description": "Stream list: the last row, standing for the addons that failed or found nothing; OK shows them and why."
+  },
+  "app.detail.still_asking": {
+    "value": {
+      "one": "In attesa di {count} addon…",
+      "other": "In attesa di {count} addon…"
+    },
+    "description": "Stream list: the note at the end while some addons have not answered yet; a spinner beside it."
+  },
+  "app.player.start_over": {
+    "value": "Dall’inizio",
+    "description": "Player: the pill offered for a few seconds after a playback resumed where the viewer stopped; OK plays it from the beginning."
+  },
+  "app.player.tab_tracks": {
+    "value": "Tracce",
+    "description": "Subtitle menu: the tab listing the subtitle tracks to pick from."
+  },
+  "app.player.tab_timing": {
+    "value": "Sincronia",
+    "description": "Subtitle menu: the tab moving subtitles earlier or later (the delay)."
+  },
+  "app.player.tab_style": {
+    "value": "Stile",
+    "description": "Subtitle menu: the tab for the subtitles' look (size, position, colour, outline, background); the same preferences as Settings."
+  },
+  "app.player.style_note": {
+    "value": "Anche le tue impostazioni predefinite",
+    "description": "Subtitle menu, Style tab: the note under the rows — the choices are the app-wide subtitle preferences (also in Settings)."
+  },
+  "app.player.audio_sync": {
+    "value": "Sincronia audio",
+    "description": "Player audio menu: the row (and the steps' title) moving the sound earlier or later against the picture, for streams whose sound is out of sync."
   }
 }

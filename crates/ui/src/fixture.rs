@@ -330,6 +330,9 @@ pub struct FixtureScreen {
     /// `DrawFrame::lifted` as the page pass last handed it to this page's visible or captured draw
     /// (the element the opener lift owns); `None` when none was. Render bookkeeping, not state.
     pub lifted: Option<FocusKey<u32>>,
+    /// The `focus` the opener lift last handed [`Screen::redraw_focused`], with the
+    /// [`draw_order`] tick it ran at. Render bookkeeping, not state.
+    pub redrawn: std::cell::Cell<Option<(Option<FocusKey<u32>>, usize)>>,
 }
 
 crate::focusable_via_composed!(FixtureScreen, FixtureHost);
@@ -463,6 +466,9 @@ impl Machine<FixtureHost> for FixtureScreen {
 
 impl Screen<FixtureHost> for FixtureScreen {
     fn as_any(&self) -> Option<&dyn std::any::Any> { Some(self) }
+    fn redraw_focused(&self, _f: &mut DrawFrame<'_, '_, FixtureHost>, focus: Option<FocusKey<u32>>) {
+        self.redrawn.set(Some((focus, draw_order())));
+    }
     fn covered_surfaces_ready(&self) -> bool {
         // Page 901 models a remounted owner awaiting an identity-matched store notice.
         self.arg != FixtureArg::Page(901) || self.state.items_seen > 0
@@ -638,7 +644,7 @@ impl FixtureModal {
                                     kind: ElemKind::Card,
                                 },
                                 draw_at: 0,
-                                recorded_draws: 0, recorded_at: 0, speculative_draws: 0, lifted: None,
+                                recorded_draws: 0, recorded_at: 0, speculative_draws: 0, lifted: None, redrawn: Default::default(),
                             }),
                             inflight: Vec::new(),
                             staged: false,
@@ -922,7 +928,7 @@ impl Mounter<FixtureHost> for FixtureMounter {
                 kind,
             },
             draw_at: 0,
-            recorded_draws: 0, recorded_at: 0, speculative_draws: 0, lifted: None,
+            recorded_draws: 0, recorded_at: 0, speculative_draws: 0, lifted: None, redrawn: Default::default(),
         })
     }
 }
@@ -1072,6 +1078,10 @@ impl Rig<FixtureHost> for FixtureRig {
                 initial: &self.scrim_initial,
                 name: &self.scrim_name,
                 name_w: 0.0,
+                fill: super::theme::CONTROL_IDLE_FILL,
+                rest_open: false,
+                current: false,
+                bar_focused: false,
             },
             labels: super::widgets::TabLabels { generation: 1, labels: &self.scrim_labels },
             chip_expand: self.scrim_expand,
@@ -2174,6 +2184,32 @@ fn a_video_plane_screen_replaces_its_host_and_takes_no_snapshot() {
              framebuffer 0 without it caches a photograph of the punch-through hole",
         );
     }
+}
+
+/// **A bound video plane frees what it makes unusable, once.** The frozen-host snapshot (8.3 MB)
+/// and the blur chain (≈10.6 MB) can sample nothing while the plane is bound, so the first
+/// video-plane frame releases them; later frames of the same playback do not churn them.
+#[test]
+fn the_first_video_plane_frame_releases_the_host_snapshot_and_no_later_one_does() {
+    let _g = sn_base::testlock::serial();
+    let mut d: Dispatcher<FixtureHost> = Dispatcher::new();
+    let mut rig = FixtureRig::new();
+    d.request(MachineId::Nav, NavOp::Root(FixtureArg::Home));
+    d.frame(&mut rig, tick(0), vec![], vec![], &mut NoTap);
+    d.request(MachineId::Nav, NavOp::Push(FixtureArg::VideoPlane));
+    d.frame(&mut rig, tick(16), vec![], vec![], &mut NoTap);
+    let before = crate::popover::host::releases();
+    assert!(!d.video_plane_frame(), "the fixture: declared, not yet bound");
+    d.frame(&mut rig, tick(32), vec![], vec![], &mut NoTap);
+    assert_eq!(crate::popover::host::releases(), before, "an unbound player frees nothing");
+
+    d.present.note(sn_machine::present::PresentEvent::VideoPlane(true));
+    d.frame(&mut rig, tick(48), vec![], vec![], &mut NoTap);
+    assert_eq!(crate::popover::host::releases(), before + 1, "the plane's first frame frees the snapshot");
+    for t in 1..4 {
+        d.frame(&mut rig, tick(48 + 16 * t), vec![], vec![], &mut NoTap);
+    }
+    assert_eq!(crate::popover::host::releases(), before + 1, "and the frames after it leave it alone");
 }
 
 /// **Spec §12.1 — an app switch PARKS the tree, and the loop is what says so.**

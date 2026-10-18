@@ -4,7 +4,7 @@
 //! step, and the three privileged platform calls.
 //!
 //! **The installed addons are read through ONE accessor, [`Bridge::addons`]** — Search plans
-//! against them, Live TV and the grids resolve against them, Detail asks their meta and streams.
+//! against them, Discover and the grids resolve against them, Detail asks their meta and streams.
 //! They are the catalog store's, which `Bridge::follow_addons` rebuilds from
 //! `AddonsStore::in_use` — the account's collection signed in, the defaults signed out — so every
 //! page switches with the session (`Views::addons` is its screen-side twin).
@@ -22,7 +22,7 @@ use sn_machine::machine::{Effects, Fx, Handled, MachineId, NavOp, PresentHandle,
 use sn_machine::present::Present;
 use sn_screens::chrome::ChromeBar;
 use sn_screens::registry::{
-    AddonsCmd, AppArg, AppFx, AppMounter, AppMsg, Bundle, CatalogCmd, DetailCmd, GridCmd, LibraryCmd, PlayerCmd, SearchCmd,
+    AddonsCmd, AppArg, AppFx, AppMounter, AppMsg, Bundle, CatalogCmd, DetailCmd, GridCmd, LibraryCmd, PlayerArg, SearchCmd,
     SessionView, SettingsCmd, Views,
 };
 use sn_screens::stores::account::{AccountJob, AccountLanding, AccountStore, SessionState};
@@ -78,6 +78,8 @@ pub struct Bridge {
     told: [Option<u32>; 8],
     /// The playback view changed since the tree was last told.
     playback_moved: bool,
+    /// The last stream started, for the failure read-out's *Try again*.
+    last_play: Option<sn_screens::registry::PlayRequest>,
     /// The addons store's epoch the catalog store was last built from.
     built_epoch: u32,
     /// The frame clock: the search store's debounce, and what a landed sign-in code is timed from.
@@ -85,6 +87,8 @@ pub struct Bridge {
     /// Navigation the bridge itself asks for (the first-run sign-in), sent at the next notify.
     nav: Vec<NavOp<AppArg>>,
     first_run_offered: bool,
+    /// A sign-out reset the pages to Home; the sign-in page follows once Home stands.
+    sign_in_after_root: bool,
     /// Where the settings are persisted (`None`: not at all, a host test).
     settings_path: Option<PathBuf>,
     /// The `(settings, search settings)` generations last written.
@@ -126,10 +130,12 @@ impl Bridge {
             art,
             told: [None; 8],
             playback_moved: false,
+            last_play: None,
             built_epoch: 0,
             now_ms: 0,
             nav: Vec::new(),
             first_run_offered: false,
+            sign_in_after_root: false,
             settings_path: None,
             saved: (0, 0),
             #[cfg(test)]
@@ -166,7 +172,7 @@ impl Bridge {
     }
 
     /// **The addons the app uses**, manifests loaded — the one accessor every lookup plans
-    /// against (Home's rows, Search, Live TV, the grids, Detail's meta and streams). Built from
+    /// against (Home's rows, Search, Discover, the grids, Detail's meta and streams). Built from
     /// `AddonsStore::in_use` (the account's collection signed in, the defaults otherwise);
     /// `Views::addons` is its screen-side twin.
     pub fn addons(&self) -> &[Addon] {
@@ -183,6 +189,20 @@ impl Bridge {
         self.persist();
     }
 
+    /// *Try again*: the last stream once more, from where it stopped (its own start when it never
+    /// got under way), over the player page that is already up.
+    fn retry(&mut self) {
+        let Some(mut req) = self.last_play.clone() else { return };
+        let pos = self.playback.view.clock.pos_ms;
+        if pos > 0 {
+            req.start_ms = pos;
+        }
+        self.playback.start(&req, self.settings.track_prefs());
+        self.playback.set_audio_offset(self.settings.audio_offset(&audio_key(&req)));
+        self.ask_subtitles(&req);
+        self.playback_moved = true;
+    }
+
     /// Write the settings file when the settings or the recent searches moved.
     fn persist(&mut self) {
         let now = (self.settings.gen(), self.search.settings_gen());
@@ -197,14 +217,14 @@ impl Bridge {
 
     /// Publish the top bar for the page being shown, before the dispatcher's frame.
     pub fn capture_chrome(&mut self, pages: &mut Dispatcher<Bundle>) {
-        self.chrome.capture(pages, &*self.measure);
+        self.chrome.capture(pages, &self.account, &*self.measure);
     }
 
     /// Step the bar's motion after the frame, and publish the transition's presentation for the
     /// readers outside a page's own frame (the bar, the popovers).
     pub fn update_chrome(&mut self, pages: &mut Dispatcher<Bundle>, glass: &mut sn_ui::frame::glass::GlassPlan, dt: f32) {
         self.chrome.update(pages, Some(glass), dt);
-        let tab = pages.nav.tabs.stack.pending_dest().and_then(sn_screens::tabs::Tab::of_arg).map(sn_screens::tabs::Tab::index);
+        let tab = pages.nav.tabs.stack.pending_dest().and_then(sn_screens::tabs::Tab::of_arg).and_then(sn_screens::tabs::Tab::index);
         sn_ui::nav::publish(pages.nav.tabs.stack.page_alpha(), pages.nav.tabs.stack.chrome_alpha(), tab);
     }
 
@@ -248,6 +268,15 @@ impl Bridge {
         let jobs = match cmd {
             AddonsCmd::ToggleSearch(id) => self.addons.toggle_search(&id),
             AddonsCmd::Retry => self.addons.retry(),
+            AddonsCmd::ToggleStreams(id) => {
+                let jobs = self.addons.toggle_streams(&id);
+                // the stream lists open now drop the addon's answer, or ask it again
+                let asks = self.detail.set_addon(&id, self.addons.stream_filter().allows(&id));
+                if !asks.is_empty() {
+                    self.work.detail(&*self.runner, asks);
+                }
+                jobs
+            }
         };
         self.run_addons(jobs);
     }
@@ -275,6 +304,7 @@ impl Bridge {
             SessionState::SignedOut { .. } => {
                 if self.addons.signed_in() {
                     log("account: signed out");
+                    self.leave_account();
                 }
                 let jobs = self.addons.sign_out();
                 self.run_addons(jobs);
@@ -286,6 +316,19 @@ impl Bridge {
             SessionState::Restoring => {}
         }
         self.follow_addons();
+    }
+
+    /// **A sign-out, the moment it happens** (the account's own state is already gone: the store
+    /// ended the session and asked for the stored copy to be removed). What plays stops, and what
+    /// it would have recorded is dropped — a sign-out writes nothing to the account beyond the
+    /// API's logout. The addons and the library follow in [`Self::follow_account`] (back to the
+    /// defaults, Continue Watching empty, the collection's device copy removed). The pages are
+    /// reset to Home, and once Home stands the sign-in page is offered over it, as on a first run.
+    fn leave_account(&mut self) {
+        self.playback.stop();
+        let _ = self.playback.take_progress();
+        self.nav.push(NavOp::Root(AppArg::Home));
+        self.sign_in_after_root = true;
     }
 
     /// The addons in use changed: the catalog store is rebuilt from them (rows the new list keeps
@@ -329,10 +372,27 @@ impl Bridge {
                 Done::Library(l) => {
                     let (moved, jobs) = self.library.land(l);
                     self.run_library(jobs);
+                    self.toast_refused();
                     moved
                 }
                 Done::Search(l) => self.search.land(l),
                 Done::Grid(l) => self.grid.land(l),
+                Done::Skips { gen, source, result } => {
+                    // one line per lookup: the service and what it knew, never the URL
+                    match &result {
+                        Ok(s) if s.is_empty() => log(&format!("skip: {source} not found")),
+                        Ok(s) => log(&format!("skip: {source} found {}", sn_stremio::skip::describe(s))),
+                        Err(e) => log(&format!("skip: {source} failed ({e})")),
+                    }
+                    self.playback.land_skips(gen, result.unwrap_or_default());
+                    false
+                }
+                Done::Subtitles { gen, addon, result } => {
+                    // a failure is that addon's nothing; the line was logged on the worker
+                    let landed = self.playback.land_subtitles(gen, &addon, result.unwrap_or_default());
+                    self.playback_moved |= landed;
+                    false
+                }
             };
         }
         if let Some(art) = self.art {
@@ -342,13 +402,71 @@ impl Bridge {
         changed
     }
 
+    /// Ask every subtitles addon in use for what `req` plays (nothing for a playback that does not
+    /// know what it is of).
+    fn ask_subtitles(&mut self, req: &sn_screens::registry::PlayRequest) {
+        let Some(item) = &req.item else { return };
+        let sources = sn_stremio::subtitles::plan(self.catalog.addons(), &item.kind, &item.video_id, &req.hints);
+        if !sources.is_empty() {
+            self.work.subtitles(&*self.runner, self.playback.subs.gen, sources);
+        }
+    }
+
     /// The frame's playback pump; the video plane's edge goes to the present gate.
     pub fn pump_playback(&mut self, now_ms: u32, present: &mut Present) {
         self.now_ms = now_ms;
         let (moved, edge) = self.playback.tick(now_ms);
         self.playback_moved |= moved;
+        // Skip intros Off asks no marker service anything (PRIVACY.md)
+        let skip_on = self.settings.get(sn_screens::stores::settings::Pref::SkipIntros) != sn_screens::stores::settings::SKIP_OFF;
+        let detail = &self.detail;
+        let imdb = |i: &sn_screens::registry::PlayItem| match detail.meta(&sn_screens::stores::detail::MetaKey { kind: i.kind.clone(), id: i.id.clone() }) {
+            Some(sn_screens::stores::detail::MetaState::Ready(m)) => m.imdb().map(str::to_owned),
+            _ => None,
+        };
+        if let Some(job) = self.playback.take_skip_lookup(imdb).filter(|_| skip_on) {
+            self.work.skips(&*self.runner, job);
+        }
         if let Some(bound) = edge {
             present.note(sn_machine::present::PresentEvent::VideoPlane(bound));
+        }
+        self.send_progress();
+    }
+
+    /// A library write the account refused (already rolled back by the store): the television's
+    /// toast says so, once.
+    fn toast_refused(&mut self) {
+        use sn_screens::stores::library::Refused;
+        for refused in self.library.take_failed() {
+            let text = match refused {
+                Refused::Add => sn_platform::i18n::msg::app_menu_add_failed(),
+                Refused::Remove => sn_platform::i18n::msg::app_menu_remove_failed(),
+                Refused::Rewind => sn_platform::i18n::msg::app_menu_rewind_failed(),
+                Refused::Mark => sn_platform::i18n::msg::app_watched_mark_failed(),
+            }
+            .to_string();
+            sn_base::task::spawn("toast", move || {
+                let _ = sn_platform::tv::toast::toast(&text);
+            });
+        }
+    }
+
+    /// Record where the playback stands in the account's library (signed out: nothing). The work's
+    /// poster, for an entry the library does not hold yet, is the meta's a page holds open (the
+    /// Detail page under the player, or the player's own for an episode). So are its videos, which
+    /// the watched bit is laid over (stremio-core's `Player::watched`; no meta in, no bit).
+    fn send_progress(&mut self) {
+        for (mut p, last) in self.playback.take_progress() {
+            let key = sn_screens::stores::detail::MetaKey { kind: p.kind.clone(), id: p.id.clone() };
+            if let Some(sn_screens::stores::detail::MetaState::Ready(m)) = self.detail.meta(&key) {
+                if p.poster.is_none() {
+                    p.poster = m.preview.poster.clone();
+                }
+                p.videos = Some(m.videos.clone());
+            }
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+            let jobs = self.library.progress(p, last, &sn_stremio::library::rfc3339_ms(now));
+            self.run_library(jobs);
         }
     }
 
@@ -374,11 +492,23 @@ impl Bridge {
         if std::mem::take(&mut self.playback_moved) {
             pages.store_changed(StoreId::Playback.ord(), 0);
         }
+        // a menu the player presents is a panel over the video plane: its host stays live (the
+        // clock, the subtitles), never a frozen snapshot of a picture GL cannot read
+        pages.nav.next_style = if player_on_top(pages) {
+            sn_ui::containers::modal::Style::PlayerPanel { survives_failure: false }
+        } else {
+            sn_ui::containers::modal::Style::Compact
+        };
         // pushed over the root, never in its place: held until the boot's root page is up
         if pages.top_arg().is_some() {
             for op in std::mem::take(&mut self.nav) {
                 pages.request(MachineId::Nav, op);
             }
+        }
+        // a sign-out's sign-in page: over the Home it reset to, once that Home stands
+        if self.sign_in_after_root && self.nav.is_empty() && pages.nav.modals.surfaces.is_empty() && pages.nav.tabs.stack.root_settled(&AppArg::Home) {
+            self.sign_in_after_root = false;
+            pages.request(MachineId::Nav, NavOp::Push(AppArg::SignIn));
         }
     }
 
@@ -430,8 +560,8 @@ impl Bridge {
     fn grid_cmd(&mut self, cmd: GridCmd) {
         let jobs = match cmd {
             GridCmd::Open(key) => {
-                // a search row's grid opens on the cards the row already holds
-                let seed = self.search.pager_for(&key).cloned();
+                // a search or Home row's grid opens on the cards the row already holds
+                let seed = self.search.pager_for(&key).or_else(|| self.catalog.pager_for(&key)).cloned();
                 self.grid.open(self.catalog.addons(), key, seed)
             }
             GridCmd::Close(key) => {
@@ -453,6 +583,15 @@ impl Bridge {
                     super::prefs::publish(&self.settings);
                 }
             }
+            SettingsCmd::List(page, on) => {
+                self.settings.set_list(page, on);
+            }
+            SettingsCmd::Languages(l, op) => {
+                self.settings.edit(l, op);
+            }
+            SettingsCmd::LibrarySort(sort) => {
+                self.settings.set_library_sort(sort);
+            }
         }
         self.persist();
     }
@@ -464,7 +603,7 @@ impl Bridge {
                 self.detail.close_meta(&key);
                 Vec::new()
             }
-            DetailCmd::OpenStreams(key) => self.detail.open_streams(self.catalog.addons(), key),
+            DetailCmd::OpenStreams(key) => self.detail.open_streams(self.catalog.addons(), self.addons.stream_filter(), key),
             DetailCmd::CloseStreams(key) => {
                 self.detail.close_streams(&key);
                 Vec::new()
@@ -474,6 +613,13 @@ impl Bridge {
             self.work.detail(&*self.runner, jobs);
         }
     }
+}
+
+/// The stream source an audio sync is remembered for: the item's id — a live channel's own id
+/// (TvVoo's `vavoo_…`), else the work's (one offset for a show's episodes) — and nothing for a
+/// playback of no item.
+pub fn audio_key(req: &sn_screens::registry::PlayRequest) -> String {
+    req.item.as_ref().map(|i| i.id.clone()).unwrap_or_default()
 }
 
 impl Rig<Bundle> for Bridge {
@@ -511,17 +657,27 @@ impl Rig<Bundle> for Bridge {
             AppFx::Grid(cmd) => self.grid_cmd(cmd),
             AppFx::Settings(cmd) => self.settings_cmd(cmd),
             AppFx::Play(req) => {
-                self.playback.start(&req);
+                self.playback.start(&req, self.settings.track_prefs());
+                self.playback.set_audio_offset(self.settings.audio_offset(&audio_key(&req)));
+                self.ask_subtitles(&req);
                 self.playback_moved = true;
-                out.push(Fx::Nav(NavOp::Push(AppArg::Player(req.title))));
+                out.push(Fx::Nav(NavOp::Push(AppArg::Player(PlayerArg::of(&req)))));
+                self.last_play = Some(req);
             }
-            AppFx::Player(PlayerCmd::TogglePause) => {
-                self.playback.toggle_pause();
+            AppFx::Player(sn_screens::registry::PlayerCmd::Retry) => self.retry(),
+            AppFx::Player(sn_screens::registry::PlayerCmd::AudioDelay(ms)) => {
+                let ms = sn_media::player::clamp_audio_offset_ms(ms);
+                self.playback.set_audio_offset(ms);
+                if let Some(req) = &self.last_play {
+                    self.settings.set_audio_offset(&audio_key(req), ms);
+                    self.persist();
+                }
                 self.playback_moved = true;
             }
-            AppFx::Player(PlayerCmd::Stop) => {
-                self.playback.stop();
+            AppFx::Player(cmd) => {
+                self.playback.command(cmd);
                 self.playback_moved = true;
+                self.send_progress();
             }
             AppFx::Account(cmd) => self.account_cmd(cmd),
             AppFx::Addons(cmd) => {
@@ -532,12 +688,30 @@ impl Rig<Bundle> for Bridge {
                     self.work.search(&*self.runner, jobs);
                 }
             }
+            AppFx::Toast(text) => {
+                sn_base::task::spawn("toast", move || {
+                    let _ = sn_platform::tv::toast::toast(&text);
+                });
+            }
             AppFx::Library(LibraryCmd::Reload) => {
                 let jobs = self.library.reload();
                 self.run_library(jobs);
             }
             AppFx::Library(LibraryCmd::Add(entry)) => {
                 let jobs = self.library.add(entry);
+                self.run_library(jobs);
+            }
+            AppFx::Library(LibraryCmd::Remove(id)) => {
+                let jobs = self.library.remove(&id);
+                self.run_library(jobs);
+            }
+            AppFx::Library(LibraryCmd::Rewind(id)) => {
+                let jobs = self.library.rewind(&id);
+                self.run_library(jobs);
+            }
+            AppFx::Library(LibraryCmd::Mark(entry, edit)) => {
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+                let jobs = self.library.mark(entry, edit, &sn_stremio::library::rfc3339_ms(now));
                 self.run_library(jobs);
             }
         }
@@ -674,6 +848,26 @@ pub fn text_field_on_top(pages: &Dispatcher<Bundle>) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// The audio sync is remembered per stream source: a live channel by its own id (TvVoo's
+    /// `vavoo_…`), anything else by its item; a playback of no item remembers nothing.
+    #[test]
+    fn the_audio_sync_key_is_the_channel_or_the_item() {
+        use sn_screens::registry::{PlayItem, PlayRequest};
+        let req = |item: Option<PlayItem>| PlayRequest {
+            url: String::new(),
+            headers: Vec::new(),
+            title: String::new(),
+            start_ms: 0,
+            addon: String::new(),
+            item,
+            hints: Default::default(),
+        };
+        let item = |kind: &str, id: &str, video: &str| PlayItem { kind: kind.into(), id: id.into(), name: String::new(), video_id: video.into(), episode: String::new(), release: None };
+        assert_eq!(super::audio_key(&req(Some(item("tv", "vavoo_SKY1", "vavoo_SKY1")))), "vavoo_SKY1");
+        assert_eq!(super::audio_key(&req(Some(item("series", "tt9", "tt9:1:2")))), "tt9", "one offset for a show's episodes");
+        assert_eq!(super::audio_key(&req(None)), "");
+    }
+
     use super::*;
     use sn_base::task::{MainThread, OffFrame};
     use sn_machine::machine::{Edge, InputEvent, InputKind, Key, Source, Tick};
@@ -750,6 +944,7 @@ mod tests {
         // SAFETY: the test thread stands in for the main thread; nothing native is reached.
         let playback = Playback::new(unsafe { MainThread::assume() });
         let mut bridge = Bridge::with_runner(catalog, playback, Box::new(sn_ui::fixture::FixtureMeasure), None, Box::new(scripted.clone()));
+        sn_screens::test_support::headless_gl();
         let mut pages: Dispatcher<Bundle> = Dispatcher::new();
         pages.request(MachineId::Nav, NavOp::Root(AppArg::Home));
         bridge.start_catalog_jobs();
@@ -774,7 +969,7 @@ mod tests {
                         let job = match landing {
                             sn_screens::stores::detail::DetailLanding::Meta { key, .. } => {
                                 let url = format!("https://addons.example/cinemeta/meta/{}/{}.json", key.kind, key.id);
-                                sn_screens::stores::detail::DetailJob::Meta { key, url }
+                                sn_screens::stores::detail::DetailJob::Meta { key, urls: vec![url] }
                             }
                             sn_screens::stores::detail::DetailLanding::Streams { key, index, .. } => {
                                 let group = bridge.detail.streams(&key).unwrap()[index].clone();
@@ -783,7 +978,7 @@ mod tests {
                         };
                         bridge.detail.land(crate::work::run_detail_with(&net, job));
                     }
-                    Done::Account(_) | Done::Addons(_) | Done::Library(_) => {}
+                    Done::Account(_) | Done::Addons(_) | Done::Library(_) | Done::Skips { .. } | Done::Subtitles { .. } => {}
                     Done::Search(sn_screens::stores::search::SearchLanding { qgen, row, .. }) => {
                         let url = bridge.search.rows()[row].pager.next_url().unwrap();
                         let result = sn_stremio::get_json(&net, &url, &[]);
@@ -865,6 +1060,7 @@ mod tests {
     #[test]
     fn background_parks_the_tree_and_foreground_wakes_it() {
         let _g = sn_base::testlock::serial();
+        sn_screens::test_support::headless_gl();
         let mut pages: Dispatcher<Bundle> = Dispatcher::new();
         let catalog = CatalogStore::new(Vec::<String>::new());
         // SAFETY: as above.
@@ -948,6 +1144,7 @@ mod tests {
                 Box::new(Inline(scripted.clone())),
             )
             .with_services(services);
+            sn_screens::test_support::headless_gl();
             let mut pages: Dispatcher<Bundle> = Dispatcher::new();
             pages.request(MachineId::Nav, NavOp::Root(AppArg::Home));
             let mut r = Rigged { bridge, pages, api, vault, files, addons: FakeNet { seen: Default::default() }, scripted, ms: 0 };
@@ -1105,7 +1302,59 @@ mod tests {
         let jobs = r.bridge.library.add(sn_stremio::library::NewEntry { id: "tt8".into(), ..entry });
         r.bridge.run_library(jobs);
         r.frames(5);
-        assert_eq!(r.bridge.library.add_state("tt8"), AddState::Failed);
+        assert_eq!(r.bridge.library.add_state("tt8"), AddState::Absent, "rolled back");
+        assert!(r.bridge.library.take_failed().is_empty(), "the refusal was handed to the toast");
+        // a refused removal puts the entry back
+        assert_eq!(r.bridge.library.add_state("tt0111161"), AddState::In);
+        let jobs = r.bridge.library.remove("tt0111161");
+        assert_eq!(r.bridge.library.add_state("tt0111161"), AddState::Removing);
+        r.bridge.run_library(jobs);
+        r.frames(5);
+        assert_eq!(r.bridge.library.add_state("tt0111161"), AddState::In, "rolled back");
+        let seen = r.api.seen.lock().unwrap().clone();
+        assert!(seen.iter().any(|(u, b)| u.ends_with("/api/datastorePut") && b.contains(r#""removed":true"#)), "the removal was the account's write");
+    }
+
+    /// **A sign-out leaves nothing of the account behind**: the stored session, the collection's
+    /// device copy, the library and Continue Watching, the addons (back to the defaults); nothing is
+    /// written to the account but the API's logout; the pages reset to Home and the sign-in page
+    /// is offered over it, as on a first run.
+    #[test]
+    fn signing_out_forgets_the_account_and_offers_the_sign_in_page() {
+        use crate::account::{Files, Vault, SEARCH_FILE, SKIPPED_FILE, STREAMS_FILE};
+        use sn_screens::stores::account::{Account, Secret};
+        let _g = sn_base::testlock::serial();
+        let vault = MemVault::default();
+        vault.save(&Account { user_id: "u1".into(), email: "viewer@example.com".into(), auth_key: Secret::new("k-SECRET") }).unwrap();
+        let mut r = Rigged::new(signing_in_api(), vault, MemFiles::default());
+        r.frames(20);
+        assert!(matches!(r.bridge.account.session(), SessionState::SignedIn(_)), "the kept session is restored");
+        assert_eq!(r.bridge.library.continue_watching().len(), 1, "the library landed");
+        assert!(r.files.read(&collection_file("u1")).is_some(), "the collection is kept on the device");
+        r.pages.request(MachineId::Nav, NavOp::SelectTab(AppArg::Settings));
+        r.frames(10);
+        assert_eq!(r.top(), "settings");
+        let before = r.api.seen.lock().unwrap().len();
+        r.bridge.account_cmd(sn_screens::stores::account::AccountCmd::SignOut);
+        r.frames(30);
+        // nothing of the account is left
+        assert!(r.bridge.account.account().is_none());
+        assert!(r.vault.load().unwrap().is_none(), "the stored session is removed");
+        let left: Vec<String> = r.files.0.lock().unwrap().keys().cloned().collect();
+        assert!(left.iter().all(|f| f == SKIPPED_FILE || f == SEARCH_FILE || f == STREAMS_FILE), "only the device's own choices stay in the data dir: {left:?}");
+        assert!(r.bridge.library.continue_watching().is_empty(), "Continue Watching is empty");
+        assert!(matches!(r.bridge.addons.in_use(), InUse::Defaults(_)), "the addons are the defaults");
+        let urls: Vec<&str> = r.bridge.catalog.sources().iter().map(|s| s.transport_url.as_str()).collect();
+        assert_eq!(urls, sn_stremio::account::DEFAULT_ADDONS);
+        // the one call to the account's API is the logout (the sign-in page's own device-link code
+        // is a new sign-in's, not the old account's)
+        let after: Vec<String> = r.api.seen.lock().unwrap()[before..].iter().map(|(u, _)| u.clone()).filter(|u| u.starts_with(sn_stremio::account::API)).collect();
+        assert_eq!(after, [format!("{}/api/logout", sn_stremio::account::API)], "a sign-out writes nothing but the logout");
+        assert_eq!(r.bridge.playback.view.phase, sn_screens::registry::PlayPhase::Idle, "nothing plays");
+        // the pages: the sign-in page over a fresh Home
+        assert_eq!(r.top(), "signin", "the sign-in page is offered");
+        let stack: Vec<&AppArg> = r.pages.nav.tabs.stack.entries.iter().map(|e| &e.arg).collect();
+        assert_eq!(stack, [&AppArg::Home, &AppArg::SignIn], "over a fresh Home");
     }
 
     /// A wrong password reads the API's message; nothing is kept; the page stays.

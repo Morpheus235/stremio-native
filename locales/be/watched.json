@@ -1,0 +1,13 @@
+{
+  "app.watched.mark_failed": "Не ўдалося змяніць стан прагляду",
+  "app.watched.watched": "Прагледжана",
+  "app.watched.mark_season": "Пазначыць сезон як прагледжаны",
+  "app.watched.unmark_season": "Пазначыць сезон як непрагледжаны",
+  "app.library.sort": "Сартаванне",
+  "app.library.sort_last_watched": "Нядаўна прагледжаныя",
+  "app.library.sort_name": "А–Я",
+  "app.library.sort_name_reverse": "Я–А",
+  "app.library.sort_times_watched": "Найчасцей прагледжаныя",
+  "app.library.sort_watched": "Прагледжаныя",
+  "app.library.sort_not_watched": "Непрагледжаныя"
+}

@@ -1,0 +1,13 @@
+{
+  "app.watched.mark_failed": "Impossible de modifier l’état « vu »",
+  "app.watched.watched": "Vu",
+  "app.watched.mark_season": "Marquer la saison comme vue",
+  "app.watched.unmark_season": "Marquer la saison comme non vue",
+  "app.library.sort": "Trier",
+  "app.library.sort_last_watched": "Vus récemment",
+  "app.library.sort_name": "A–Z",
+  "app.library.sort_name_reverse": "Z–A",
+  "app.library.sort_times_watched": "Les plus vus",
+  "app.library.sort_watched": "Vus",
+  "app.library.sort_not_watched": "Non vus"
+}

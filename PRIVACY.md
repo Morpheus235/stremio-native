@@ -9,9 +9,11 @@ What leaves the TV, and where it goes:
 | --- | --- | --- |
 | Your Stremio email and password | `api.strem.io` | only when you sign in |
 | Your Stremio session key | `api.strem.io` | to read your installed addons and library |
-| Catalog, search, meta, stream and subtitle requests, including your search text and the item you open | the hosts of the addons you installed | while you browse, search or play |
+| Catalog, search, meta, stream and subtitle requests, including your search text and the item you open (for subtitles also the playing file's name, size and hash, when its addon gave them) | the hosts of the addons you installed | while you browse, search or play |
+| Subtitle file downloads | the hosts in a subtitles addon's links | when you pick an addon's subtitle, or your subtitle languages pick one |
 | Media requests, with any headers an addon asked for | the hosts that serve the stream | while you play |
 | Artwork requests | the hosts in the addon's image URLs | while you browse |
+| The ID of the episode or film you play (an IMDb, MyAnimeList or Kitsu ID) | `api.introdb.app`; for anime `api.aniskip.com`, `kitsu.io` to turn a Kitsu ID into a MyAnimeList one, and `arm.haglund.dev` to turn an IMDb ID and season into one when introdb.app has nothing | once per playback, to find its intro, recap and credits — never while Settings > Skip intros is Off |
 
 Each addon is run by its own operator under its own terms; an addon's URL can carry your
 configuration for it (for example a debrid key). StremioNative stores your session key and

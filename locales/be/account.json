@@ -63,5 +63,7 @@
     "few": "{count} назвы",
     "many": "{count} назваў",
     "other": "{count} назвы"
-  }
+  },
+  "app.library.none_of_type": "У бібліятэцы няма: {kind}",
+  "app.library.empty_hint": "Утрымлівайце OK на назве, каб дадаць яе ў бібліятэку."
 }

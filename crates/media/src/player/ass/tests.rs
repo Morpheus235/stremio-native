@@ -666,10 +666,28 @@ fn faces_script(lines: &str) -> String {
 
 #[test]
 #[ignore = "requires the pinned native host libass artifact and packaged fonts"]
-fn native_the_facade_is_abi_three() {
+fn native_the_facade_is_abi_four() {
     assert!(native_ass::load(Some(asset_dir())).ok());
-    assert_eq!(unsafe { sn_ass_abi_version() }, 3);
-    assert_eq!(NATIVE_ABI, 3);
+    assert_eq!(unsafe { sn_ass_abi_version() }, 4);
+    assert_eq!(NATIVE_ABI, 4);
+}
+
+/// ABI 4: an embedded font is LENT to libass, not copied. The renderer holds the store's bytes
+/// (one more reference while it lives, none after), draws with them, and frees only what libass
+/// owns at the end — an anime release's 25 MB of fonts was resident twice before, once here and
+/// once in libass's copy.
+#[test]
+#[ignore = "requires the pinned native host libass artifact and packaged fonts"]
+fn native_an_embedded_font_is_lent_to_the_renderer_for_exactly_its_lifetime() {
+    let fonts = fixture_faces(1);
+    let held = || std::sync::Arc::strong_count(&fonts[0].data);
+    assert_eq!(held(), 1);
+    let mut native = native_with(&fonts, &faces_script("Dialogue: 0,0:00:00.00,0:00:05.00,Default,,0,0,0,,{\\an7\\pos(10,10)}\u{e000}\n"));
+    assert_eq!(held(), 2, "the renderer keeps the bytes libass reads");
+    let frame = native_frame(&mut native, 100).expect("a first frame");
+    assert_eq!(ink(&frame).bands.len(), 1, "the lent face draws its glyph");
+    drop(native);
+    assert_eq!(held(), 1, "and lets them go with the renderer");
 }
 
 /// The bundled libass was built without libunibreak until the ABI 3 bump, so a CJK line with no
@@ -1208,7 +1226,7 @@ fn track(header: &str, events: &[(i64, i64, &str)]) -> Arc<Source> {
 }
 
 fn style(size: SubtitleSize, position: SubtitlePosition) -> TextStyle {
-    TextStyle { size, position }
+    TextStyle { size, position, ..Default::default() }
 }
 
 /// Render a Text-origin source into the full logical screen, as the screen asks for it.

@@ -52,6 +52,42 @@ pub enum Origin {
     Server,
 }
 
+/// One chip on a [`Row::chips`] line: a fact about the row ("4K", "HEVC", "DD+ 5.1"), drawn as the
+/// shared outlined badge. A `quiet` chip wears the row's sub-line ink instead of its label ink —
+/// a caveat ("Not cached — starts a download") rather than a feature.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Chip {
+    pub text: String,
+    pub quiet: bool,
+    pub origin: Origin,
+    /// A leading glyph ([`Chip::icon`]): the chip then draws as an icon-led FACT LINE
+    /// (`BadgeStyle::Bare`, no ground) unless it is quiet.
+    pub icon: Option<crate::icons::Icon>,
+}
+impl Chip {
+    /// An app-owned chip; [`Chip::server`] marks text the app parsed out of server text.
+    pub fn new(text: impl Into<String>) -> Self {
+        Self { text: text.into(), quiet: false, origin: Origin::App, icon: None }
+    }
+    /// Lead the chip with `i` (stremio-web's stream facts: 🎞 the picture, ♫ the sound, …).
+    pub fn icon(mut self, i: crate::icons::Icon) -> Self {
+        self.icon = Some(i);
+        self
+    }
+    /// The chip's width on its line.
+    pub fn width(&self, measure: &dyn sn_machine::machine::Measure) -> f32 {
+        crate::widgets::badge_w(&self.text, self.icon, measure)
+    }
+    pub fn quiet(mut self) -> Self {
+        self.quiet = true;
+        self
+    }
+    pub fn server(mut self) -> Self {
+        self.origin = Origin::Server;
+        self
+    }
+}
+
 pub struct Row {
     pub label: String,
     pub label_origin: Origin,
@@ -97,6 +133,37 @@ pub struct Row {
     /// [`TableView::fit_notes`] has measured it). A cache of a pure function of (text, width,
     /// measure), so it lives in a `Cell` and draw may refresh it through `&self`.
     pub note_lines: std::cell::Cell<u8>,
+    /// The most CAPTION lines a [`Row::note`] wraps to, the last elided (`0` = as many as it
+    /// needs) — see [`Row::note_max_lines`].
+    pub note_max: u8,
+    /// A **still row** (a series' episode list): `Some(url)` puts the item's own 16:9 still in the
+    /// leading column, [`STILL_W`]x[`STILL_H`], decoded at exactly that size and asked for only
+    /// while the row is drawn — a row scrolled out of the frame asks for nothing. `Some("")` is a
+    /// row with no still: it keeps the slot and wears the absent ground, so the column does not
+    /// zig-zag. The row is [`ROW_H_STILL`] tall whatever its text.
+    pub still: Option<String>,
+    /// How far into the still row's video the viewer is, 0.0–1.0: the app's one resume bar
+    /// (`widgets::progress_bar`) along the still's foot. `None`: no bar.
+    pub progress: Option<f32>,
+    /// A third, quiet line under the detail ("" = none): one elided `CAPTION` line, an episode's
+    /// overview. Drawn only on a row that has a detail line.
+    pub blurb: String,
+    /// A **chip row** (a stream list): `Some((source, tag))` fills the leading column
+    /// ([`TableView::side_col_w`]) with the row's source, small and quiet, over a short tag in the label's ink
+    /// ("Torrentio" over "4K"). The label then WRAPS to at most [`CHIP_TITLE_LINES`] `BODY` lines
+    /// and [`Row::chips`] run on one line under it; the row is as tall as its title needs
+    /// ([`TableView::fit_notes`] measures it). `detail` and `blurb` are not drawn on a chip row.
+    pub side: Option<(String, String)>,
+    /// The chip row's chips, in priority order: those that do not fit the line give way from the
+    /// END, and a quiet `+N` chip says how many did.
+    pub chips: Vec<Chip>,
+    /// A chip row's FOCUSED layout, `(title lines, chip lines)`: the focused row grows to show its
+    /// whole title (up to [`CHIP_TITLE_LINES_FOCUSED`]) and every chip, wrapped
+    /// ([`TableView::fit_notes`] measures it beside `note_lines`).
+    pub chip_wrap: std::cell::Cell<(u8, u8)>,
+    /// A [`Row::note`] that says something is ON ITS WAY ("Looking for streams…"): an inline
+    /// spinner in the check column and the text breathing ([`Row::busy`]).
+    pub busy: bool,
 }
 impl Row {
     pub fn new(label: impl Into<String>) -> Self {
@@ -117,6 +184,14 @@ impl Row {
             sep: false,
             destructive: false,
             note_lines: std::cell::Cell::new(1),
+            note_max: 0,
+            still: None,
+            progress: None,
+            blurb: String::new(),
+            side: None,
+            chips: Vec::new(),
+            chip_wrap: std::cell::Cell::new((1, 1)),
+            busy: false,
         }
     }
     /// A [`Row::note`]: `sep` with text (a bare `sep` is the hairline).
@@ -143,6 +218,19 @@ impl Row {
             dim: true,
             ..Self::new(text)
         }
+    }
+    /// Cap a [`Row::note`] at `n` wrapped lines, the last elided: for server text of any length
+    /// (an addon's multi-line scrape summary) where the gist is the first lines.
+    pub fn note_max_lines(mut self, n: u8) -> Self {
+        self.note_max = n;
+        self
+    }
+    /// Mark a [`Row::note`] as a WAIT: it draws an inline spinner in the check column and its text
+    /// breathes ([`NOTE_BREATH_MS`]) — alpha only, so nothing is re-rasterised. The spinner keeps the
+    /// frames coming while the row is on screen (`widgets::Spinner`'s rule), and only then.
+    pub fn busy(mut self) -> Self {
+        self.busy = true;
+        self
     }
     pub fn checked(mut self, v: bool) -> Self {
         self.checked = v;
@@ -193,6 +281,31 @@ impl Row {
     fn readout_origin(&self) -> Origin {
         if self.value.is_some() { self.value_origin } else { Origin::App }
     }
+    /// A still row's resume bar ([`Row::progress`]).
+    pub fn progress(mut self, frac: f32) -> Self {
+        self.progress = Some(frac.clamp(0.0, 1.0));
+        self
+    }
+    /// A still row ([`Row::still`]); `""` keeps the slot with no picture.
+    pub fn still(mut self, url: impl Into<String>) -> Self {
+        self.still = Some(url.into());
+        self
+    }
+    /// The quiet third line ([`Row::blurb`]).
+    pub fn blurb(mut self, b: impl Into<String>) -> Self {
+        self.blurb = b.into();
+        self
+    }
+    /// A chip row ([`Row::side`]): `source` over `tag` in the leading column.
+    pub fn side(mut self, source: impl Into<String>, tag: impl Into<String>) -> Self {
+        self.side = Some((source.into(), tag.into()));
+        self
+    }
+    /// A chip row's chip ([`Row::chips`]).
+    pub fn chip(mut self, c: Chip) -> Self {
+        self.chips.push(c);
+        self
+    }
     pub fn detail(mut self, d: impl Into<String>) -> Self {
         self.detail = d.into();
         self
@@ -230,6 +343,10 @@ impl Row {
     fn height_in(&self, tall: f32) -> f32 {
         if self.sep && self.label.is_empty() {
             SEP_H // the hairline
+        } else if self.side.is_some() && !self.sep {
+            chip_row_h(self.note_lines.get(), u8::from(!self.chips.is_empty()))
+        } else if self.still.is_some() && !self.sep {
+            ROW_H_STILL
         } else if self.is_note() {
             // a `note`: its wrapped CAPTION lines plus air, never shorter than a plain row
             (f32::from(self.note_lines.get()) * NOTE_LEADING + 2.0 * NOTE_PAD).max(ROW_H)
@@ -350,6 +467,105 @@ const ROW_H_TALL: f32 = 92.0; // a row that carries a detail sub-line (title HEA
 /// `CAPTION` sub-line wants when the list IS the screen.
 pub const ROW_H_ART: f32 = 98.0;
 const ROW_SUB_GAP: f32 = 15.0; // title baseline → detail cap-top, in a two-line row
+/// A still row's picture ([`Row::still`]): 16:9, small enough that a screenful of episodes costs
+/// well under a megabyte of texture (each is decoded at this size, ~83 KB).
+pub const STILL_W: f32 = 192.0;
+pub const STILL_H: f32 = STILL_W * 9.0 / 16.0;
+/// A still row: the picture plus [`STILL_PAD`] above and below it.
+pub const ROW_H_STILL: f32 = STILL_H + 2.0 * STILL_PAD;
+const STILL_PAD: f32 = 12.0;
+/// A chip row's leading column ([`Row::side`]) is as wide as the table's widest side content
+/// ([`TableView::side_col_w`]), within these bounds: "Proxy" does not get a 220 px gutter, and a
+/// long addon name elides at the cap (it is server text).
+pub const SIDE_COL_MIN: f32 = 96.0;
+pub const SIDE_COL_MAX: f32 = 300.0;
+/// The most lines a chip row's title wraps to; the last one elides.
+pub const CHIP_TITLE_LINES: usize = 2;
+/// A chip row's title line pitch (`BODY`).
+const CHIP_TITLE_LEADING: f32 = 36.0;
+/// Air above a chip row's title caps and below its chips.
+const CHIP_ROW_PAD: f32 = 18.0;
+/// A chip row's title baseline → its chips' top: room for the title's descenders.
+const CHIP_LINE_GAP: f32 = 14.0;
+/// A chip row's side column: the source's baseline → the tag's cap-top.
+const SIDE_GAP: f32 = 10.0;
+/// The most lines a chip row's source draws (a stream's own name: "[TB⚡] Comet" over "1080p");
+/// one fewer over a tag. The rest are dropped: the column fits the shortest chip row (98 px).
+pub const SIDE_LINES: usize = 3;
+/// The source lines a chip row's side column draws: one per line of the stream's name, trimmed,
+/// at most [`SIDE_LINES`] (one fewer over a tag). Shared by the draw and [`TableView::side_col_w`].
+fn side_lines<'a>(source: &'a str, tag: &str) -> impl Iterator<Item = &'a str> {
+    source.lines().map(str::trim).filter(|l| !l.is_empty()).take(SIDE_LINES - usize::from(!tag.is_empty()))
+}
+/// A chip row's source lines' rung — the stream's own name ("[TB⚡] Comet" over "1080p") is
+/// content a viewer chooses by, so it reads at the couch floor, `CAPTION`, not `MICRO` — and their
+/// pitch.
+const SIDE_SZ: std::os::raw::c_int = theme::size::CAPTION;
+const SIDE_LEADING: f32 = 30.0;
+
+/// The most lines a FOCUSED chip row's title wraps to ([`Row::chip_wrap`]): the release's whole
+/// name, which is where the chips were read from.
+pub const CHIP_TITLE_LINES_FOCUSED: usize = 4;
+/// Between two wrapped chip lines of a focused chip row.
+const CHIP_WRAP_GAP: f32 = BADGE_GAP;
+
+/// A chip row's height for a `lines`-line title over `chip_lines` lines of chips (0: none).
+fn chip_row_h(lines: u8, chip_lines: u8) -> f32 {
+    (2.0 * CHIP_ROW_PAD + chip_block_h(lines, chip_lines)).max(ROW_H_ART)
+}
+
+/// A chip row's ink block: the title's cap band to the last chip line's bottom.
+fn chip_block_h(lines: u8, chip_lines: u8) -> f32 {
+    let (t_top, t_base) = sn_gfx::text::text_cap_band(theme::size::BODY, 0);
+    let lines = f32::from(lines.clamp(1, CHIP_TITLE_LINES_FOCUSED as u8));
+    let ink = (lines - 1.0) * CHIP_TITLE_LEADING + (t_base - t_top);
+    let n = f32::from(chip_lines);
+    let chip_band = if chip_lines > 0 { CHIP_LINE_GAP + n * crate::widgets::BADGE_H + (n - 1.0) * CHIP_WRAP_GAP } else { 0.0 };
+    ink + chip_band
+}
+
+/// `chips` wrapped onto `w`-wide lines, every one shown: each line's `[start, end)`. A chip wider
+/// than the line takes a line of its own (the badge elides nothing; it overhangs).
+pub fn chip_wrap(chips: &[Chip], w: f32, measure: &dyn sn_machine::machine::Measure) -> Vec<(usize, usize)> {
+    let mut lines = Vec::new();
+    let (mut start, mut x) = (0, 0.0f32);
+    for (i, c) in chips.iter().enumerate() {
+        let cw = c.width(measure);
+        if i > start && x + BADGE_GAP + cw > w {
+            lines.push((start, i));
+            (start, x) = (i, cw);
+        } else {
+            x += if i > start { BADGE_GAP + cw } else { cw };
+        }
+    }
+    if start < chips.len() {
+        lines.push((start, chips.len()));
+    }
+    lines
+}
+
+/// How many of `chips` (from the front) a `w`-wide chip line shows, and how many give way. When
+/// some give way, room is kept for the `+N` chip that counts them.
+pub fn chip_run(chips: &[Chip], w: f32, measure: &dyn sn_machine::machine::Measure) -> (usize, usize) {
+    let widths: Vec<f32> = chips.iter().map(|c| c.width(measure)).collect();
+    let total: f32 = widths.iter().sum::<f32>() + BADGE_GAP * widths.len().saturating_sub(1) as f32;
+    if total <= w {
+        return (chips.len(), 0);
+    }
+    let more = |n: usize| crate::widgets::badge_w(&format!("+{n}"), None, measure);
+    let mut x = 0.0;
+    for (i, cw) in widths.iter().enumerate() {
+        let next = x + cw + BADGE_GAP + more(chips.len() - i - 1);
+        if next > w {
+            return (i, chips.len() - i);
+        }
+        x += cw + BADGE_GAP;
+    }
+    (chips.len(), 0)
+}
+
+/// The play glyph on a still row with no picture.
+const STILL_GLYPH: f32 = 40.0;
 /// Panel header ("AUDIO"/"SUBTITLES", a server over its libraries). 40px in BOTH size classes and
 /// whatever the header's own size — the band is fixed so a size change cannot reflow a panel.
 /// Tight under the caps on purpose: the header belongs to the rows below it, so the band under its
@@ -365,8 +581,21 @@ const ACCESSORY_W: f32 = 320.0;
 const GROUP_DIM_A: f32 = 0.52;
 /// A note's line pitch and its air above/below the block: one line is exactly [`ROW_H`].
 const NOTE_LEADING: f32 = 32.0;
+/// One breath of a busy note's text ([`Row::busy`]), and the lowest alpha it breathes down to.
+pub const NOTE_BREATH_MS: u32 = 1600;
+const NOTE_BREATH_LOW: f32 = 0.45;
+
+/// A busy note's text alpha at clock `ms`: a slow cosine between [`NOTE_BREATH_LOW`] and 1.
+pub fn note_breath(ms: u32) -> f32 {
+    let t = (ms % NOTE_BREATH_MS) as f32 / NOTE_BREATH_MS as f32;
+    NOTE_BREATH_LOW + (1.0 - NOTE_BREATH_LOW) * (0.5 + 0.5 * (std::f32::consts::TAU * t).cos())
+}
 const NOTE_PAD: f32 = 14.0;
 const DIV_H: f32 = 24.0; // gap + hairline between sections
+/// A [`TableView::grouped`] card's air above its header (or first row) and below its last row.
+const GROUP_PAD: f32 = theme::space::XS;
+/// A grouped card's corner: concentric with the focus pill inset [`SIDE`] inside it.
+const GROUP_RAD: f32 = PILL_RAD + SIDE;
 /// Extra air between a page title band and the hairline under it (owner, 2026-10-01: "a bigger gap
 /// under the title"): the title sits on its own, then the divider, then the rows.
 const TITLE_GAP: f32 = 12.0;
@@ -399,7 +628,7 @@ pub const MENU_MAX_W: f32 = 650.0;
 const CHECK_W: f32 = 32.0; // leading check column
 const GAP: f32 = 16.0; // check→label gap
 /// Focused-row pill corner radius. `pub` for the [`ROW_H`] caller shape.
-pub const PILL_RAD: f32 = 18.0;
+pub const PILL_RAD: f32 = theme::radius::PILL;
 /// Pill inset from the row's top/bottom. `pub` for the [`ROW_H`] caller shape.
 pub const PILL_INSET: f32 = 3.0;
 const PANEL_BG: [f32; 4] = theme::SURFACE_PANEL; // opaque panel colour — fade masks + badge knockout
@@ -449,6 +678,8 @@ pub enum FitRole {
     Note,
     /// The page title band ([`TableView::set_title`]).
     Title,
+    /// A chip a [`Row::chips`] line would leave off.
+    Chip,
 }
 
 /// One text slot [`TableView::fit_report`] found would end in an ellipsis at its resolved column.
@@ -463,7 +694,7 @@ pub struct FitIssue {
 }
 #[cfg(any(test, feature = "test-support"))]
 impl FitIssue {
-    fn describe(&self) -> String {
+    pub fn describe(&self) -> String {
         format!("{:?} {:?} is {:.0}px in a {:.0}px column", self.role, self.text, self.natural, self.budget)
     }
 }
@@ -543,6 +774,10 @@ pub struct TableView {
     pub compact: bool,
     /// see [`TableView::tall_rows`]
     tall: bool,
+    /// **Grouped**: every section sits on its own [`theme::SURFACE_GROUP`] card, the cards apart
+    /// by a gap instead of a hairline — a page of settings regions, or a list over a full-bleed
+    /// backdrop that must read over bright art. Off for popovers, whose panel is the surface.
+    pub grouped: bool,
     /// Semantic ink for section labels. Ambient routes can raise this role for contrast without
     /// replacing the shared table header renderer or changing row/detail hierarchy.
     pub header_ink: [f32; 4],
@@ -563,6 +798,20 @@ pub struct TableView {
     /// tables in and out ([`Self::blank_like`]), and two tables each on their second mutation must
     /// not look like the same layout.
     rev: u32,
+    /// [`Self::measured_width`]'s last answer and what it was measured under. A popover asks for
+    /// its frame per row it places and per draw, and the width text-measures every row, so
+    /// unmemoized that is rows² measures a frame (a 22-row genre menu drew in 90 ms on the C1).
+    width_memo: std::cell::Cell<Option<(WidthKey, f32)>>,
+    /// [`Self::side_col_w`]'s last answer, memoized the same way: every row's label x asks for it.
+    side_memo: std::cell::Cell<Option<((WidthKey, u32), f32)>>,
+}
+/// What a memoized width depends on beyond the rows themselves, which [`TableView::rev`] stamps.
+#[derive(Clone, Copy, PartialEq)]
+struct WidthKey {
+    rev: u32,
+    compact: bool,
+    rows: usize,
+    measure: usize,
 }
 /// [`TableView::walk`]'s event index for the hairline that divides a section from the one above
 /// it (`-1` is a header, `>= 0` a row). Emitted for EVERY section after the first, headed or not.
@@ -573,13 +822,13 @@ const WALK_TITLE: i32 = -3;
 /// The glyph that opens a page title: the drill-in's "back" mark, the mirror of a row's chevron.
 const TITLE_BACK_GLYPH: &str = "\u{2039}";
 impl TableView {
-    pub const MOTION_SHAPE: &'static str = "TableViewMotion{sel:i32,list_focused:bool,compact:bool,tall:bool,header_ink:[f32;4],hl_top:Spring{pos:f32,vel:f32},hl_bot:Spring{pos:f32,vel:f32},scroll:Spring{pos:f32,vel:f32}}";
+    pub const MOTION_SHAPE: &'static str = "TableViewMotion{sel:i32,list_focused:bool,compact:bool,tall:bool,grouped:bool,header_ink:[f32;4],hl_top:Spring{pos:f32,vel:f32},hl_bot:Spring{pos:f32,vel:f32},scroll:Spring{pos:f32,vel:f32}}";
 
     /// The owner records its row data separately. These fields determine layout, the selected
     /// face and subsequent motion; no text/texture cache or renderer pointer is traversed.
     pub fn write_motion(&self, c: &mut sn_machine::machine::Canon) {
-        let Self { sections: _, sel, list_focused, compact, tall, header_ink, hl_top, hl_bot, scroll, title: _, min_panel_w: _, rev: _ } = self;
-        c.u32(*sel as u32).bool(*list_focused).bool(*compact).bool(*tall);
+        let Self { sections: _, sel, list_focused, compact, tall, grouped, header_ink, hl_top, hl_bot, scroll, title: _, min_panel_w: _, rev: _, width_memo: _, side_memo: _ } = self;
+        c.u32(*sel as u32).bool(*list_focused).bool(*compact).bool(*tall).bool(*grouped);
         for component in header_ink { c.f32(*component); }
         for spring in [hl_top, hl_bot, scroll] { c.f32(spring.pos).f32(spring.vel); }
     }
@@ -600,6 +849,28 @@ impl TableView {
             ROW_H_TALL
         }
     }
+    /// Is row `gi` a chip row drawn EXPANDED — focused, so it shows its whole title and every
+    /// chip ([`Row::chip_wrap`])? Its key and index are unchanged; only its height grows.
+    fn expanded(&self, gi: i32, row: &Row) -> bool {
+        gi == self.sel && self.list_focused && row.side.is_some() && !row.sep
+    }
+    /// Row `gi`'s height as laid out: [`Row::height_in`], or a focused chip row's expanded one.
+    fn row_h(&self, gi: i32, row: &Row) -> f32 {
+        if self.expanded(gi, row) {
+            let (lines, chip_lines) = row.chip_wrap.get();
+            chip_row_h(lines, if row.chips.is_empty() { 0 } else { chip_lines.max(1) })
+        } else {
+            row.height_in(self.tall_row_h())
+        }
+    }
+    /// The gap between two sections: a hairline's, or two cards' with their pads.
+    fn div_h(&self) -> f32 {
+        if self.grouped {
+            DIV_H + 2.0 * GROUP_PAD
+        } else {
+            DIV_H
+        }
+    }
     pub const fn new() -> Self {
         Self {
             sections: Vec::new(),
@@ -607,6 +878,7 @@ impl TableView {
             list_focused: true,
             compact: false,
             tall: false,
+            grouped: false,
             header_ink: theme::TEXT_TERTIARY,
             min_panel_w: MENU_MIN_W,
             hl_top: Spring::at(0.0),
@@ -614,6 +886,8 @@ impl TableView {
             scroll: Spring::at(0.0),
             title: None,
             rev: 0,
+            width_memo: std::cell::Cell::new(None),
+            side_memo: std::cell::Cell::new(None),
         }
     }
 
@@ -670,7 +944,7 @@ impl TableView {
                 return;
             }
             let sy = top0 + cy - scroll;
-            let h = self.rows_at(gi).height_in(self.tall_row_h());
+            let h = self.row_h(gi, self.rows_at(gi));
             out = Some(Rect::new(frame.x + SIDE, sy, frame.w - 2.0 * SIDE, h));
         });
         out
@@ -712,7 +986,7 @@ impl TableView {
                 return; // headers and grouping hairlines are not click targets
             }
             let sy = top0 + cy - scroll;
-            if my >= sy && my <= sy + self.rows_at(gi).height_in(self.tall_row_h()) {
+            if my >= sy && my <= sy + self.row_h(gi, self.rows_at(gi)) {
                 hit = Some(gi);
             }
         });
@@ -802,6 +1076,20 @@ impl TableView {
         }
     }
 
+    /// [`Self::set_sections`] for a list that GREW AROUND its selection (a slower source landing
+    /// above the focused row): `sel` is the same row's new index, and the scroll and the pill move
+    /// with it, so the row the viewer is on keeps its place on the screen instead of sliding away.
+    pub fn set_sections_anchored(&mut self, sections: Vec<Section>, sel: i32) {
+        let before = self.row_top(self.sel);
+        self.set_sections(sections, sel, true);
+        let shift = self.row_top(self.sel) - before;
+        if shift != 0.0 {
+            self.scroll.pos = (self.scroll.pos + shift).max(0.0);
+            self.hl_top.pos += shift;
+            self.hl_bot.pos += shift;
+        }
+    }
+
     /// **Open** a menu on `sections`: [`Self::set_sections`] with the selection on
     /// [`Self::opening_row`] and the pill snapped there. Every menu that has no prior selection to
     /// restore opens through this, so none can open with its focus on a destructive action.
@@ -872,6 +1160,73 @@ impl TableView {
     /// [`ROW_VALUE_GAP`], [`ACCESSORY_GAP`], the hug margin), so a panel of exactly this width can
     /// never elide a run the layout would have kept. Action menus size their panel with it.
     pub fn measured_width(&self, measure: &dyn sn_machine::machine::Measure) -> f32 {
+        let key = self.width_key(measure);
+        if let Some((k, w)) = self.width_memo.get() {
+            if k == key {
+                return w;
+            }
+        }
+        let w = self.measure_width_now(measure);
+        self.width_memo.set(Some((key, w)));
+        w
+    }
+    fn width_key(&self, measure: &dyn sn_machine::machine::Measure) -> WidthKey {
+        WidthKey {
+            rev: self.rev,
+            compact: self.compact,
+            rows: self.n_rows() as usize,
+            measure: measure as *const dyn sn_machine::machine::Measure as *const () as usize,
+        }
+    }
+    /// **The chip rows' side column width — ONE for the whole table**, so every title starts at
+    /// the same x: the widest side content among its chip rows (each source line at `MICRO`, the
+    /// tag at `LABEL` bold, exactly the lines the draw draws) plus half a [`GAP`], clamped to
+    /// [[`SIDE_COL_MIN`], [`SIDE_COL_MAX`]] — and never so wide, in a `frame_w`-wide table, that
+    /// a row's APP chips (the cache state) give way: the source is server text and elides first.
+    /// `frame_w` = `f32::INFINITY` asks for the intrinsic width. Memoized per [`Self::layout_rev`]
+    /// and frame width.
+    pub fn side_col_w(&self, frame_w: f32, measure: &dyn sn_machine::machine::Measure) -> f32 {
+        let key = (self.width_key(measure), frame_w.to_bits());
+        if let Some((k, w)) = self.side_memo.get() {
+            if k == key {
+                return w;
+            }
+        }
+        let mut content: f32 = 0.0;
+        let mut room = f32::INFINITY;
+        for row in self.sections.iter().flat_map(|s| s.rows.iter()).filter(|r| !r.sep) {
+            let Some((source, tag)) = &row.side else { continue };
+            for line in side_lines(source, tag) {
+                content = content.max(measure.width_str(line, SIDE_SZ, false));
+            }
+            if !tag.is_empty() {
+                content = content.max(measure.width_str(tag, theme::size::LABEL, true));
+            }
+            // the label column `chip_run` needs to show every chip up to the last app one
+            if let Some(last) = row.chips.iter().rposition(|c| c.origin == Origin::App) {
+                let run: f32 = row.chips[..=last].iter().map(|c| c.width(measure) + BADGE_GAP).sum();
+                let rest = row.chips.len() - last - 1;
+                let need = if rest == 0 { run - BADGE_GAP } else { run + crate::widgets::badge_w(&format!("+{rest}"), None, measure) };
+                room = room.min(frame_w - 2.0 * CONTENT_X - GAP - self.trailing_width(row, measure) - need);
+            }
+        }
+        let w = (content.ceil() + GAP * 0.5).clamp(SIDE_COL_MIN, SIDE_COL_MAX).min(room.floor()).max(SIDE_COL_MIN);
+        self.side_memo.set(Some((key, w)));
+        w
+    }
+    /// The leading column's width for `row`: a chip row's side column, the still's, else the
+    /// check/icon column's.
+    fn lead_w(&self, row: &Row, frame_w: f32, measure: &dyn sn_machine::machine::Measure) -> f32 {
+        if row.side.is_some() {
+            self.side_col_w(frame_w, measure)
+        } else if row.still.is_some() {
+            STILL_W
+        } else {
+            CHECK_W
+        }
+    }
+    fn measure_width_now(&self, measure: &dyn sn_machine::machine::Measure) -> f32 {
+        const MEASURE_ROWS: usize = 48;
         let h = fit::HEADROOM;
         let mut width: f32 = 0.0;
         if let Some((title, x0)) = self.title_run(measure) {
@@ -891,7 +1246,13 @@ impl TableView {
                 };
                 width = width.max(2.0 * CONTENT_X + band);
             }
-            for row in section.rows.iter().filter(|row| !row.sep) {
+            // Sized from a bounded sample, not every row: the popover asks for its width on every
+            // frame, and a catalog's genre list can run to hundreds of rows, each a text measure
+            // (measured on the C1: a long list stalled the main thread). Rows past the sample are
+            // still drawn when scrolled to; a longer label there elides, and marquees when
+            // focused, inside the panel the sample sized. ponytail: a cached width keyed on a
+            // content revision if a long list's tail ever needs its own width.
+            for row in section.rows.iter().filter(|row| !row.sep).take(MEASURE_ROWS) {
                 let (label, value) = self.row_runs(row, measure);
                 let detail = measure.width_str(&row.detail, theme::size::CAPTION, false);
                 let primary = (label / h).max(detail / h);
@@ -900,7 +1261,7 @@ impl TableView {
                     None => primary,
                 };
                 let fixed = self.trailing_width(row, measure) - Self::value_slot(row, measure);
-                width = width.max(2.0 * CONTENT_X + CHECK_W + GAP + fixed + text);
+                width = width.max(2.0 * CONTENT_X + self.lead_w(row, f32::INFINITY, measure) + GAP + fixed + text);
             }
         }
         width.ceil()
@@ -983,6 +1344,15 @@ impl TableView {
                     out.push(FitIssue { role: FitRole::Note, origin: row.label_origin, text: widest.1.to_string(), natural: widest.0, budget });
                 }
             }
+            for row in section.rows.iter().filter(|r| r.side.is_some() && !r.sep) {
+                // an app chip must be one the line shows (a server chip may give way)
+                let w = self.label_width(row, frame_w, measure);
+                let (shown, _) = chip_run(&row.chips, w / headroom, measure);
+                for c in row.chips.iter().skip(shown).filter(|c| c.origin == Origin::App) {
+                    let natural = c.width(measure);
+                    out.push(FitIssue { role: FitRole::Chip, origin: Origin::App, text: c.text.clone(), natural, budget: w });
+                }
+            }
             for row in section.rows.iter().filter(|r| !r.sep) {
                 let label_budget = self.row_columns(row, frame_w, measure).label_w * headroom;
                 let lw = measure.width_str(&row.label, size, bold);
@@ -1055,9 +1425,26 @@ impl TableView {
         for row in self.sections.iter().flat_map(|s| s.rows.iter()).filter(|r| r.is_note()) {
             let lines = crate::text_view::TextView::new(&row.label, theme::size::CAPTION, theme::TEXT_TERTIARY)
                 .with_measure(measure)
+                .max_lines(usize::from(row.note_max))
                 .line_count(w);
             row.note_lines.set(lines.clamp(1, u8::MAX as usize) as u8);
         }
+        for row in self.sections.iter().flat_map(|s| s.rows.iter()).filter(|r| r.side.is_some() && !r.sep) {
+            let w = self.label_width(row, frame_w, measure);
+            let lines = Self::chip_title(row, theme::TEXT_PRIMARY, CHIP_TITLE_LINES_FOCUSED, measure).line_count(w);
+            row.note_lines.set(lines.clamp(1, CHIP_TITLE_LINES) as u8);
+            let chip_lines = chip_wrap(&row.chips, w, measure).len().clamp(1, u8::MAX as usize) as u8;
+            row.chip_wrap.set((lines.clamp(1, CHIP_TITLE_LINES_FOCUSED) as u8, chip_lines));
+        }
+    }
+
+    /// A chip row's title as it wraps and draws.
+    fn chip_title<'a>(row: &'a Row, ink: [f32; 4], max_lines: usize, measure: &'a dyn sn_machine::machine::Measure) -> crate::text_view::TextView<'a> {
+        crate::text_view::TextView::new(&row.label, theme::size::BODY, ink)
+            .with_measure(measure)
+            .break_long_words()
+            .max_lines(max_lines)
+            .leading(CHIP_TITLE_LEADING)
     }
 
     fn label_style(&self) -> (std::os::raw::c_int, bool) {
@@ -1097,7 +1484,7 @@ impl TableView {
     /// The label is hugged with [`fit::HUG_MARGIN`] before dividing.
     fn row_columns_under(&self, row: &Row, frame_w: f32, measure: &dyn sn_machine::machine::Measure, headroom: f32) -> RowColumns {
         let fixed = self.trailing_width(row, measure) - Self::value_slot(row, measure);
-        let span = (frame_w - 2.0 * CONTENT_X - CHECK_W - GAP - fixed).max(0.0);
+        let span = (frame_w - 2.0 * CONTENT_X - self.lead_w(row, frame_w, measure) - GAP - fixed).max(0.0);
         let (label, value) = self.row_runs(row, measure);
         let Some(value) = value else {
             return RowColumns { label_w: span, value_w: 0.0 };
@@ -1282,7 +1669,7 @@ impl TableView {
             // an EMPTY section (a `Form` whose items all fell through) has nothing to divide from
             // the one above: no hairline, no gap, and it must not lengthen the content
             if si > 0 && !sec.rows.is_empty() {
-                y += DIV_H;
+                y += self.div_h();
                 f(y, WALK_DIVIDER, si);
             }
             if !sec.header.is_empty() {
@@ -1291,10 +1678,27 @@ impl TableView {
             }
             for row in &sec.rows {
                 f(y, gi, si);
-                y += row.height_in(self.tall_row_h());
+                y += self.row_h(gi, row);
                 gi += 1;
             }
         }
+    }
+
+    /// Each non-empty section's content span `(section, top, bottom)`: its header's top (or its
+    /// first row's) to its last row's bottom — what a [`Self::grouped`] card wraps.
+    fn group_spans(&self) -> Vec<(usize, f32, f32)> {
+        let mut out: Vec<(usize, f32, f32)> = Vec::new();
+        self.walk(|y, gi, si| {
+            if gi == WALK_DIVIDER || gi == WALK_TITLE || self.sections[si].rows.is_empty() {
+                return;
+            }
+            let bot = if gi >= 0 { y + self.row_h(gi, self.rows_at(gi)) } else { y + HDR_H };
+            match out.last_mut() {
+                Some(last) if last.0 == si => last.2 = bot,
+                _ => out.push((si, y, bot)),
+            }
+        });
+        out
     }
 
     fn row_top(&self, target: i32) -> f32 {
@@ -1311,7 +1715,7 @@ impl TableView {
         for sec in &self.sections {
             for row in &sec.rows {
                 if n == target {
-                    return row.height_in(self.tall_row_h());
+                    return self.row_h(n, row);
                 }
                 n += 1;
             }
@@ -1434,6 +1838,16 @@ impl TableView {
         let content_x = frame.x + SIDE + CONTENT_PAD;
         let text_right = frame.x + frame.w - SIDE - CONTENT_PAD;
 
+        // ---- grouped: each section's card, under its header, its rows and the pill ----
+        if self.grouped {
+            for (si, top, bot) in self.group_spans() {
+                let r = Rect::new(frame.x, top0 + top - scroll - GROUP_PAD, frame.w, bot - top + 2.0 * GROUP_PAD);
+                if r.y + r.h > vis_top && r.y < vis_bot {
+                    self.group_painter(p, si).rrect(r, GROUP_RAD, GROUP_RAD, theme::SURFACE_GROUP);
+                }
+            }
+        }
+
         // ---- sliding pill (under the rows) — warm off-white; top/bottom edges morph independently ----
         // It follows its GROUP's dim: the focused row of an unreachable server must not be the one
         // bright thing in a panel that is telling you the server is unreachable.
@@ -1453,7 +1867,7 @@ impl TableView {
                 pill,
                 PILL_RAD,
                 PILL_RAD,
-                crate::ACCENT,
+                theme::FOCUS_FILL,
             );
         }
 
@@ -1463,6 +1877,9 @@ impl TableView {
             // walk, so header, accessory, rows, marks and read-outs can never dim out of step.
             let sy = top0 + cy - scroll;
             let p = self.event_painter(p, gi, si);
+            if gi == WALK_DIVIDER && self.grouped && si > 0 {
+                return; // grouped: the gap between two cards is the divider
+            }
             if gi == WALK_DIVIDER {
                 // the hairline between this section and the one above, headed or not, centred in
                 // the `DIV_H` gap; it fades with the group like everything else in it
@@ -1559,7 +1976,7 @@ impl TableView {
                 return;
             }
             let row = self.rows_at(gi);
-            let h = row.height_in(self.tall_row_h());
+            let h = self.row_h(gi, row);
             if sy + h < vis_top || sy > vis_bot {
                 return; // fully scrolled out; a partial edge row is drawn and scissor-clipped to `frame`
             }
@@ -1595,12 +2012,25 @@ impl TableView {
                 let x = content_x + CHECK_W + GAP;
                 let view = crate::text_view::TextView::new(&row.label, nsz, dimc)
                     .with_measure(measure)
+                    .max_lines(usize::from(row.note_max))
                     .leading(NOTE_LEADING);
                 let w = (text_right - x).max(0.0);
                 let lines = view.line_count(w);
                 // centre the INK (first cap-top to last baseline), as the one-line note was
                 let ink_h = (lines.saturating_sub(1)) as f32 * NOTE_LEADING + measure.cap_h(nsz);
-                view.draw(p, Rect::new(x, sy + (h - ink_h) * 0.5, w, ink_h));
+                let top = sy + (h - ink_h) * 0.5;
+                if row.busy {
+                    // a wait: the inline spinner in the empty check column, beside the first line,
+                    // and the words breathing (alpha only)
+                    crate::placeholder::note(p, crate::placeholder::Reason::WorkingReadout, "");
+                    let ms = sn_machine::motion::held_clock_ms().unwrap_or_else(sn_machine::idle::now_ms);
+                    let cy = top + measure.cap_h(nsz) * 0.5;
+                    let spin = crate::widgets::Spinner::new(content_x + CHECK_W * 0.5, cy, crate::widgets::Spinner::R_INLINE).phase(ms).tint(dimc);
+                    crate::View::draw(&spin, &crate::Env::inert(), p);
+                    view.draw(p.alpha(note_breath(ms)), Rect::new(x, top, w, ink_h));
+                    return;
+                }
+                view.draw(p, Rect::new(x, top, w, ink_h));
                 return;
             }
             // **The INK follows the PILL, and `list_focused` gates both.** `ink` is near-black and
@@ -1620,13 +2050,20 @@ impl TableView {
                 c => theme::cross(rest, over, c),
             };
             let base = on_pill(if row.dim { dimc } else { white }, ink);
-            let row_bg = on_pill(PANEL_BG, crate::ACCENT);
+            let row_bg = on_pill(PANEL_BG, theme::FOCUS_FILL);
             let cyc = sy + h * 0.5; // row vertical center
 
             // Leading column (SVG): the PICKER's tick, or an ACTION's glyph — one or the other, and
             // never a switch. A mark here says WHERE YOU ARE; what a row is SET to is a word at the
             // trailing edge (below), and no row is allowed to say both.
-            let label_x = content_x + CHECK_W + GAP;
+            let label_x = content_x + self.lead_w(row, frame.w, measure) + GAP;
+            if let Some(url) = &row.still {
+                let r = Rect::new(content_x, cyc - STILL_H * 0.5, STILL_W, STILL_H);
+                draw_still(p, r, url);
+                if let Some(frac) = row.progress {
+                    crate::widgets::progress_bar(p, r, theme::CARD_RING_RAD, 4.0, frac);
+                }
+            }
             let lead = if row.checked {
                 Some(crate::icons::Icon::Check)
             } else {
@@ -1705,6 +2142,73 @@ impl TableView {
                     );
                 }
             }
+            // A CHIP row (a stream list): the side column, a wrapped title, one line of chips.
+            if let Some((source, tag)) = &row.side {
+                let sub = on_pill(dimc, theme::INK_ON_ACCENT_SECONDARY);
+                // the side column: the source over its tag, centred on the row as a pair
+                let (ssz, qsz) = (SIDE_SZ, theme::size::LABEL);
+                let (s_top, s_base) = sn_gfx::text::text_cap_band(ssz, 0);
+                let (q_top, q_base) = sn_gfx::text::text_cap_band(qsz, 1);
+                // the source is one line per line it has (a stream's name), each elided
+                let src_lines: Vec<&str> = side_lines(source, tag).collect();
+                let src_h = (s_base - s_top) + src_lines.len().saturating_sub(1) as f32 * SIDE_LEADING;
+                let pair = src_h + if tag.is_empty() { 0.0 } else { SIDE_GAP + (q_base - q_top) };
+                let top = cyc - pair * 0.5;
+                let side_w = self.side_col_w(frame.w, measure) - GAP * 0.5;
+                for (li, line) in src_lines.iter().enumerate() {
+                    let src = sn_gfx::text::elide_by(line, side_w, false, |t| measure.width_str(t, ssz, false));
+                    if let Ok(cs) = CString::new(src) {
+                        p.text(cs.as_ptr(), content_x, top - s_top + li as f32 * SIDE_LEADING, ssz, sub, 0, 0);
+                    }
+                }
+                if !tag.is_empty() {
+                    let tag = sn_gfx::text::elide_by(tag, side_w, false, |t| measure.width_str(t, qsz, true));
+                    if let Ok(cs) = CString::new(tag) {
+                        p.text(cs.as_ptr(), content_x, top + src_h + SIDE_GAP - q_top, qsz, base, 0, 1);
+                    }
+                }
+                // the title (wrapped, its last line elided) over the chip line, centred as a block.
+                // FOCUSED, the row has grown (`row_h`): the whole title and every chip, wrapped,
+                // where at rest the chips that do not fit give way to a "+N".
+                let text_w = self.label_width(row, frame.w, measure);
+                let expanded = self.expanded(gi, row);
+                let chips = !row.chips.is_empty();
+                let (lines, max_lines, wrap) = if expanded {
+                    let wrap = if chips { chip_wrap(&row.chips, text_w, measure) } else { Vec::new() };
+                    (row.chip_wrap.get().0, CHIP_TITLE_LINES_FOCUSED, wrap)
+                } else {
+                    let (shown, _) = if chips { chip_run(&row.chips, text_w, measure) } else { (0, 0) };
+                    (row.note_lines.get(), CHIP_TITLE_LINES, if chips { vec![(0, shown)] } else { Vec::new() })
+                };
+                let (t_top, t_base) = sn_gfx::text::text_cap_band(theme::size::BODY, 0);
+                let t_ink = f32::from(lines.clamp(1, max_lines as u8) - 1) * CHIP_TITLE_LEADING + (t_base - t_top);
+                let block = chip_block_h(lines.clamp(1, max_lines as u8), wrap.len() as u8);
+                let ty = sy + (h - block) * 0.5;
+                Self::chip_title(row, base, max_lines, measure).draw(p, Rect::new(label_x, ty, text_w, t_ink));
+                let hidden = if expanded { 0 } else { row.chips.len() - wrap.first().map_or(0, |l| l.1) };
+                let more = (hidden > 0).then(|| Chip::new(format!("+{hidden}")).quiet());
+                for (li, (a, b)) in wrap.iter().enumerate() {
+                    let ccy = ty + t_ink + CHIP_LINE_GAP + li as f32 * (crate::widgets::BADGE_H + CHIP_WRAP_GAP) + crate::widgets::BADGE_H * 0.5;
+                    let tail = if li + 1 == wrap.len() { more.as_ref() } else { None };
+                    let mut bx = label_x;
+                    for c in row.chips[*a..*b].iter().chain(tail) {
+                        let (col, ring) = if c.quiet {
+                            (sub, on_pill(theme::OVERLAY_BORDER_QUIET, theme::INK_ON_ACCENT_SECONDARY))
+                        } else {
+                            (base, on_pill(theme::OVERLAY_BORDER, ink))
+                        };
+                        // a fact (an icon-led line, or server text riding on one) reads as text; an
+                        // app chip without a glyph and a quiet caveat keep their outline
+                        let sty = if !c.quiet && (c.icon.is_some() || c.origin == Origin::Server) {
+                            crate::widgets::BadgeStyle::Bare { col }
+                        } else {
+                            crate::widgets::BadgeStyle::Outlined { col, border: ring, bg: row_bg }
+                        };
+                        bx += crate::widgets::badge(p, bx, ccy, &c.text, c.icon, sty, measure) + BADGE_GAP;
+                    }
+                }
+                return;
+            }
             // Single-line rows centre their label on the row by cap band. Two-line rows stack a
             // title over a detail sub-line: lay the pair out off both cap bands and centre it in the
             // tall row, with an explicit gap between the title baseline and the detail cap-top
@@ -1716,15 +2220,18 @@ impl TableView {
             } else {
                 (theme::size::HEADLINE, 1)
             };
-            let (title_y, detail_y) = if two_line {
+            let three_line = two_line && !row.blurb.is_empty();
+            let (title_y, detail_y, blurb_y) = if two_line {
                 let (t_top, t_base) = sn_gfx::text::text_cap_band(tsz, tbold);
                 let (d_top, d_base) = sn_gfx::text::text_cap_band(theme::size::CAPTION, 0);
                 let (t_cap, d_cap) = (t_base - t_top, d_base - d_top); // cap heights
-                let pair_gap = ROW_SUB_GAP; // title baseline → detail cap-top
-                let pair_top = sy + (h - (t_cap + pair_gap + d_cap)) * 0.5; // title cap-top
-                (pair_top - t_top, pair_top + t_cap + pair_gap - d_top)
+                let pair_gap = ROW_SUB_GAP; // title baseline → detail cap-top (and detail → blurb)
+                let blurb_h = if three_line { pair_gap + d_cap } else { 0.0 };
+                let pair_top = sy + (h - (t_cap + pair_gap + d_cap + blurb_h)) * 0.5; // title cap-top
+                let detail_y = pair_top + t_cap + pair_gap - d_top;
+                (pair_top - t_top, detail_y, detail_y + d_cap + pair_gap)
             } else {
-                (0.0, 0.0) // unused single-line; Label centres the label
+                (0.0, 0.0, 0.0) // unused single-line; Label centres the label
             };
             // PLACE 2 — the label over its optional sub-line. Compact tables read their single-line
             // labels at BODY regular.
@@ -1785,7 +2292,7 @@ impl TableView {
             // while the badges sat on the title's line: right-aligned and row-centred, a chip now
             // occupies the sub-line's band too, and an unbounded sub-line would run under it.
             if !row.detail.is_empty() {
-                let sub = on_pill(dimc, theme::scrim_black(0.6));
+                let sub = on_pill(dimc, theme::INK_ON_ACCENT_SECONDARY);
                 let detail = sn_gfx::text::elide_by(&row.detail, text_w, false, |t| {
                     measure.width_str(t, theme::size::CAPTION, false)
                 });
@@ -1799,6 +2306,14 @@ impl TableView {
                         0,
                         0,
                     );
+                }
+                if three_line {
+                    let blurb = sn_gfx::text::elide_by(&row.blurb, text_w, false, |t| {
+                        measure.width_str(t, theme::size::CAPTION, false)
+                    });
+                    if let Ok(cb) = CString::new(blurb) {
+                        p.text(cb.as_ptr(), label_x, blurb_y, theme::size::CAPTION, sub, 0, 0);
+                    }
                 }
             }
         });
@@ -1864,6 +2379,22 @@ impl TableView {
     }
 }
 
+/// A still row's picture ([`Row::still`]) in `r`: the still through the shared card, decoded at
+/// `r`'s own size so no row ever holds a full-size image; a row with no still, or one whose fetch
+/// has settled as a miss, wears the absent ground with a play glyph — nothing is on its way, so it
+/// is not a placeholder.
+fn draw_still(p: Painter, r: Rect, url: &str) {
+    let res = (r.w as std::os::raw::c_int, r.h as std::os::raw::c_int);
+    if !url.is_empty() && !crate::tex::failed_on(0, url, res.0, res.1, false) {
+        crate::widgets::card(p, r, crate::widgets::Art::Thumb { sid: 0, key: url, res }, theme::CARD_RING_RAD, false, 1.0, 1.0);
+        return;
+    }
+    // placeholder-exempt: absence, an episode the addon sent no still for (or one that 404s)
+    p.rrect(r, theme::CARD_RING_RAD, theme::CARD_RING_RAD, theme::CARD_ABSENT);
+    let g = STILL_GLYPH;
+    crate::icons::draw(p, crate::icons::Icon::Play, Rect::new(r.x + (r.w - g) * 0.5, r.y + (r.h - g) * 0.5, g, g), theme::TEXT_TERTIARY);
+}
+
 /// The ink of a row's trailing read-out ([`Row::readout`]): one step behind the row's label, so it
 /// follows the row's [`Row::dim`] as well as its own [`Row::value_dim`]. A dim row's label is
 /// already [`theme::TEXT_TERTIARY`], so its read-out takes [`theme::ROW_VALUE_INK_DIM`] below
@@ -1882,6 +2413,25 @@ fn row_value_ink(row: &Row, focused: bool) -> [f32; 4] {
 
 #[cfg(test)]
 mod tests {
+    /// The focused row's pill: its primary ink clears 4.5:1 with margin and its secondary ink 3:1
+    /// (the stream row's source column, a list row's sub-line), on the violet that keeps Stremio's
+    /// identity.
+    #[test]
+    fn the_focus_pills_inks_clear_their_contrast() {
+        let lin = |c: f32| if c <= 0.03928 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+        let luma = |c: [f32; 4]| 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+        let over = |fg: [f32; 4], bg: [f32; 4]| [0, 1, 2, 3].map(|i| if i == 3 { 1.0 } else { fg[i] * fg[3] + bg[i] * (1.0 - fg[3]) });
+        let contrast = |a: [f32; 4], b: [f32; 4]| {
+            let (x, y) = (luma(a), luma(b));
+            (x.max(y) + 0.05) / (x.min(y) + 0.05)
+        };
+        let fill = theme::FOCUS_FILL;
+        assert!(contrast(crate::ACCENT_INK, fill) >= 5.0, "primary {}", contrast(crate::ACCENT_INK, fill));
+        let sec = over(theme::INK_ON_ACCENT_SECONDARY, fill);
+        assert!(contrast(sec, fill) >= 3.0, "secondary {}", contrast(sec, fill));
+        assert!(fill[2] > fill[0] && fill[2] > fill[1], "still the violet");
+    }
+
     /// **A dimmed row's read-out dims with it.** The Timing section's Earlier row at the
     /// selected kind's floor is `dim`, and its "−0.1 s" read-out was drawn at the SAME ink as the
     /// live Later row's — so the step that could not be taken still announced itself at the
@@ -2511,10 +3061,198 @@ mod tests {
 
     // ---- the focus pill's ink and the page edges ----------------------------------------------
 
+    /// A still row (an episode with its picture) is the still's height plus its pad whatever its
+    /// text, and its text column starts past the still instead of the check column — so the label
+    /// gives up exactly the still's extra width, and a plain row beside it is untouched.
+    #[test]
+    fn a_still_row_is_tall_and_its_text_starts_past_the_still() {
+        use crate::fixture::FixtureMeasure;
+        let plain = Row::new("Pilot").detail("S1, E1");
+        let still = Row::new("Pilot").detail("S1, E1").still("https://img.example/1.jpg").blurb("A teacher turns.");
+        let none = Row::new("Pilot").detail("S1, E1").still("");
+        let mut t = TableView::new();
+        t.set_sections(vec![Section::new("Season 1").row(plain).row(still).row(none)], 1, false);
+        let frame = Rect::new(940.0, 100.0, 884.0, 800.0);
+        let h = |i| t.row_frame(frame, i).unwrap().h;
+        assert_eq!((h(1), h(2)), (ROW_H_STILL, ROW_H_STILL), "with or without a picture");
+        assert!(h(0) < ROW_H_STILL);
+        assert!(STILL_H + 2.0 * STILL_PAD <= ROW_H_STILL, "the still fits its row");
+        let w = |i: i32| t.label_width(t.rows_at(i), frame.w, &FixtureMeasure);
+        assert!((w(0) - w(1) - (STILL_W - CHECK_W)).abs() < 1e-3, "{} vs {}", w(0), w(1));
+        assert_eq!(w(1), w(2));
+    }
+
+    /// A stream row whose chips overflow its line: at rest the tail gives way to "+N"; FOCUSED the
+    /// row grows to show every chip, wrapped, and its whole title. Indices (and so keys) and the
+    /// rows' order never change; moving focus away puts the row back to its resting height.
+    #[test]
+    fn a_focused_chip_row_grows_to_show_every_chip_and_shrinks_back() {
+        use crate::fixture::FixtureMeasure;
+        let chip_row = |n: usize| {
+            let mut r = Row::new("Some.Release.Name.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR10.HEVC-GROUP").side("Addon", "4K");
+            for i in 0..n {
+                r = r.chip(Chip::new(format!("Chip number {i}")).server());
+            }
+            r
+        };
+        let mut t = TableView::new();
+        t.set_sections(vec![Section::new("Addon").row(chip_row(12)).row(chip_row(1))], 1, false);
+        let frame = Rect::new(940.0, 100.0, 884.0, 800.0);
+        t.fit_notes(frame.w, &FixtureMeasure);
+        let w = t.label_width(t.rows_at(0), frame.w, &FixtureMeasure);
+        let (shown, hidden) = chip_run(&t.rows_at(0).chips, w, &FixtureMeasure);
+        assert!(hidden > 0 && shown < 12, "the premise: at rest the line cuts chips ({shown} shown)");
+        let wrap = chip_wrap(&t.rows_at(0).chips, w, &FixtureMeasure);
+        assert!(wrap.len() >= 2, "every chip, on more than one line");
+        assert_eq!(wrap.first().map(|l| l.0), Some(0));
+        assert_eq!(wrap.last().map(|l| l.1), Some(12));
+        assert!(wrap.windows(2).all(|p| p[0].1 == p[1].0), "contiguous, in order: {wrap:?}");
+        let h = |t: &TableView, i| t.row_frame(frame, i).unwrap().h;
+        let rest = h(&t, 0);
+        t.sel = 0;
+        let grown = h(&t, 0);
+        assert!(grown > rest, "focused, the row grows: {rest} -> {grown}");
+        assert_eq!(t.row_frame(frame, 1).unwrap().y, t.row_frame(frame, 0).unwrap().y + grown, "the row under it moves down");
+        assert_eq!(t.n_rows(), 2);
+        t.sel = 1;
+        assert_eq!(h(&t, 0), rest, "focus elsewhere: back to its resting height");
+        t.list_focused = false;
+        t.sel = 0;
+        assert_eq!(h(&t, 0), rest, "a table without focus expands nothing");
+    }
+
+    /// A chip row's source is drawn a line per line (a stream's own name, "[TB⚡] Comet" over
+    /// "1080p"), at most [`SIDE_LINES`] (one fewer over a tag), every one inside the row's band.
+    #[test]
+    fn a_chip_row_s_source_draws_each_of_its_lines_inside_the_row() {
+        let frame = Rect::new(0.0, 0.0, 884.0, 800.0);
+        let side_runs = |source: &str, tag: &str| {
+            let mut t = TableView::new();
+            let row = Row::new("Film.2024.1080p.WEB-DL").side(source, tag).chip(Chip::new("HEVC").server());
+            t.set_sections(vec![Section::new("Addon").row(row)], 0, false);
+            t.fit_notes(frame.w, &crate::fixture::FixtureMeasure);
+            let band = t.row_frame(frame, 0).unwrap();
+            let log = crate::draw_census::capture(|| t.draw(crate::Painter::recording(), frame, &crate::fixture::FixtureMeasure));
+            let runs: Vec<Rect> = log.into_iter().filter(|(tag, r)| *tag == 100 && r.x < band.x + t.side_col_w(frame.w, &crate::fixture::FixtureMeasure) && r.y >= band.y - 1.0 && r.y < band.y + band.h).map(|(_, r)| r).collect();
+            for r in &runs {
+                assert!(r.y >= band.y && r.y + r.h <= band.y + band.h, "{source:?}/{tag:?}: {r:?} outside {band:?}");
+            }
+            runs.len()
+        };
+        assert_eq!(side_runs("Proxy", ""), 1);
+        assert_eq!(side_runs("[TB\u{26a1}] Comet\n1080p", ""), 2);
+        assert_eq!(side_runs("One\nTwo\nThree\nFour", ""), SIDE_LINES, "the rest are dropped");
+        assert_eq!(side_runs("One\nTwo\nThree\nFour", "4K"), SIDE_LINES, "one fewer over the tag, and the tag");
+    }
+
+    /// The side column is ONE width per table, from its widest side content: short names get a
+    /// narrow gutter, a long one grows it to [`SIDE_COL_MAX`] and elides there, and every row's
+    /// title starts at the same x — the x the label budget was measured from.
+    #[test]
+    fn the_side_column_fits_the_table_s_widest_source() {
+        use crate::fixture::FixtureMeasure as M;
+        use sn_machine::machine::Measure as _;
+        let frame = Rect::new(0.0, 0.0, 884.0, 800.0);
+        let table = |sides: &[(&str, &str)]| {
+            let mut t = TableView::new();
+            let mut sec = Section::new("Addon");
+            for (src, tag) in sides {
+                sec = sec.row(Row::new("Film.2024.1080p.WEB-DL").side(*src, *tag).chip(Chip::new("HEVC").server()));
+            }
+            t.set_sections(vec![sec], 0, false);
+            t.fit_notes(frame.w, &M);
+            t
+        };
+        let short = table(&[("Proxy", ""), ("Vavoo", "")]);
+        assert_eq!(short.side_col_w(frame.w, &M), SIDE_COL_MIN, "short names: the narrow floor");
+        let mid = table(&[("Proxy", ""), ("[RD+] Torrentio", "4k"), ("Torrentio\n4k", "")]);
+        let want = M.width_str("[RD+] Torrentio", SIDE_SZ, false).ceil() + GAP * 0.5;
+        assert_eq!(mid.side_col_w(frame.w, &M), want.clamp(SIDE_COL_MIN, SIDE_COL_MAX), "the widest line sizes the column");
+        assert!(mid.side_col_w(frame.w, &M) > short.side_col_w(frame.w, &M));
+        let long_name = "MediaFusion | \u{26a1} TB 4K | a very long addon name indeed";
+        let long = table(&[("Proxy", ""), (long_name, "1080p")]);
+        let w = long.side_col_w(frame.w, &M);
+        assert_eq!(w, SIDE_COL_MAX, "a long name grows the column to the cap");
+        let shown = sn_gfx::text::elide_by(long_name, w - GAP * 0.5, false, |s| M.width_str(s, SIDE_SZ, false));
+        assert!(shown.len() < long_name.len() && M.width_str(&shown, SIDE_SZ, false) <= w - GAP * 0.5, "and elides there: {shown:?}");
+        // an APP chip outranks the server's name: the column narrows before the cache chip gives way
+        let mut cached = TableView::new();
+        let row = Row::new("Film").side(long_name, "").chip(Chip::new("Not cached, starts a download")).chip(Chip::new("HEVC").server());
+        cached.set_sections(vec![Section::new("Addon").row(row)], 0, false);
+        let need = crate::widgets::badge_w("Not cached, starts a download", None, &M) + BADGE_GAP + crate::widgets::badge_w("+1", None, &M);
+        let narrow = 2.0 * CONTENT_X + GAP + need + (SIDE_COL_MIN + SIDE_COL_MAX) * 0.5;
+        let side = cached.side_col_w(narrow, &M);
+        assert!(side < SIDE_COL_MAX, "the column gave way: {side}");
+        assert!(chip_run(&cached.rows_at(0).chips, cached.label_width(cached.rows_at(0), narrow, &M), &M).0 >= 1, "the app chip shows");
+        assert_eq!(cached.side_col_w(f32::INFINITY, &M), SIDE_COL_MAX, "the intrinsic width is the content's");
+        // measuring equals drawing: every title starts where the label budget says it does
+        for t in [&short, &mid, &long] {
+            let side = t.side_col_w(frame.w, &M);
+            let x0 = frame.x + CONTENT_X + side + GAP;
+            let log = crate::draw_census::capture(|| t.draw(crate::Painter::recording(), frame, &M));
+            for i in 0..t.n_rows() {
+                let band = t.row_frame(frame, i).unwrap();
+                let title_x = log
+                    .iter()
+                    .filter(|(tag, r)| *tag == 100 && r.y >= band.y && r.y < band.y + band.h && r.x >= frame.x + CONTENT_X + side)
+                    .map(|(_, r)| r.x)
+                    .fold(f32::INFINITY, f32::min);
+                assert!((title_x - x0).abs() < 1e-3, "row {i}: title at {title_x}, label column at {x0}");
+                assert!((t.label_width(t.rows_at(i), frame.w, &M) - (frame.w - 2.0 * CONTENT_X - side - GAP)).abs() < 1e-3);
+                let side_right = log
+                    .iter()
+                    .filter(|(tag, r)| *tag == 100 && r.y >= band.y && r.y < band.y + band.h && r.x < x0)
+                    .map(|(_, r)| r.x)
+                    .fold(f32::NEG_INFINITY, f32::max);
+                assert!(side_right <= frame.x + CONTENT_X + 1e-3, "row {i}: the side column starts at the content edge");
+            }
+        }
+    }
+
+    /// A grouped table puts each section on its own card: the gap between two sections is two
+    /// cards' pads wider than the hairline's, and the card spans the header to the last row.
+    #[test]
+    fn a_grouped_table_spaces_its_sections_as_cards() {
+        let secs = || vec![Section::new("A").row(Row::new("a1")).row(Row::new("a2")), Section::new("B").row(Row::new("b1"))];
+        let mut flat = TableView::new();
+        flat.set_sections(secs(), 0, false);
+        let mut grouped = TableView::new();
+        grouped.grouped = true;
+        grouped.set_sections(secs(), 0, false);
+        assert_eq!(grouped.row_top(2) - flat.row_top(2), 2.0 * GROUP_PAD);
+        assert_eq!(grouped.content_h() - flat.content_h(), 2.0 * GROUP_PAD);
+        let spans = grouped.group_spans();
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0], (0, 0.0, HDR_H + 2.0 * ROW_H));
+        assert_eq!(spans[1].1, grouped.row_top(2) - HDR_H, "the second card starts at its header");
+        assert!(spans[1].1 - spans[0].2 >= DIV_H, "the cards stand apart");
+    }
+
     fn three_rows(sel: i32) -> TableView {
         let mut t = TableView::new();
         t.set_sections(vec![Section::new("S").row(Row::new("a")).row(Row::new("b")).row(Row::new("c"))], sel, false);
         t
+    }
+
+    /// A popover asks for its width once per row it places, every frame: measuring each time made a
+    /// 22-row genre menu draw in 90 ms on the C1. The second ask must not measure again; an edit must.
+    #[test]
+    fn measured_width_is_memoized_until_the_table_changes() {
+        struct Counting(std::cell::Cell<u32>);
+        impl sn_machine::machine::Measure for Counting {
+            fn width(&self, s: &std::ffi::CStr, _: i32, _: bool) -> f32 { self.0.set(self.0.get() + 1); s.to_bytes().len() as f32 * 10.0 }
+            fn cap_h(&self, _: i32) -> f32 { 10.0 }
+            fn line_h(&self, _: i32) -> f32 { 14.0 }
+        }
+        let m = Counting(std::cell::Cell::new(0));
+        let mut t = three_rows(0);
+        let w = t.measured_width(&m);
+        let after_first = m.0.get();
+        assert!(after_first > 0);
+        assert_eq!(t.measured_width(&m), w);
+        assert_eq!(m.0.get(), after_first, "second ask measured again");
+        t.set_sections(vec![Section::new("S").row(Row::new("a much longer label than before"))], 0, false);
+        assert!(t.measured_width(&m) > w, "an edit must re-measure");
     }
 
     fn cover_of(t: &TableView, gi: i32) -> f32 {

@@ -2210,6 +2210,16 @@ pub mod tex_ledger {
 
     pub fn revision(tex: c_uint) -> u64 { LIVE.with(|m| m.borrow().get(&tex).map_or(0, |v|v.1)) }
 
+    /// The live textures grouped by size: `(bytes of one, how many)`, the largest groups first —
+    /// a size names its texture well enough (1920x1080x4 is a full-screen target).
+    pub fn by_size() -> Vec<(u64, usize)> {
+        let mut groups: HashMap<u64, usize> = HashMap::new();
+        LIVE.with(|m| m.borrow().values().for_each(|v| *groups.entry(v.0).or_default() += 1));
+        let mut v: Vec<(u64, usize)> = groups.into_iter().collect();
+        v.sort_by_key(|&(b, n)| std::cmp::Reverse(b * n as u64));
+        v
+    }
+
     /// `(live textures, live bytes)`.
     pub fn totals() -> (usize, u64) {
         LIVE.with(|m| {
@@ -2706,6 +2716,20 @@ impl FrameCache {
 
     pub fn invalidate(&mut self) {
         self.valid = false;
+    }
+
+    /// Free the texture (8.3 MB at 1080p) and its FBO; the next capture makes them again.
+    pub fn release(&mut self) {
+        if self.fbo != 0 {
+            unsafe { glDeleteFramebuffers(1, &self.fbo) };
+            self.fbo = 0;
+        }
+        delete_tex(self.tex);
+        self.tex = 0;
+        self.w = 0;
+        self.h = 0;
+        self.valid = false;
+        self.checked = false;
     }
 
     /// The captured texture, while it holds a capture: the drawable's viewport as
@@ -4028,6 +4052,8 @@ fn blur_lazy_init() -> bool {
         if (*std::ptr::addr_of!(BLURST)).is_some() {
             return true;
         }
+        // The programs outlive a released chain ([`release_offscreen`]): only the targets are rebuilt.
+        if BPROG == 0 {
         BPROG = match link_program(VS_IMG.as_ptr(), FS_BLUR.as_ptr()) {
             Some(p) => p,
             None => {
@@ -4102,6 +4128,7 @@ fn blur_lazy_init() -> bool {
         // REGION now and that ratio moves with it, so it belongs to the draw. `draw_blur_backdrop`
         // says what goes wrong if it is left behind.
         use_prog(PROG);
+        }
 
         let (gx, gy, gw, gh) = sn_base::surface::viewport();
         let ((mw, mh), (sw, sh)) = blur_dims(gw, gh);
@@ -4146,6 +4173,55 @@ fn blur_lazy_init() -> bool {
                 BLUR_OFF = true; // fbo_target already logged the status
                 false
             }
+        }
+    }
+}
+
+/// **Free the offscreen chains' targets**: the blur chain (≈10.6 MB: the 1920x1080 grab, the half- and quarter-res
+/// passes) and every backdrop retained from it, keeping the programs. For a stretch where nothing
+/// may sample the framebuffer anyway — a bound video plane ([`video_plane_refuses`]) — the chain is
+/// rebuilt when the plane goes ([`rebuild_offscreen`]), or by the first glass draw.
+///
+/// The retained backdrops go too, and must: each keeps a copy of the chain's names (its rim copies
+/// into the chain's `grab`), which would then be dangling. Main render thread only.
+///
+/// The underlay field's reduction chain (another 1920x1080 grab and its halvings, ≈10.8 MB) goes
+/// the same way: [`field_kick`] refuses on the plane too, a ticket outstanding reads
+/// [`FieldRead::Lost`] and is kicked again, and [`field_lazy_init`] rebuilds it.
+pub fn release_offscreen() {
+    unsafe {
+        if let Some(c) = (*std::ptr::addr_of_mut!(BLURST)).take() {
+            BLUR_RELEASED = true;
+            BLUR_VALID = false;
+            backdrop::clear_retained();
+            for fbo in [c.mid_fbo, c.a_fbo, c.b_fbo] {
+                glDeleteFramebuffers(1, &fbo);
+            }
+            for tex in [c.grab, c.mid, c.a, c.b] {
+                delete_tex(tex);
+            }
+            log("blur: chain released for the video plane");
+        }
+        if let Some(c) = (*std::ptr::addr_of_mut!(FIELDST)).take() {
+            for (tex, fbo, _, _) in c.levels {
+                glDeleteFramebuffers(1, &fbo);
+                delete_tex(tex);
+            }
+            delete_tex(c.grab);
+            log("field: chain released for the video plane");
+        }
+    }
+}
+
+/// The blur chain [`release_offscreen`] freed, not yet rebuilt.
+static mut BLUR_RELEASED: bool = false;
+
+/// Build again the blur chain [`release_offscreen`] freed — as the video plane goes, so that the
+/// first menu after a playback does not pay for it ([`init_blur`]). A no-op when nothing was freed.
+pub fn rebuild_offscreen() {
+    unsafe {
+        if std::mem::replace(&mut *std::ptr::addr_of_mut!(BLUR_RELEASED), false) {
+            init_blur();
         }
     }
 }

@@ -475,6 +475,19 @@ pub fn aq_pops(q: *mut AuQueue) -> u64 {
     }
 }
 
+/// Whether the producer has finished (`aq_set_eof`), whatever is still queued.
+pub fn aq_producer_done(q: *mut AuQueue) -> bool {
+    if q.is_null() {
+        return false;
+    }
+    unsafe {
+        libc::pthread_mutex_lock(ptr::addr_of_mut!((*q).m));
+        let done = (*q).eof != 0;
+        libc::pthread_mutex_unlock(ptr::addr_of_mut!((*q).m));
+        done
+    }
+}
+
 pub fn aq_bytes(q: *mut AuQueue) -> c_long {
     if q.is_null() {
         return 0;

@@ -58,11 +58,12 @@ STORAGE_DESCRIPTION = "StremioNative private storage"
 HOMEPAGE = "https://github.com/Morpheus235/stremio-native"
 PACKAGER = "stremionative-mkipk/1"
 # Every payload carries these, besides what appinfo.json names (`main`, the artwork).
-REQUIRED = ["appfont.ttf", "appfont-bold.ttf", "appfont-cjk.ttf", "OFL.txt", "le-roots.pem", "LICENSE", "NOTICE",
+REQUIRED = ["appfont.ttf", "appfont-bold.ttf", "appfont-cjk.ttf", "appfont-emoji.ttf", "OFL.txt", "le-roots.pem", "LICENSE", "NOTICE",
             "fonts/subs/manifest.json"]
 # The bundled FFmpeg the player dlopens (crates/media/src/ff.rs). Without them the app starts,
 # browses and refuses to play, so a package without them is not a package.
-REQUIRED_LIBS = ["libavutil-sn.so.61", "libavcodec-sn.so.63", "libavformat-sn.so.63"]
+# libswresample-sn and libsnadec.so (native/adec.c) are the software audio decode -> PCM path.
+REQUIRED_LIBS = ["libavutil-sn.so.61", "libswresample-sn.so.7", "libavcodec-sn.so.63", "libavformat-sn.so.63", "libsnadec.so"]
 EXECUTABLE_NAMES = {STORAGE_EXE}
 
 

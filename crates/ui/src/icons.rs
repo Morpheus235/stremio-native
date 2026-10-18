@@ -156,6 +156,25 @@ pub enum Icon {
     /// handle also starts just outside the ring, so the round caps close the joint without the two
     /// strokes overlapping at all.
     Search,
+    // ---- stroked line marks (2026-10-17): the Search suggestion list's recent mark, the Detail
+    // action row's discs and the stream rows' fact lines. Same construction as `search.svg` (one
+    // stroked `<path>`, 2.2 units, round caps), so they read as one family at 24-32px.
+    /// A clock face — a Search suggestion that is one of the viewer's RECENT searches.
+    Clock,
+    /// A plus — *Add to library* (the Detail action row's library disc before the item is held).
+    Plus,
+    /// An eye — *Mark as watched* (the Detail action row's watched disc).
+    Eye,
+    /// A film strip — a stream's picture facts (resolution range, codec, HDR).
+    Film,
+    /// A drive — a stream's size.
+    Drive,
+    /// A shield — a stream's source (WEB-DL, BluRay, a release group).
+    Shield,
+    /// A globe — a stream's languages.
+    Globe,
+    /// A lightning bolt — a debrid stream the service already holds (plays at once).
+    Bolt,
     // ---- review-score marks (the detail hero's ratings row) ----
     //
     // These are OUR OWN drawings, not reproductions. Rotten Tomatoes' marks — the fruit, the
@@ -296,6 +315,14 @@ fn src(id: Icon) -> &'static str {
         Icon::Close => include_str!("../../../assets/icons/close.svg"),
         Icon::More => include_str!("../../../assets/icons/more.svg"),
         Icon::Search => include_str!("../../../assets/icons/search.svg"),
+        Icon::Clock => include_str!("../../../assets/icons/clock.svg"),
+        Icon::Plus => include_str!("../../../assets/icons/plus.svg"),
+        Icon::Eye => include_str!("../../../assets/icons/eye.svg"),
+        Icon::Film => include_str!("../../../assets/icons/film.svg"),
+        Icon::Drive => include_str!("../../../assets/icons/drive.svg"),
+        Icon::Shield => include_str!("../../../assets/icons/shield.svg"),
+        Icon::Globe => include_str!("../../../assets/icons/globe.svg"),
+        Icon::Bolt => include_str!("../../../assets/icons/bolt.svg"),
         Icon::Tomato => include_str!("../../../assets/icons/tomato.svg"),
         Icon::TomatoCalyx => include_str!("../../../assets/icons/tomato-calyx.svg"),
         Icon::TomatoHollow => include_str!("../../../assets/icons/tomato-hollow.svg"),

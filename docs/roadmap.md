@@ -10,10 +10,17 @@ Port the FFmpeg demuxer, curl pull source, HLS, libass subtitles and the Starfis
 The Plex transcode decision (`route/`) and transcode ABR are not carried over.
 
 - **DTS plays natively.** Feed the DTS core to the TV's decoder when its codec table lists DTS
-  and the stream's channel count fits the measured ceiling (DTS-HD extensions are stripped to the
+  (not believed on webOS 5/6, whose sets refuse a `"DTS"` Load) and the stream's channel count fits the measured ceiling (DTS-HD extensions are stripped to the
   core). Otherwise decode in software and feed AC3: there is no server to transcode it. Done for
   DTS (`ff::transcode`: the bundled `dca` decoder and float `ac3` encoder, core-only, at most 5.1,
-  640 kb/s); still to verify on a TV. TrueHD, FLAC and Opus are still refused.
+  640 kb/s); still to verify on a TV. TrueHD, FLAC, LPCM, Opus, Vorbis, MP2, WMA, ALAC (and MP3 on a set
+  whose table has no MPEG audio row; elsewhere MP3 goes native as `"MP3"`) are
+  decoded on the CPU and fed as S16LE 48 kHz PCM (`ff::adec`, `libsnadec.so`, ported from
+  PlxNative) — stereo always; more than two channels go through the same `ff::transcode` as
+  AC-3 5.1 (what optical and plain ARC carry) unless Settings > Multichannel audio says PCM, or
+  Automatic finds the TV's sound output on HDMI eARC. Its Stereo and Stereo (Pro Logic II) rungs
+  fold every multichannel track the build decodes to a plain or a DPLII matrixed stereo pair instead. Still to verify on
+  a TV.
 - **Probe before Load.** A stream comes with no codec facts, so the player opens it with the
   bundled demuxer first (`ff::probe`, off-frame, bounded) and declares the Load from what the
   container says; a caller's declaration is an optional override.
@@ -40,8 +47,10 @@ Landed: the application crate (`crates/app`: boot, the frame loop over the dispa
 lifecycle, the webOS port, the addon transport and the poster source on workers) and the first
 screens (`crates/screens`): Home with one row per browsable catalog of the installed addons
 (signed out: the defaults), Detail listing each addon's streams with its own loading/failed state
-(episodes by season for a series), and the player page. Still to come: sign-in and the account's
-addons, library, settings, search, the player HUD.
+(episodes by season for a series), and the player page with its transport HUD (scrubbing, the
+audio and subtitle tracks, Info, Up Next from the series' meta; progress recorded to the account's
+library for Continue Watching). Still to come: sign-in and the account's addons, library, settings,
+search.
 
 - **Search** with loading, empty and error states (a spinner while a query is in flight).
 - **Hotkeys**: move left/right through the top bar, jump to Search and Settings from anywhere.

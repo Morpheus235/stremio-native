@@ -49,6 +49,107 @@ pub(super) fn note_focused<H: Host, S: CardSource<H>>(pr: Painter, rect: Rect, i
     crate::card_probe::focused(at.x, at.y, at.w, i, src.len(), src.global(i));
 }
 
+/// A shelf's source with its [`CardSource::see_all`] tile as one more cell after the last card,
+/// so the shelf's springs, scroll, stops, neighbours and placement take it like any card. The
+/// [`Stack`](super::Stack) wraps every section's source in it; it answers no `see_all` itself, so
+/// wrapping twice adds nothing.
+pub struct SeeAll<H: Host, S> {
+    src: S,
+    tail: Option<H::Elem>,
+}
+
+impl<H: Host, S: CardSource<H>> SeeAll<H, S> {
+    pub fn new(src: S) -> Self {
+        let tail = src.see_all().filter(|_| src.len() > 0);
+        Self { src, tail }
+    }
+
+    fn is_tail(&self, i: usize) -> bool {
+        self.tail.is_some() && i == self.src.len()
+    }
+}
+
+impl<H: Host, S: CardSource<H>> CardSource<H> for SeeAll<H, S> {
+    fn len(&self) -> usize {
+        self.src.len() + usize::from(self.tail.is_some())
+    }
+    fn elem(&self, i: usize) -> H::Elem {
+        match self.tail {
+            Some(e) if i == self.src.len() => e,
+            _ => self.src.elem(i),
+        }
+    }
+    fn index_of(&self, e: &H::Elem) -> Option<usize> {
+        if self.tail == Some(*e) { Some(self.src.len()) } else { self.src.index_of(e) }
+    }
+    fn focus_index(&self, e: &H::Elem) -> Option<usize> {
+        if self.tail == Some(*e) { Some(self.src.len()) } else { self.src.focus_index(e) }
+    }
+    fn art(&self, i: usize) -> Art<'_> {
+        if self.is_tail(i) { Art::Poster(None) } else { self.src.art(i) }
+    }
+    fn label(&self, i: usize) -> card_row::TileLabel {
+        if self.is_tail(i) { card_row::TileLabel::default() } else { self.src.label(i) }
+    }
+    fn progress(&self, i: usize) -> Option<f32> {
+        if self.is_tail(i) { None } else { self.src.progress(i) }
+    }
+    fn overlay(&self, p: Painter, i: usize, tile: &Tile, measure: &dyn sn_machine::machine::Measure) {
+        if !self.is_tail(i) {
+            self.src.overlay(p, i, tile, measure);
+        }
+    }
+    fn loaded(&self, i: usize) -> bool {
+        self.is_tail(i) || self.src.loaded(i)
+    }
+    fn unread(&self, i: usize) -> bool {
+        !self.is_tail(i) && self.src.unread(i)
+    }
+    fn hover(&self, i: usize) -> crate::screen::Hover {
+        // the tile follows its row (a row the hero dive keeps half in view keeps it too)
+        self.src.hover(if self.is_tail(i) { i - 1 } else { i })
+    }
+    fn sweep(&self) -> f32 {
+        self.src.sweep()
+    }
+    fn gap_before(&self, i: usize) -> bool {
+        !self.is_tail(i) && self.src.gap_before(i)
+    }
+    fn global(&self, i: usize) -> usize {
+        if self.is_tail(i) { self.src.global(i - 1) + 1 } else { self.src.global(i) }
+    }
+    fn holdable(&self, i: usize) -> bool {
+        !self.is_tail(i) && self.src.holdable(i)
+    }
+    fn more(&self) -> bool {
+        self.src.more()
+    }
+    fn page_epoch(&self) -> u32 {
+        self.src.page_epoch()
+    }
+    fn revision(&self) -> Option<u64> {
+        self.src.revision()
+    }
+    fn more_after(&self) -> bool {
+        self.src.more_after()
+    }
+    fn more_before(&self) -> bool {
+        self.src.more_before()
+    }
+    fn see_all_at(&self, i: usize) -> bool {
+        self.is_tail(i)
+    }
+    fn see_all_retry(&self) -> bool {
+        self.tail.is_some() && self.src.see_all_retry()
+    }
+}
+
+/// The cards of `src` that are not its [`CardSource::see_all`] tile: what paging counts.
+fn cards_len<H: Host, S: CardSource<H>>(src: &S) -> usize {
+    let n = src.len();
+    n - usize::from(n > 0 && src.see_all_at(n - 1))
+}
+
 pub struct Shelf {
     entry: EntryId,
     style: &'static RowStyle,
@@ -524,7 +625,7 @@ impl Shelf {
         let end = window.max(focus).saturating_add(LOOK_AHEAD);
         let retry = self.in_flight == Some(PageEdge::After) && self.retry.due();
         let was = self.asked;
-        let ask = super::want(&mut self.asked, src.len(), end, src.more(), retry);
+        let ask = super::want(&mut self.asked, cards_len(src), end, src.more(), retry);
         if ask.is_some() && self.asked != was { self.retry.mark_fresh(); }
         ask.map(CardEvent::Want)
     }
@@ -865,6 +966,14 @@ impl Shelf {
             a if a < 1.0 => pr.alpha(a),
             _ => pr,
         };
+        if src.see_all_at(i) {
+            if src.see_all_retry() {
+                card_row::draw_retry_tile(pr, rect, s, self.style, focused, f.measure);
+            } else {
+                card_row::draw_see_all(pr, rect, s, self.style, focused);
+            }
+            return;
+        }
         if focused {
             let label = src.label(i).revealed(self.row.band_reveal())
                 .settling(self.row.settle_lag(src.len(), i, self.style) * src.sweep());

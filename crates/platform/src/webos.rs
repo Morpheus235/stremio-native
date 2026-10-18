@@ -93,6 +93,8 @@ pub fn probe() {
     crate::tv::device::publish_info(info);
     let device_info = probe_hw();
     crate::tv::device::publish_probe(crate::tv::device::Probe { os_info, device_info });
+    // What this set decodes — after `publish_info`, which its VP9 bit-depth reads.
+    crate::devcaps::probe();
     probe_jail();
 }
 
@@ -443,6 +445,29 @@ pub fn system_locale() -> crate::tv::LocaleReply {
         Ok(raw) => crate::tv::LocaleReply::Reply(raw),
         Err(_) => crate::tv::LocaleReply::Unavailable,
     }
+}
+
+/// The settings service's `sound` category: where the television sends its audio
+/// (`sn_media::prefs::parse_sound_route` grades it). Called from the probe worker, never the
+/// frame thread. A refusal still comes back as the reply: the service answers
+/// `returnValue: false` for an unknown key yet returns the known ones.
+#[cfg(all(not(feature = "hostsim"), not(any(test, feature = "test-support"))))]
+pub fn sound_settings() -> Option<String> {
+    ls2::register()
+        .map_err(ls2::Fail::from)
+        .and_then(|client| {
+            client.call(
+                "luna://com.webos.settingsservice/getSystemSettings",
+                r#"{"category":"sound","keys":["soundOutput","eArcSupport"]}"#,
+                std::time::Duration::from_millis(600),
+            )
+        })
+        .ok()
+}
+
+#[cfg(any(feature = "hostsim", test, feature = "test-support"))]
+pub fn sound_settings() -> Option<String> {
+    None
 }
 
 #[cfg(any(feature = "hostsim", test, feature = "test-support"))]
@@ -989,6 +1014,16 @@ pub mod ls2 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **The boot's device probe reads the codec table too.** It did not: `devcaps::probe` had no
+    /// caller after the port, so `devcaps::caps()` was always the assumed profile — no AV1, no
+    /// VP9, no DTS row — and the beta refused every AV1 stream on an LG C1 whose own table lists a
+    /// 4096x2304@60 AV1 decoder (`session: start refused — VideoUnsupported("av1")`).
+    #[test]
+    fn the_device_probe_also_reads_the_codec_table() {
+        probe();
+        assert!(crate::devcaps::probed(), "webos::probe must run devcaps::probe");
+    }
 
     #[test]
     fn storage_activation_reply_keeps_only_status_and_numeric_error_code() {

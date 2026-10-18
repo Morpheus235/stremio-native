@@ -1,4 +1,4 @@
-//! **The viewer's subtitle preferences, as the player reads them every frame.**
+//! **The viewer's playback preferences (subtitles, Dolby Vision Profile 7), as the player reads them.**
 //!
 //! The persisted value is the app's (a profile setting); the copy here is the one the player and
 //! the subtitle renderers read without a lock: a process-global [`LiveCell`] the app publishes into
@@ -160,6 +160,260 @@ impl SubtitlePosition {
 }
 ladder!(SubtitlePosition, Low);
 
+/// The text caption's fill colour (Settings > Audio & subtitles > Text colour): stremio-web's
+/// `subtitlesTextColor` as a palette a remote can step through, white first (its default). What
+/// each rung is in ASS is [`crate::player::text_style`]'s. The serde names are a file-format contract.
+#[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SubtitleColor {
+    #[default]
+    #[serde(rename = "white")]
+    White,
+    #[serde(rename = "yellow")]
+    Yellow,
+    #[serde(rename = "cyan")]
+    Cyan,
+    #[serde(rename = "green")]
+    Green,
+    #[serde(rename = "grey")]
+    Grey,
+}
+
+impl SubtitleColor {
+    pub const LADDER: [SubtitleColor; 5] =
+        [SubtitleColor::White, SubtitleColor::Yellow, SubtitleColor::Cyan, SubtitleColor::Green, SubtitleColor::Grey];
+}
+ladder!(SubtitleColor, White);
+
+/// The box behind a text caption (`subtitlesBackgroundColor`, transparent by default).
+#[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SubtitleBackground {
+    #[default]
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "black_50")]
+    Black50,
+    #[serde(rename = "black_75")]
+    Black75,
+    #[serde(rename = "black")]
+    Black,
+}
+
+impl SubtitleBackground {
+    pub const LADDER: [SubtitleBackground; 4] =
+        [SubtitleBackground::None, SubtitleBackground::Black50, SubtitleBackground::Black75, SubtitleBackground::Black];
+}
+ladder!(SubtitleBackground, None);
+
+/// The text caption's outline colour (`subtitlesOutlineColor`, black by default).
+#[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SubtitleOutline {
+    #[default]
+    #[serde(rename = "black")]
+    Black,
+    #[serde(rename = "grey")]
+    Grey,
+    #[serde(rename = "white")]
+    White,
+}
+
+impl SubtitleOutline {
+    pub const LADDER: [SubtitleOutline; 3] = [SubtitleOutline::Black, SubtitleOutline::Grey, SubtitleOutline::White];
+}
+ladder!(SubtitleOutline, Black);
+
+/// The text caption's opacity (`subtitlesOpacity`, 100 % by default): text, outline and box alike.
+#[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SubtitleOpacity {
+    #[default]
+    #[serde(rename = "100")]
+    Full,
+    #[serde(rename = "75")]
+    P75,
+    #[serde(rename = "50")]
+    P50,
+}
+
+impl SubtitleOpacity {
+    pub const LADDER: [SubtitleOpacity; 3] = [SubtitleOpacity::Full, SubtitleOpacity::P75, SubtitleOpacity::P50];
+
+    /// The opacity in percent.
+    pub fn percent(self) -> u8 {
+        match self {
+            SubtitleOpacity::Full => 100,
+            SubtitleOpacity::P75 => 75,
+            SubtitleOpacity::P50 => 50,
+        }
+    }
+}
+ladder!(SubtitleOpacity, Full);
+
+/// How a Dolby Vision **Profile 7** (dual-layer) stream is played (`stream::Dovi::presentation_with`).
+/// The serde names are a file-format contract.
+#[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DvProfile7 {
+    /// The base layer alone, as HDR10: RPU and enhancement layer dropped by the demuxer.
+    #[default]
+    #[serde(rename = "hdr10")]
+    Hdr10,
+    /// Converted in the feed to single-layer Profile 8.1 (`crate::dovi`) and declared as 8.1; the
+    /// player falls back to [`DvProfile7::Hdr10`] by itself when the set refuses it (`player::pump`).
+    #[serde(rename = "try_dolby_vision")]
+    TryNative,
+}
+
+impl DvProfile7 {
+    pub const LADDER: [DvProfile7; 2] = [DvProfile7::Hdr10, DvProfile7::TryNative];
+}
+ladder!(DvProfile7, Hdr10);
+
+static DV_PROFILE7: LiveCell<DvProfile7> = LiveCell::new("dolby vision profile 7 preference");
+
+/// The live Profile 7 choice, read once per playback start.
+pub fn dv_profile7() -> DvProfile7 {
+    DV_PROFILE7.get()
+}
+
+/// Publish the Profile 7 choice (the app persists it; this does not).
+pub fn set_dv_profile7(v: DvProfile7) {
+    DV_PROFILE7.set(v)
+}
+
+/// **What a track of more than two channels that the app decodes itself becomes** (Settings >
+/// Playback > Multichannel audio). The serde names are a file-format contract.
+#[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MultichannelAudio {
+    /// AC-3 5.1 unless the television's sound route carries multichannel PCM losslessly (eARC):
+    /// [`multichannel_out`] over the route [`refresh_sound_route`] read.
+    #[default]
+    #[serde(rename = "auto")]
+    Auto,
+    /// Always AC-3 5.1 (`stream::AudioFeed::TranscodeAc3`): what optical and plain ARC carry.
+    #[serde(rename = "dolby_digital")]
+    DolbyDigital,
+    /// Always 6-channel PCM (`stream::AudioFeed::SoftPcm`), the behaviour before this setting.
+    #[serde(rename = "pcm")]
+    Pcm,
+    /// Every track of more than two channels the build decodes — the television's own codecs too —
+    /// is decoded here and folded to a plain stereo pair (libswresample's Lo/Ro downmix: centre
+    /// and surrounds at -3 dB, LFE dropped), for TV speakers, headphones, Bluetooth or a soundbar
+    /// without a decoder. Never chosen by `Auto`.
+    #[serde(rename = "stereo")]
+    Stereo,
+    /// Every track of more than two channels — the ones the television decodes itself too — is
+    /// decoded here and folded to a Dolby Pro Logic II matrixed stereo pair, for a Pro Logic II
+    /// receiver on a stereo link (optical with LG Sound Sync). Never chosen by `Auto`.
+    #[serde(rename = "stereo_dplii")]
+    StereoDplii,
+}
+
+impl MultichannelAudio {
+    pub const LADDER: [MultichannelAudio; 5] = [
+        MultichannelAudio::Auto,
+        MultichannelAudio::DolbyDigital,
+        MultichannelAudio::Pcm,
+        MultichannelAudio::Stereo,
+        MultichannelAudio::StereoDplii,
+    ];
+}
+ladder!(MultichannelAudio, Auto);
+
+static MULTICHANNEL_AUDIO: LiveCell<MultichannelAudio> = LiveCell::new("multichannel audio preference");
+
+/// The live multichannel choice, read once per playback start.
+pub fn multichannel_audio() -> MultichannelAudio {
+    MULTICHANNEL_AUDIO.get()
+}
+
+/// Publish the multichannel choice (the app persists it; this does not).
+pub fn set_multichannel_audio(v: MultichannelAudio) {
+    MULTICHANNEL_AUDIO.set(v)
+}
+
+/// How a track of more than two channels decoded here is fed, as the feed decision reads it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Multichannel {
+    /// Re-encoded as AC-3 5.1 (where the build and the codec table allow; else 6-channel PCM).
+    #[default]
+    Ac3,
+    /// 6-channel PCM.
+    Pcm,
+    /// Plain stereo PCM (Lo/Ro downmix) — every >2-channel track, native codecs included.
+    Stereo,
+    /// Dolby Pro Logic II matrixed stereo PCM — every >2-channel track, native codecs included.
+    StereoDplii,
+}
+
+/// The facts of the television's sound route that matter here, from the settings service's
+/// `sound` category (`soundOutput`, `eArcSupport`). Values as the owner's C1 (webOS 6) answers:
+/// `external_optical` / `off`; `external_arc` is the HDMI ARC/eARC output.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SoundRoute {
+    pub output: String,
+    pub earc: bool,
+}
+
+/// PURE: the route out of a `getSystemSettings` reply. The service answers `returnValue: false`
+/// for a key it does not know and STILL returns the ones it does, so `settings` is read whatever
+/// `returnValue` says; no `soundOutput` there is no answer.
+pub fn parse_sound_route(reply: &str) -> Option<SoundRoute> {
+    let v: serde_json::Value = serde_json::from_str(reply).ok()?;
+    let s = v.get("settings")?;
+    let output = s.get("soundOutput")?.as_str()?.to_string();
+    let earc = s.get("eArcSupport").and_then(|e| e.as_str()) == Some("on");
+    Some(SoundRoute { output, earc })
+}
+
+/// PURE: **the multichannel decision** from the preference and the route (`None`: not read, or
+/// no answer). `Auto` sends PCM only over a route that carries multichannel PCM losslessly — eARC
+/// on and the HDMI ARC output — and AC-3 everywhere else (optical, ARC without eARC, Bluetooth,
+/// the TV's speakers, an unknown route), since AC-3 is the path proven on the television.
+///
+/// ponytail: Auto trades eARC-less routes' lossless PCM for the AC-3 optical/ARC can carry; the
+/// PCM rung is the way back for anyone who wants PCM regardless.
+pub fn multichannel_out(pref: MultichannelAudio, route: Option<&SoundRoute>) -> Multichannel {
+    match pref {
+        MultichannelAudio::DolbyDigital => Multichannel::Ac3,
+        MultichannelAudio::Pcm => Multichannel::Pcm,
+        MultichannelAudio::Stereo => Multichannel::Stereo,
+        MultichannelAudio::StereoDplii => Multichannel::StereoDplii,
+        MultichannelAudio::Auto => match route {
+            Some(r) if r.earc && r.output == "external_arc" => Multichannel::Pcm,
+            _ => Multichannel::Ac3,
+        },
+    }
+}
+
+/// The route [`refresh_sound_route`] last read carries multichannel PCM (seeded no: AC-3).
+static ROUTE_CARRIES_PCM: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The decision for the start being made: the preference, and for `Auto` the route last read.
+pub fn multichannel() -> Multichannel {
+    match multichannel_audio() {
+        MultichannelAudio::Auto if ROUTE_CARRIES_PCM.load(Relaxed) => Multichannel::Pcm,
+        pref => multichannel_out(pref, None),
+    }
+}
+
+/// Read the television's sound route (an LS2 round trip: off the frame thread — the probe worker
+/// calls it before each probe) and keep its answer for [`multichannel`]. Only for `Auto`; one log
+/// line with the route and the choice.
+///
+/// ponytail: read once per probed start, no subscription — a route changed mid-playback applies
+/// from the next start; subscribe to the settings service if that ever matters.
+pub fn refresh_sound_route() {
+    if multichannel_audio() != MultichannelAudio::Auto {
+        return;
+    }
+    let route = sn_platform::tv::sound_settings().as_deref().and_then(parse_sound_route);
+    let out = multichannel_out(MultichannelAudio::Auto, route.as_ref());
+    ROUTE_CARRIES_PCM.store(out == Multichannel::Pcm, Relaxed);
+    sn_base::eventlog::log(&format!(
+        "audio route: {} -> multichannel {}",
+        route.as_ref().map_or("unknown".to_string(), |r| format!("output={} earc={}", r.output, r.earc)),
+        if out == Multichannel::Pcm { "PCM" } else { "AC-3" }
+    ));
+}
+
 static SUBTITLE_SIZE: LiveCell<SubtitleSize> = LiveCell::new("subtitle size preference");
 static SUBTITLE_POSITION: LiveCell<SubtitlePosition> = LiveCell::new("subtitle position preference");
 pub(crate) static SUBTITLE_TONE: LiveCell<SubtitleTone> = LiveCell::new("subtitle tone preference");
@@ -184,6 +438,50 @@ pub fn set_subtitle_position(position: SubtitlePosition) {
     SUBTITLE_POSITION.set(position)
 }
 
+static SUBTITLE_COLOR: LiveCell<SubtitleColor> = LiveCell::new("subtitle colour preference");
+static SUBTITLE_BACKGROUND: LiveCell<SubtitleBackground> = LiveCell::new("subtitle background preference");
+static SUBTITLE_OUTLINE: LiveCell<SubtitleOutline> = LiveCell::new("subtitle outline preference");
+static SUBTITLE_OPACITY: LiveCell<SubtitleOpacity> = LiveCell::new("subtitle opacity preference");
+/// Seeded `true` (bool's seed): an authored ASS script keeps its own look until the app says otherwise.
+static ASS_STYLING: LiveCell<bool> = LiveCell::new("ass styling preference");
+
+/// The live caption colour, box, outline and opacity (the app persists them; these do not).
+pub fn subtitle_color() -> SubtitleColor {
+    SUBTITLE_COLOR.get()
+}
+pub fn set_subtitle_color(v: SubtitleColor) {
+    SUBTITLE_COLOR.set(v)
+}
+pub fn subtitle_background() -> SubtitleBackground {
+    SUBTITLE_BACKGROUND.get()
+}
+pub fn set_subtitle_background(v: SubtitleBackground) {
+    SUBTITLE_BACKGROUND.set(v)
+}
+pub fn subtitle_outline() -> SubtitleOutline {
+    SUBTITLE_OUTLINE.get()
+}
+pub fn set_subtitle_outline(v: SubtitleOutline) {
+    SUBTITLE_OUTLINE.set(v)
+}
+pub fn subtitle_opacity() -> SubtitleOpacity {
+    SUBTITLE_OPACITY.get()
+}
+pub fn set_subtitle_opacity(v: SubtitleOpacity) {
+    SUBTITLE_OPACITY.set(v)
+}
+
+/// **Style ASS subtitles**: `true` renders an ASS/SSA track with its own styling; `false` renders
+/// its dialogue as plain text in the viewer's caption style (stremio's `assSubtitlesStyling`). Read
+/// when a file's subtitle tracks are registered and when a sidecar is decoded, so a change applies
+/// from the next playback.
+pub fn ass_styling() -> bool {
+    ASS_STYLING.get()
+}
+pub fn set_ass_styling(v: bool) {
+    ASS_STYLING.set(v)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,9 +497,51 @@ mod tests {
         for t in SubtitleTone::LADDER {
             assert_eq!(SubtitleTone::from_u8(t.to_u8()), t);
         }
+        assert_eq!(DvProfile7::from_u8(<DvProfile7 as Packed>::SEED), DvProfile7::Hdr10, "HDR10 until the app publishes");
+        assert_eq!(DvProfile7::from_u8(DvProfile7::TryNative.to_u8()), DvProfile7::TryNative);
         assert_eq!(SubtitleSize::from_index(99), SubtitleSize::Medium);
         assert_eq!(SubtitlePosition::from_index(99), SubtitlePosition::Low);
         assert_eq!(SubtitleTone::from_index(99), SubtitleTone::White);
         assert_eq!(SubtitleSize::from_u8(<SubtitleSize as Packed>::SEED), SubtitleSize::Medium);
+        for c in SubtitleColor::LADDER {
+            assert_eq!(SubtitleColor::from_u8(c.to_u8()), c);
+        }
+        for b in SubtitleBackground::LADDER {
+            assert_eq!(SubtitleBackground::from_u8(b.to_u8()), b);
+        }
+        assert_eq!(SubtitleOutline::from_index(99), SubtitleOutline::Black);
+        assert_eq!(SubtitleOpacity::from_u8(<SubtitleOpacity as Packed>::SEED), SubtitleOpacity::Full);
+        assert!(<bool as Packed>::from_u8(<bool as Packed>::SEED), "ASS keeps its styling until the app publishes");
+        for m in MultichannelAudio::LADDER {
+            assert_eq!(MultichannelAudio::from_u8(m.to_u8()), m);
+        }
+        assert_eq!(MultichannelAudio::from_u8(<MultichannelAudio as Packed>::SEED), MultichannelAudio::Auto);
+    }
+
+    /// Every rung against an eARC, an optical and an unknown route: only Auto reads the route,
+    /// and only eARC on the HDMI ARC output carries PCM; Pro Logic II is never Auto's.
+    #[test]
+    fn the_multichannel_choice_follows_the_rung_and_for_auto_the_route() {
+        use MultichannelAudio::*;
+        let earc = parse_sound_route(r#"{"returnValue":true,"settings":{"soundOutput":"external_arc","eArcSupport":"on","soundOutputDigital":"pcm"}}"#).unwrap();
+        let optical = parse_sound_route(r#"{"returnValue":false,"settings":{"soundOutput":"external_optical","eArcSupport":"off","soundOutputDigital":"pcm"}}"#).unwrap();
+        assert_eq!(optical, SoundRoute { output: "external_optical".into(), earc: false }, "returnValue false still carries the known keys");
+        let arc_no_earc = SoundRoute { output: "external_arc".into(), earc: false };
+        let speakers_earc_on = SoundRoute { output: "tv_speaker".into(), earc: true };
+        let cases: [(MultichannelAudio, [Multichannel; 3]); 5] = [
+            (Auto, [Multichannel::Pcm, Multichannel::Ac3, Multichannel::Ac3]),
+            (DolbyDigital, [Multichannel::Ac3; 3]),
+            (Pcm, [Multichannel::Pcm; 3]),
+            (Stereo, [Multichannel::Stereo; 3]),
+            (StereoDplii, [Multichannel::StereoDplii; 3]),
+        ];
+        for (pref, want) in cases {
+            let got = [Some(&earc), Some(&optical), None].map(|r| multichannel_out(pref, r));
+            assert_eq!(got, want, "{pref:?} over eARC / optical / unknown");
+        }
+        assert_eq!(multichannel_out(Auto, Some(&arc_no_earc)), Multichannel::Ac3, "ARC without eARC");
+        assert_eq!(multichannel_out(Auto, Some(&speakers_earc_on)), Multichannel::Ac3, "eARC enabled but not the output");
+        assert_eq!(parse_sound_route(r#"{"returnValue":false,"errorText":"x"}"#), None);
+        assert_eq!(parse_sound_route("not json"), None);
     }
 }

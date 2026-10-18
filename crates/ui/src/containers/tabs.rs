@@ -56,8 +56,9 @@ pub struct TabContainer<H: Host> {
     pub pills: Vec<H::Arg>,
     /// Visual order is independent of identity. Geometry is render state, keys are logical state.
     pub strip: Vec<StripMember<H::Elem>>,
-    /// Preferred surviving destination if the focused member disappears. Independent of visual
-    /// order: a profile chip may be first without being the application's recovery destination.
+    /// The selected destination's pill: where focus entering the strip from the page seats, and
+    /// the preferred survivor if the focused member disappears. Independent of visual order: a
+    /// profile chip may be first without being the application's recovery destination.
     pub strip_fallback: Option<H::Elem>,
     /// The selected pill: the destination's while a transition is in flight (`ui::nav::view_tab`).
     pub selected: usize,

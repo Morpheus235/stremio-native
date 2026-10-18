@@ -99,7 +99,12 @@ impl TextTrack {
                 seq: cue.readorder,
             })
             .collect();
-        let clipped = text_ass::clip_newest_wins(&cues);
+        // authored dialogue read as plain keeps its own spans: an ASS script overlaps on purpose
+        let clipped = if self.dialect == TextDialect::Ass {
+            cues.iter().map(|c| Some((c.start, c.end))).collect()
+        } else {
+            text_ass::clip_newest_wins(&cues)
+        };
         self.raw
             .values()
             .zip(clipped)
@@ -348,8 +353,20 @@ impl Store {
         {
             return;
         }
-        // A text track's events are the view of its raw cues; only `push_text` writes them.
-        if self.text.contains_key(&track) {
+        // A text track's events are the view of its raw cues; only `push_text` writes them. An
+        // authored track registered as plain (Style ASS subtitles off) is one: its packet's Text
+        // field is the cue, keyed by that text, so a script's glow and fill layers show once.
+        if let Some(held) = self.text.get(&track) {
+            if held.dialect == TextDialect::Ass {
+                if let Some(text) = ass_packet_text(&event.payload) {
+                    let text = String::from_utf8_lossy(text);
+                    let end_ms = event.start_ms.saturating_add(event.duration_ms);
+                    // keyed by what shows, so layers differing only in their tags are one cue
+                    let Some(shown) = text_ass::convert(&text, TextDialect::Ass) else { return };
+                    let identity = packet_identity(shown.body.as_bytes());
+                    let _ = self.push_text_keyed(generation, track, event.start_ms, end_ms, &text, identity, floor_ms);
+                }
+            }
             return;
         }
         let Some(old) = self.tracks.get(&track) else {
@@ -551,9 +568,36 @@ impl Store {
     }
 }
 
+/// The Text field of a Matroska ASS packet (`ReadOrder,Layer,Style,Name,MarginL,MarginR,MarginV,
+/// Effect,Text`): everything after the eighth comma.
+fn ass_packet_text(payload: &[u8]) -> Option<&[u8]> {
+    let mut commas = 0;
+    let at = payload.iter().position(|&b| {
+        commas += usize::from(b == b',');
+        commas == 8
+    })?;
+    Some(&payload[at + 1..])
+}
+
+/// With Style ASS subtitles off an authored track is registered as plain dialogue
+/// ([`TextDialect::Ass`]) in the viewer's caption style.
+fn as_registered(headers: Vec<(i32, TrackHeader)>, ass_styling: bool) -> Vec<(i32, TrackHeader)> {
+    if ass_styling {
+        return headers;
+    }
+    headers
+        .into_iter()
+        .map(|(track, h)| match h {
+            TrackHeader::Authored(_) => (track, TrackHeader::Text(TextDialect::Ass)),
+            text => (track, text),
+        })
+        .collect()
+}
+
 pub fn begin(media_key: &str, headers: Vec<(i32, TrackHeader)>, fonts: Vec<Font>) -> u64 {
     // The picks are read before the store lock is taken, so no preference lock nests inside it.
     let style = TextStyle::current();
+    let headers = as_registered(headers, crate::prefs::ass_styling());
     store().begin_styled(media_key, headers, fonts, style)
 }
 
@@ -1127,6 +1171,31 @@ mod tests {
         assert!(events.is_empty());
     }
 
+    /// Style ASS subtitles off: an authored track is plain dialogue in the viewer's style — its
+    /// override tags and drawings gone, two overlapping speakers both kept, a repeated layer once.
+    #[test]
+    fn an_authored_track_with_styling_off_is_plain_dialogue_in_the_synthesized_style() {
+        let mut s = Store::default();
+        let headers = as_registered(vec![(0, TrackHeader::Authored(b"[Script Info]".to_vec()))], false);
+        let generation = s.begin("fixture", headers, vec![]);
+        let packet = |p: &str, at: i64| Event { start_ms: at, duration_ms: 2000, payload: p.as_bytes().into() };
+        s.push(generation, 0, packet(r"0,0,Sign,,0,0,0,,{\pos(10,10)\c&H0000FF&}Hello, {\i1}you{\i0}{\p1}m 0 0 l 9 9{\p0}", 1000), 0);
+        s.push(generation, 0, packet(r"1,1,Glow,,0,0,0,,{\blur3}Hello, {\i1}you{\i0}", 1000), 0);
+        s.push(generation, 0, packet("2,0,Default,,0,0,0,,Other speaker", 1500), 0);
+        let source = s.selected(0).unwrap();
+        assert!(source.origin.is_text(), "the viewer's style, not the script's");
+        let Content::Embedded { header, events, .. } = &source.content else { panic!() };
+        assert!(std::str::from_utf8(header).unwrap().contains("Style: Default,"));
+        let bodies: Vec<String> = events.iter().map(|e| String::from_utf8_lossy(&e.payload).into_owned()).collect();
+        assert_eq!(bodies.len(), 2, "the glow layer is the same text over the same span: {bodies:?}");
+        assert!(bodies[0].ends_with(r",Default,,0,0,0,,Hello, {\i1}you"), "{}", bodies[0]);
+        assert_eq!(events[0].duration_ms, 2000, "an overlapping speaker does not clip it");
+        assert!(bodies[1].ends_with("Other speaker"));
+        // styling on: the track stays authored
+        let kept = as_registered(vec![(0, TrackHeader::Authored(b"[Script Info]".to_vec()))], true);
+        assert!(matches!(kept[0].1, TrackHeader::Authored(_)));
+    }
+
     #[test]
     fn origin_survives_a_push_and_a_seek() {
         let mut s = Store::default();
@@ -1520,8 +1589,8 @@ mod tests {
     #[test]
     fn a_restyle_bumps_the_revision_once_and_keeps_the_events_and_the_identity() {
         use crate::prefs::{SubtitlePosition, SubtitleSize};
-        let small = TextStyle { size: SubtitleSize::Small, position: SubtitlePosition::Low };
-        let large = TextStyle { size: SubtitleSize::Large, position: SubtitlePosition::Low };
+        let small = TextStyle { size: SubtitleSize::Small, position: SubtitlePosition::Low, ..Default::default() };
+        let large = TextStyle { size: SubtitleSize::Large, position: SubtitlePosition::Low, ..Default::default() };
         let mut s = Store::default();
         let g = s.begin_styled("f", vec![(0, TrackHeader::Text(TextDialect::Srt))], vec![], small);
         s.push_text(g, 0, 1000, 2000, "cue", 0);
@@ -1550,8 +1619,8 @@ mod tests {
     #[test]
     fn a_reopen_after_a_pick_change_builds_the_header_for_the_new_picks_without_a_second_bump() {
         use crate::prefs::{SubtitlePosition, SubtitleSize};
-        let small = TextStyle { size: SubtitleSize::Small, position: SubtitlePosition::Low };
-        let large = TextStyle { size: SubtitleSize::Large, position: SubtitlePosition::High };
+        let small = TextStyle { size: SubtitleSize::Small, position: SubtitlePosition::Low, ..Default::default() };
+        let large = TextStyle { size: SubtitleSize::Large, position: SubtitlePosition::High, ..Default::default() };
         let mut s = Store::default();
         let g = s.begin_styled("f", vec![(0, TrackHeader::Text(TextDialect::Srt))], vec![], small);
         s.push_text(g, 0, 1000, 2000, "cue", 0);
@@ -1567,8 +1636,8 @@ mod tests {
     #[test]
     fn a_text_track_is_restyled_only_when_it_is_asked_for() {
         use crate::prefs::{SubtitlePosition, SubtitleSize};
-        let small = TextStyle { size: SubtitleSize::Small, position: SubtitlePosition::Low };
-        let large = TextStyle { size: SubtitleSize::Large, position: SubtitlePosition::Low };
+        let small = TextStyle { size: SubtitleSize::Small, position: SubtitlePosition::Low, ..Default::default() };
+        let large = TextStyle { size: SubtitleSize::Large, position: SubtitlePosition::Low, ..Default::default() };
         let mut s = Store::default();
         s.begin_styled(
             "f",

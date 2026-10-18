@@ -54,7 +54,7 @@ pub mod dv;
 /// Defined here, not in `plex`, because this module is the one that intersects it with the
 /// device's own table and `plex` sits above the platform layer; `plex` re-exports it
 /// (`plex::DP_AUDIO_CODECS`) for the profile string and route's plan.
-pub const DP_AUDIO_CODECS: &str = "aac,ac3,eac3,dts";
+pub const DP_AUDIO_CODECS: &str = "aac,ac3,eac3,dts,mp3";
 
 const CAPS_TABLE: &str = "/etc/umediaserver/device_codec_capability_config.json";
 
@@ -106,6 +106,13 @@ pub struct Caps {
     /// The AV1 row's (max width, max height, ceil max frame rate), MIN-merged across duplicate
     /// rows; 0 = not stated. Read only when `av1`.
     pub av1_row: (u32, u32, u32),
+    /// The table lists a VP8 decoder row, and its (width, height, ceil frame rate) bound: the
+    /// buffer feed's one other working video caps (libpf `CustomPipeline::getVideoCaps`).
+    pub vp8: bool,
+    pub vp8_row: (u32, u32, u32),
+    /// The buffer feed takes AC-4 (`"AC4"`). No table carries an AC-4 row, so this is a firmware
+    /// rule ([`ac4_for`]), set by [`probe`]; false in `assumed()` and in a bare [`parse`].
+    pub ac4: bool,
     /// The direct-playable AUDIO subset: [`DP_AUDIO_CODECS`] (what the pipeline decodes)
     /// intersected with the table's audio rows, in `DP_AUDIO_CODECS`'s own URL form/order.
     /// Normal routing reads this and the channel ceilings through `plex::is_dp_audio_track`,
@@ -131,6 +138,9 @@ impl Caps {
             vp9_bit_depth: 8,
             av1: false,
             av1_row: (0, 0, 0),
+            vp8: false,
+            vp8_row: (0, 0, 0),
+            ac4: false,
             audio: "aac,ac3,eac3".to_string(),
             audio_channels: Default::default(),
         }
@@ -259,6 +269,12 @@ fn parse(s: &str) -> Option<Caps> {
     let (mut hevc_wh, mut h264_wh, mut vp9_wh, mut av1_wh) =
         ((0u32, 0u32), (0u32, 0u32), (0u32, 0u32), (0u32, 0u32));
     let (mut hevc_fps, mut h264_fps, mut vp9_fps, mut av1_fps) = (0u32, 0u32, 0u32, 0u32);
+    // VP8: (present, (w, h, fps)), MIN-merged like the rest.
+    let mut vp8 = (false, (0u32, 0u32, 0u32));
+    let merge = |slot: &mut (bool, (u32, u32, u32)), w: u32, h: u32, f: u32| {
+        slot.0 = true;
+        slot.1 = (min_nz(slot.1 .0, w), min_nz(slot.1 .1, h), min_nz(slot.1 .2, f));
+    };
     for row in &t.video_codecs {
         let wh = (row.max_width, row.max_height);
         let fps = if row.max_frame_rate.is_finite() && row.max_frame_rate > 0.0 {
@@ -286,6 +302,7 @@ fn parse(s: &str) -> Option<Caps> {
                 vp9_wh = (min_nz(vp9_wh.0, wh.0), min_nz(vp9_wh.1, wh.1));
                 vp9_fps = min_nz(vp9_fps, fps);
             }
+            "vp8" => merge(&mut vp8, wh.0, wh.1, fps),
             "av1" => {
                 av1 = true;
                 av1_wh = (min_nz(av1_wh.0, wh.0), min_nz(av1_wh.1, wh.1));
@@ -313,6 +330,12 @@ fn parse(s: &str) -> Option<Caps> {
     // DP_AUDIO_CODECS ∩ the table, keeping DP_AUDIO_CODECS's order so the profile string stays
     // stable across firmwares that merely reorder their rows.
     let mut audio_channels = std::collections::BTreeMap::new();
+    // LG's `MPEG` audio row is its MPEG-1/2 audio decoder; the feed reaches it as `"MP3"` (the
+    // `mp2` layer is not taken through that name, measured), so it is read as `mp3`.
+    let canon = |name: &str| match canon(name).as_str() {
+        "mpeg" => "mp3".to_string(),
+        c => c.to_string(),
+    };
     for row in &t.audio_codecs {
         if row.channels > 0 {
             let codec = canon(&row.name);
@@ -347,9 +370,36 @@ fn parse(s: &str) -> Option<Caps> {
         vp9_bit_depth: 8,
         av1,
         av1_row: (av1_wh.0, av1_wh.1, av1_fps),
+        vp8: vp8.0,
+        vp8_row: vp8.1,
+        ac4: false,
         audio,
         audio_channels,
     })
+}
+
+/// Does webOS `major`'s buffer feed take AC-4? libpf there builds `audio/x-ac4` caps for `"AC4"`
+/// (`CustomPipeline::getAudioCaps`), and an LG C1 (webOS 6.4) played an ATSC 3.0 AC-4 track with
+/// it (2026-10-17). webOS 5 and older are not known to: false there.
+pub fn ac4_for(major: u32) -> bool {
+    major >= 6
+}
+
+/// Rows a table states that the set does not honour, removed from `c` for webOS `major`. One today:
+/// **DTS on webOS 5 and 6** (LG's 2020 and 2021 sets), which list a `DTS` row while a Load that
+/// declares `"DTS"` is refused before any picture with `type=18 num=601` (an LG C1, webOS 6.4,
+/// measured 2026-10-17). Without the row a DTS track takes the AC-3 transcode instead
+/// (`stream::AudioFeed::TranscodeAc3`), which that set plays. webOS 5 is LG's documented 2020
+/// removal and is not measured here.
+///
+/// A debug build started with the `keepdts` trigger keeps the row, to retry that Load by hand.
+fn drop_untrusted_rows(c: &mut Caps, major: u32) {
+    if sn_base::devtrig::flag("keepdts") {
+        return;
+    }
+    if (5..=6).contains(&major) && c.audio_channels.remove("dts").is_some() {
+        c.audio = c.audio.split(',').filter(|a| *a != "dts").collect::<Vec<_>>().join(",");
+    }
 }
 
 /// The VP9 bit depth to claim on a set running webOS `major` (0 = unknown). 10 on webOS 1 to 4, the
@@ -366,7 +416,7 @@ pub fn vp9_bit_depth_for(major: u32) -> u32 {
     }
 }
 
-/// Read the table once and log what was derived. Called at boot right after `webos::probe`,
+/// Read the table once and log what was derived. Called at boot by `webos::probe`, after it publishes the release,
 /// before anything can fail; safe when the file does not exist (older/odd firmware → assumed).
 pub fn probe() {
     let mut measured = false;
@@ -384,10 +434,14 @@ pub fn probe() {
                 } else {
                     String::new()
                 };
+                let other = |on: bool, name: &str, r: (u32, u32, u32)| if on { format!(" {name}={}x{}@{}", r.0, r.1, r.2) } else { String::new() };
+                let more = other(c.vp8, "vp8", c.vp8_row);
                 let mut c = c;
                 c.vp9_bit_depth = vp9_bit_depth_for(crate::tv::device::info().major);
+                drop_untrusted_rows(&mut c, crate::tv::device::info().major);
+                c.ac4 = ac4_for(crate::tv::device::info().major);
                 sn_base::eventlog::log(&format!(
-                    "devcaps: hevc={} {}x{} vp9={} av1={} audio={} rows: h264={}x{}@{} hevc={}x{}@{}{vp9_row}{av1_row} vp9bits={} (device table)",
+                    "devcaps: hevc={} {}x{} vp9={} av1={} audio={} rows: h264={}x{}@{} hevc={}x{}@{}{vp9_row}{av1_row}{more} vp9bits={} (device table)",
                     c.hevc,
                     c.hevc_max.0,
                     c.hevc_max.1,
@@ -420,6 +474,12 @@ pub fn probe() {
     };
     let _ = MEASURED.set(measured);
     let _ = CAPS.set(caps);
+}
+
+/// [`probe`] has run (whatever it found), for the boot-order test.
+#[cfg(test)]
+pub(crate) fn probed() -> bool {
+    MEASURED.get().is_some()
 }
 
 /// Whether [`caps`] reflects THIS set's table or the assumed profile — see [`MEASURED`].
@@ -536,9 +596,9 @@ mod tests {
         // a fractional cap is a CEILING the stream must fit under: 59.94 reads as 60, never 59
         let frac = parse(r#"{"videoCodecs":[{"name":"H.264","maxWidth":1920,"maxHeight":1088,"maxFrameRate":59.94}]}"#).unwrap();
         assert_eq!(frac.h264_row, (1920, 1088, 60));
-        // FLAC/MPEG are in the table but not in the pipeline's decode set; the subset keeps
-        // DP_AUDIO_CODECS's own order, not the table's.
-        assert_eq!(c.audio, "aac,ac3,eac3,dts");
+        // FLAC is in the table but not in the pipeline's decode set; MPEG reads as mp3, which the
+        // feed takes as "MP3". The subset keeps DP_AUDIO_CODECS's own order, not the table's.
+        assert_eq!(c.audio, "aac,ac3,eac3,dts,mp3");
     }
 
     #[test]
@@ -687,6 +747,59 @@ mod tests {
         assert!(c.hevc);
         assert_eq!(c.hevc_max, (3840, 2176));
         assert_eq!(c.audio, "aac,ac3,eac3");
+    }
+
+    /// **The DTS row is not believed on webOS 5 and 6.** The LG C1 (webOS 6.4) lists `DTS` with 6
+    /// channels, and a Load declaring `"DTS"` there is refused before any picture
+    /// (`type=18 num=601 Resource Allocation Error`, measured on the dev set 2026-10-17 with a
+    /// DTS 2.0 and a 5.1 file): LG's 2020 and 2021 sets dropped DTS decoding and kept the row.
+    /// Without the row, DTS takes the CPU transcode to AC-3, which plays on that set.
+    #[test]
+    fn webos_5_and_6_drop_the_dts_row() {
+        let mut c = Caps::assumed();
+        c.audio = "aac,ac3,eac3,dts".into();
+        c.audio_channels.insert("dts".into(), 6);
+        let mut c6 = c.clone();
+        drop_untrusted_rows(&mut c6, 6);
+        assert_eq!(c6.audio, "aac,ac3,eac3");
+        assert!(!c6.audio_supports("dts", 6));
+        let mut c5 = c.clone();
+        drop_untrusted_rows(&mut c5, 5);
+        assert!(!c5.audio_supports("dts", 2));
+        for major in [0, 4, 7, 10] {
+            let mut k = c.clone();
+            drop_untrusted_rows(&mut k, major);
+            assert!(k.audio_supports("dts", 6), "webOS {major} keeps its table's DTS row");
+        }
+    }
+
+    /// An LG C1's table (webOS 6.4, board O20), its rows verbatim, license blurb dropped. Beside
+    /// AV1 and VP9 it lists VP8, read with its own bound (a 1080p30 decoder), and `WMV`, `MPEG4`,
+    /// `XviD`, ... rows the buffer feed cannot reach, which are read as nothing.
+    #[test]
+    fn an_lg_c1_table_reads_av1_vp9_and_vp8() {
+        let row = |n: &str, w: u32, h: u32, f: u32| format!(r#"{{"name":"{n}","maxWidth":{w},"maxHeight":{h},"maxFrameRate":{f},"maxBitRate":40}}"#);
+        let mut video = vec![row("H.264", 4096, 2304, 60), row("H.265", 4096, 2304, 120), row("HEVC", 4096, 2176, 60)];
+        for n in ["DivX", "XviD", "H.263", "MPEG1", "MPEG2", "MPEG4", "MP4S", "MPS2", "MP43", "MJPEG", "RV30", "RV40", "WMV", "VP8", "AVS"] {
+            video.push(row(n, 1920, 1088, 30));
+        }
+        video.push(row("VP9", 4096, 2304, 60));
+        video.push(row("AV1", 4096, 2304, 60));
+        let audio = [("MPEG", 2), ("AAC", 6), ("WMA", 6), ("PCM", 2), ("AC3", 6), ("EAC3", 8), ("DTS", 6), ("FLAC", 6), ("OPUS", 6)]
+            .map(|(n, c)| format!(r#"{{"name":"{n}","channels":{c}}}"#));
+        let table = format!(r#"{{"version":"1.0","videoCodecs":[{}],"audioCodecs":[{}]}}"#, video.join(","), audio.join(","));
+        let c = parse(&table).expect("the C1 table parses");
+        assert!(c.av1 && c.vp9 && c.vp8);
+        assert_eq!(c.av1_row, (4096, 2304, 60));
+        assert_eq!(c.vp8_row, (1920, 1088, 30));
+        assert_eq!(c.hevc_row, (4096, 2176, 60));
+        assert_eq!(c.audio, "aac,ac3,eac3,dts,mp3", "the MPEG audio row reads as mp3");
+        assert!(c.audio_supports("dts", 6) && !c.audio_supports("dts", 8));
+        assert!(c.audio_supports("mp3", 2) && !c.audio_supports("mp3", 6));
+        assert!(!c.ac4, "the table has no AC-4 row; the firmware rule sets it");
+        assert!(ac4_for(6) && ac4_for(10) && !ac4_for(5) && !ac4_for(0));
+        let a = Caps::assumed();
+        assert!(!a.vp8, "an unread table claims no VP8");
     }
 
     /// An AV1 row is a capability bit with its own bound, and it does not move the shared

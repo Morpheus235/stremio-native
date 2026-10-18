@@ -7,7 +7,7 @@
 //! mirror the maths `player_hud::caption_geometry`/`caption_layout` use, kept with hard-coded
 //! constants so a tie test in appkit can pin that the two cannot drift apart.
 
-use crate::prefs::{SubtitlePosition, SubtitleSize};
+use crate::prefs::{SubtitleBackground, SubtitleColor, SubtitleOpacity, SubtitleOutline, SubtitlePosition, SubtitleSize};
 
 /// The logical canvas a text-origin subtitle frame is rendered into (`PlayResX/Y` of the header).
 /// `sn_base::surface::LOGICAL_*` is the one definition of the canvas; they are whole numbers.
@@ -144,33 +144,88 @@ pub fn line_spacing(scale: f32) -> f64 {
     CAPTION_LINE_PITCH as f64 * scale as f64 - font_size(scale)
 }
 
-/// The two viewer picks the synthesized header is a function of.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The viewer picks the synthesized header is a function of: size and position, and the look
+/// (colour, box, outline, opacity).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct TextStyle {
     pub size: SubtitleSize,
     pub position: SubtitlePosition,
-}
-
-impl Default for TextStyle {
-    fn default() -> Self {
-        Self { size: SubtitleSize::Medium, position: SubtitlePosition::Low }
-    }
+    pub color: SubtitleColor,
+    pub background: SubtitleBackground,
+    pub outline: SubtitleOutline,
+    pub opacity: SubtitleOpacity,
 }
 
 impl TextStyle {
     /// The picks as the preferences hold them now.
     pub fn current() -> Self {
-        Self { size: crate::prefs::subtitle_size(), position: crate::prefs::subtitle_position() }
+        Self {
+            size: crate::prefs::subtitle_size(),
+            position: crate::prefs::subtitle_position(),
+            color: crate::prefs::subtitle_color(),
+            background: crate::prefs::subtitle_background(),
+            outline: crate::prefs::subtitle_outline(),
+            opacity: crate::prefs::subtitle_opacity(),
+        }
     }
 
     pub fn scale(&self) -> f32 {
         size_scale(self.size)
     }
 
-    /// A number that differs for every distinct pair of picks, so a stored copy is stale exactly
-    /// when the header it was built for no longer matches.
+    /// A number that differs for every distinct set of picks (mixed radix over the ladders), so a
+    /// stored copy is stale exactly when the header it was built for no longer matches.
     pub fn generation(&self) -> u32 {
-        self.size.index() as u32 * SubtitlePosition::LADDER.len() as u32 + self.position.index() as u32
+        let digits = [
+            (self.size.index(), SubtitleSize::LADDER.len()),
+            (self.position.index(), SubtitlePosition::LADDER.len()),
+            (self.color.index(), SubtitleColor::LADDER.len()),
+            (self.background.index(), SubtitleBackground::LADDER.len()),
+            (self.outline.index(), SubtitleOutline::LADDER.len()),
+            (self.opacity.index(), SubtitleOpacity::LADDER.len()),
+        ];
+        digits.iter().fold(0u32, |g, &(d, n)| g * n as u32 + u32::from(d))
+    }
+
+    /// The ASS `&HAABBGGRR` colours of the synthesized styles: (PrimaryColour, OutlineColour,
+    /// BackColour). Opacity scales every alpha; the default picks give the historical
+    /// `&H00FFFFFF`, `&H26000000`, `&HFF000000`.
+    pub fn ass_colours(&self) -> (String, String, String) {
+        let fill = match self.color {
+            SubtitleColor::White => 0xFF_FF_FF,
+            SubtitleColor::Yellow => 0x00_FF_FF, // BGR
+            SubtitleColor::Cyan => 0xFF_FF_00,
+            SubtitleColor::Green => 0x00_FF_00,
+            SubtitleColor::Grey => 0xB4_B4_B4,
+        };
+        let edge = match self.outline {
+            SubtitleOutline::Black => 0x00_00_00,
+            SubtitleOutline::Grey => 0x44_44_44,
+            SubtitleOutline::White => 0xFF_FF_FF,
+        };
+        // each layer's own opacity out of 255, before the viewer's: the outline's historical
+        // 0x26 alpha is 217
+        let back: u32 = match self.background {
+            SubtitleBackground::None => 0,
+            SubtitleBackground::Black50 => 128,
+            SubtitleBackground::Black75 => 191,
+            SubtitleBackground::Black => 255,
+        };
+        let pct = u32::from(self.opacity.percent());
+        // ASS alpha: 0 opaque, 255 clear
+        let alpha = |opaque: u32| 255 - (opaque * pct + 50) / 100;
+        let ass = |a: u32, bgr: u32| format!("&H{a:02X}{bgr:06X}");
+        (ass(alpha(255), fill), ass(alpha(217), edge), ass(alpha(back), 0))
+    }
+
+    /// The `BorderStyle` and `Shadow` of the synthesized styles: an outline and no shadow, or with
+    /// a box, libass's BorderStyle 4 (a BackColour box behind each event, the outline kept) whose
+    /// `Shadow` is the box's padding, a fifth of the face.
+    pub fn border(&self) -> (u8, f64) {
+        match self.background {
+            SubtitleBackground::None => (1, 0.0),
+            _ => (4, (CAPTION_FACE * self.scale() * 0.2).round() as f64),
+        }
     }
 }
 
@@ -356,14 +411,43 @@ mod tests {
     }
 
     #[test]
+    fn the_default_look_is_the_historical_header_and_the_picks_reach_the_colours() {
+        let d = TextStyle::default();
+        assert_eq!(d.ass_colours(), ("&H00FFFFFF".into(), "&H26000000".into(), "&HFF000000".into()));
+        assert_eq!(d.border(), (1, 0.0));
+        let s = TextStyle {
+            color: SubtitleColor::Yellow,
+            background: SubtitleBackground::Black75,
+            outline: SubtitleOutline::White,
+            opacity: SubtitleOpacity::P50,
+            ..d
+        };
+        // half of opaque yellow is alpha 0x7F; the outline and the box are halved the same way
+        assert_eq!(s.ass_colours(), ("&H7F00FFFF".into(), "&H92FFFFFF".into(), "&H9F000000".into()));
+        assert_eq!(s.border(), (4, 7.0));
+        let boxed = TextStyle { background: SubtitleBackground::Black, ..d };
+        assert_eq!(boxed.ass_colours().2, "&H00000000");
+    }
+
+    #[test]
     fn generation_tells_every_pair_apart() {
         let mut seen = std::collections::BTreeSet::new();
         for size in SubtitleSize::LADDER {
             for position in SubtitlePosition::LADDER {
-                assert!(seen.insert(TextStyle { size, position }.generation()), "{size:?} {position:?}");
+                for color in SubtitleColor::LADDER {
+                    for background in SubtitleBackground::LADDER {
+                        for outline in SubtitleOutline::LADDER {
+                            for opacity in SubtitleOpacity::LADDER {
+                                let s = TextStyle { size, position, color, background, outline, opacity };
+                                assert!(seen.insert(s.generation()), "{s:?}");
+                            }
+                        }
+                    }
+                }
             }
         }
-        assert_eq!(seen.len(), 15);
-        assert_eq!(TextStyle::default().generation(), TextStyle { size: SubtitleSize::Medium, position: SubtitlePosition::Low }.generation());
+        assert_eq!(seen.len(), 5 * 3 * 5 * 4 * 3 * 3);
+        assert_eq!(TextStyle::default().size, SubtitleSize::Medium);
+        assert_eq!(TextStyle::default().position, SubtitlePosition::Low);
     }
 }

@@ -203,7 +203,12 @@ fn read_locale(root: &Path, locale: &str) -> Result<BTreeMap<String, Value>, Str
     }
     Ok(all)
 }
-pub fn compile(catalogs: &[BTreeMap<String, Value>; 4]) -> Result<String, String> {
+/// A translation's text: the bare value, or a `{"value": …}` entry that carries its own context
+/// (the Italian catalog keeps the English file's shape).
+fn translation(v: &Value) -> &Value {
+    v.get("value").unwrap_or(v)
+}
+pub fn compile(catalogs: &[BTreeMap<String, Value>; 5]) -> Result<String, String> {
     let keys: BTreeSet<_> = catalogs[0].keys().collect();
     for (i, c) in catalogs.iter().enumerate() {
         if c.keys().collect::<BTreeSet<_>>() != keys {
@@ -263,9 +268,10 @@ pub fn compile(catalogs: &[BTreeMap<String, Value>; 4]) -> Result<String, String
                     .get("value")
                     .ok_or_else(|| format!("{key}: missing value"))?,
             )?,
-            forms(&catalogs[1][key])?,
-            forms(&catalogs[2][key])?,
-            forms(&catalogs[3][key])?,
+            forms(translation(&catalogs[1][key]))?,
+            forms(translation(&catalogs[2][key]))?,
+            forms(translation(&catalogs[3][key]))?,
+            forms(translation(&catalogs[4][key]))?,
         ];
         let plural = !values[0].contains_key("");
         if plural && args.get("count").map(String::as_str) != Some("i64") {
@@ -282,6 +288,7 @@ pub fn compile(catalogs: &[BTreeMap<String, Value>; 4]) -> Result<String, String
                     vec!["one", "many", "other"],
                     vec!["one", "few", "many", "other"],
                     vec!["one", "many", "other"],
+                    vec!["one", "other"],
                 ][i]
                     .iter()
                 {
@@ -325,8 +332,8 @@ pub fn compile(catalogs: &[BTreeMap<String, Value>; 4]) -> Result<String, String
             params.trim_start_matches(", ")
         ));
         out.push_str(&format!("pub fn {name}_in(cx: &LocaleContext{params}) -> {result} {{ match cx.language() {{\n"));
-        for (i, lang) in ["En", "Es", "Be", "Fr", "Pseudo"].iter().enumerate() {
-            let vals = if i == 4 {
+        for (i, lang) in ["En", "Es", "Be", "Fr", "It", "Pseudo"].iter().enumerate() {
+            let vals = if i == 5 {
                 values[0]
                     .iter()
                     .map(|(k, v)| (k.clone(), pseudo(v)))
@@ -375,8 +382,8 @@ pub fn compile(catalogs: &[BTreeMap<String, Value>; 4]) -> Result<String, String
         out.push_str("} }\n");
         if args.is_empty() {
             out.push_str(&format!("pub fn {name}_c() -> &'static std::ffi::CStr {{ {name}_c_in(super::current()) }}\npub fn {name}_c_in(cx: &LocaleContext) -> &'static std::ffi::CStr {{ match cx.language() {{\n"));
-            for (i, lang) in ["En", "Es", "Be", "Fr", "Pseudo"].iter().enumerate() {
-                let v = if i == 4 {
+            for (i, lang) in ["En", "Es", "Be", "Fr", "It", "Pseudo"].iter().enumerate() {
+                let v = if i == 5 {
                     pseudo(&values[0][""])
                 } else {
                     values[i][""].clone()
@@ -406,13 +413,14 @@ pub fn build(root: &Path, out: &Path) -> Result<(), String> {
         read_locale(root, "es")?,
         read_locale(root, "be")?,
         read_locale(root, "fr")?,
+        read_locale(root, "it")?,
     ];
     std::fs::write(out.join("messages.rs"), compile(&catalogs)?).map_err(|e| e.to_string())
 }
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn catalogs() -> [BTreeMap<String, Value>; 4] {
+    fn catalogs() -> [BTreeMap<String, Value>; 5] {
         [
             BTreeMap::from([(
                 "test.label".into(),
@@ -421,6 +429,7 @@ mod tests {
             BTreeMap::from([("test.label".into(), serde_json::json!("Hola {name}"))]),
             BTreeMap::from([("test.label".into(), serde_json::json!("Вітаем, {name}"))]),
             BTreeMap::from([("test.label".into(), serde_json::json!("Bonjour {name}"))]),
+            BTreeMap::from([("test.label".into(), serde_json::json!("Ciao {name}"))]),
         ]
     }
     #[test]
@@ -479,6 +488,7 @@ mod tests {
             "test.label".into(),
             serde_json::json!({"one":"{count}","many":"{count}","other":"{count}"}),
         );
+        cs[4].insert("test.label".into(), serde_json::json!({"one":"{count}","other":"{count}"}));
         assert!(compile(&cs).is_ok());
         cs[2]
             .get_mut("test.label")

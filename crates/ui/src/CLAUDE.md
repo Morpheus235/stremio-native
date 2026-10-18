@@ -26,7 +26,7 @@ kill. Full design + migration status: `docs/ui-system-migration.md`.
    what is this colour *for*) and it resolves to a **primitive** (a stop on the palette, private to
    that module) — reach for an existing stop first, and only add one when the palette genuinely has
    no such shade, as an exact 8-bit code via `rgb8`. Two roles landing on one stop is expected and
-   stays two roles (`ACCENT` and `TEXT_PRIMARY` are both Cool 0): retuning the focus fill must not
+   stays two roles (`TILE_MARK_INK` and `TEXT_PRIMARY` are both Cool 0): retuning the watched tick must not
    restyle every title on screen. Overlays are `with_a(WHITE, a)` on the measured alpha ramp — a new
    overlay is a weight, never a new hue. The layering mirrors the `StremioNative Design System` project
    (`tokens/primitives.css` + `tokens/colors.css`), so a palette decision is one edit in each.
@@ -176,7 +176,7 @@ on the QR allocation.
 
 **Text fit is a rule about who owns the text, and it is tested, not eyeballed.** App-owned text
 (`i18n::msg`, `plex::languages` names, `Quality::label`) never elides in any shipped language
-(`i18n::SHIPPED`: en, es, be, fr) at the shipped sizes; server- and user-owned text (machine names,
+(`i18n::SHIPPED`: en, es, be, fr, it) at the shipped sizes; server- and user-owned text (machine names,
 handles, profile names, titles) may. `ui::table` types that at the call site with
 `Origin { App, Server }` per text slot, defaulting to App; `Row::server_label`/`server_detail`/
 `server_value` and `Section::server_header`/`server_accessory` mark a slot Server. There is no
@@ -389,9 +389,12 @@ presentation in a design pass.
 
 5. **Read the DS contract before inventing a control state.** Focus, hover and selected treatments
    come from the component's `.d.ts` in the design system, not from a lane's judgement. The Search
-   field is the standing example: its focus is carried by INK ALONE — no capsule, rim, rule, plate
-   or focus pop — and an accent underline was rejected on sight. A punch-list line like "make focus
-   more visible" is satisfied WITHIN the contract (widen the ink step), never with a new primitive.
+   field was the standing example (focus by ink alone, an accent underline rejected on sight) until
+   the owner reversed it on 2026-10-17 ("Search Input is badly visible during highlight"): it is now
+   a film-grounded capsule with a quiet rim at rest and the accent rim, halo and a slight grow on
+   focus (`theme::SEARCH_FIELD_*`, `screens::search::Page::draw_field`) — still never a white
+   plate. A punch-list line like "make focus more visible" is otherwise satisfied WITHIN the
+   contract (widen the ink step), never with a new primitive.
 
 ## The route family says where BACK goes ONCE, as a crumb
 

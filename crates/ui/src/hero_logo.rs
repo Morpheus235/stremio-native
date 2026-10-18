@@ -153,7 +153,15 @@ pub struct HeroLogo<'a> {
     title: &'a str,
     rung: LogoRung,
     align: HAlign,
+    /// `rk` is the logo IMAGE's own URL (an addon's `logo`), resolved through the art source like
+    /// any other picture, rather than a key the source's clearLogo store looks up.
+    by_url: bool,
 }
+
+/// The box a [`HeroLogo::url`] logo is decoded to cover: a 5:1 wordmark lands at exactly its
+/// drawn hero size, and even a square emblem stays a bounded ~1.4 MB texture, never the asset's
+/// full size.
+pub const URL_DECODE: (c_int, c_int) = (600, 120);
 
 impl<'a> HeroLogo<'a> {
     /// `rk` is the ratingKey whose clearLogo to draw — for an episode hero that is the SHOW's
@@ -166,6 +174,29 @@ impl<'a> HeroLogo<'a> {
             title,
             rung,
             align: HAlign::Left,
+            by_url: false,
+        }
+    }
+
+    /// A logo that is an image URL (`url`, an addon meta's `logo`) on server `sid`, decoded at
+    /// [`URL_DECODE`]; `title` is drawn while it is on its way and if it never comes.
+    pub fn url(sid: u16, url: &'a str, title: &'a str, rung: LogoRung) -> Self {
+        Self { by_url: true, ..Self::new(sid, url, title, rung) }
+    }
+
+    fn texture(&self) -> Option<(u32, f32, f32)> {
+        if !self.by_url {
+            return crate::tex::logo_src(self.sid, self.rk);
+        }
+        let (tex, w, h) = crate::tex::resolve_wh_on(self.sid, self.rk, URL_DECODE.0, URL_DECODE.1, true);
+        (tex != 0 && w > 0.0 && h > 0.0).then_some((tex, w, h))
+    }
+
+    fn failed(&self) -> bool {
+        if self.by_url {
+            crate::tex::failed_on(self.sid, self.rk, URL_DECODE.0, URL_DECODE.1, true)
+        } else {
+            crate::tex::logo_failed(self.sid, self.rk)
         }
     }
     /// Horizontal placement inside the band — the logo art and the text fallback share it, so the
@@ -190,7 +221,7 @@ impl<'a> HeroLogo<'a> {
         // The hero draws the item the shelf under it has focused, and that shelf is the server
         // being browsed — so its clearLogo is asked of the current server. An item that came from
         // somewhere else (a merged Continue Watching row) names its own, once items carry one.
-        if let Some((tex, sw, sh)) = crate::tex::logo_src(self.sid, self.rk) {
+        if let Some((tex, sw, sh)) = self.texture() {
             let (w, h) = fit(self.rung, sw, sh, band.w);
             // NOT pixel-snapped: a logo is SCALED content, and the crispness contract snaps
             // 1:1-texel content only (see the note above `theme.rs`'s size ladder).
@@ -214,7 +245,7 @@ impl<'a> HeroLogo<'a> {
         // when nothing can see them, neither call records and both draw TEXT_PRIMARY, so skip it.
         let (p, ink) = if self.rk.is_empty() || !crate::placeholder::accounting_visible() {
             (p, theme::TEXT_PRIMARY)
-        } else if crate::tex::logo_failed(self.sid, self.rk) {
+        } else if self.failed() {
             crate::placeholder::note_absent(p, crate::placeholder::Reason::HeroLogoAbsent, self.rk);
             (p, theme::TEXT_PRIMARY)
         } else {

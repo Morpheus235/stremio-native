@@ -1,0 +1,30 @@
+{
+ "meta": {
+  "id": "kitsu:50404",
+  "type": "series",
+  "name": "Yasei no Last Boss ga Arawareta! 2nd Season",
+  "imdb_id": "tt33258199",
+  "videos": [
+   {
+    "id": "kitsu:50404:1",
+    "title": "Episode 1",
+    "season": 1,
+    "episode": 1,
+    "released": "2026-09-26T00:00:00.000Z",
+    "imdb_id": "tt33258199",
+    "imdbSeason": 2,
+    "imdbEpisode": 1
+   },
+   {
+    "id": "kitsu:50404:2",
+    "title": "Episode 2",
+    "season": 1,
+    "episode": 2,
+    "released": "2026-09-26T00:00:00.000Z",
+    "imdb_id": "tt33258199",
+    "imdbSeason": 2,
+    "imdbEpisode": 2
+   }
+  ]
+ }
+}

@@ -15,6 +15,8 @@
 //!
 //! **Search's per-addon switch** (`sn_stremio::search::AddonFilter`) lives here too: the Addons
 //! page toggles it, the search fan-out reads it, and it is persisted ([`AddonsJob::WriteFilter`]).
+//! So is the Streams page's (its addon dropdown: [`AddonsStore::stream_filter`], an addon switched
+//! off is not asked for streams; [`AddonsJob::WriteStreamFilter`]), on the device only.
 //!
 //! The accessor every screen and the application read is [`AddonsStore::in_use`]; the ready
 //! manifests of whatever is in use are the catalog store's `addons()` (`registry::Views::addons`).
@@ -59,6 +61,9 @@ pub enum AddonsJob {
     DropCache { user_id: String },
     ReadFilter,
     WriteFilter(AddonFilter),
+    /// The Streams page's per-addon switch, kept on the device.
+    ReadStreamFilter,
+    WriteStreamFilter(AddonFilter),
 }
 
 #[derive(Clone, Debug)]
@@ -66,6 +71,7 @@ pub enum AddonsLanding {
     CacheRead { user_id: String, addons: Option<Vec<Addon>> },
     Fetched { user_id: String, result: Result<(Vec<Addon>, Vec<u8>), ApiError> },
     FilterRead(AddonFilter),
+    StreamFilterRead(AddonFilter),
 }
 
 pub struct AddonsStore {
@@ -74,6 +80,8 @@ pub struct AddonsStore {
     /// The account the collection belongs to; `None` signed out.
     user: Option<(String, Secret)>,
     filter: AddonFilter,
+    /// The addons switched off for stream queries (the Streams page's chips, held).
+    streams: AddonFilter,
     gen: u32,
     /// Moves only when [`Self::in_use`] changes (what the catalog store is rebuilt on).
     epoch: u32,
@@ -87,12 +95,12 @@ impl Default for AddonsStore {
 
 impl AddonsStore {
     pub fn new() -> Self {
-        AddonsStore { collection: Collection::Defaults, refresh: Refresh::Idle, user: None, filter: AddonFilter::default(), gen: 0, epoch: 0 }
+        AddonsStore { collection: Collection::Defaults, refresh: Refresh::Idle, user: None, filter: AddonFilter::default(), streams: AddonFilter::default(), gen: 0, epoch: 0 }
     }
 
-    /// The boot's jobs: the persisted search switches.
+    /// The boot's jobs: the persisted search and stream switches.
     pub fn boot(&mut self) -> Vec<AddonsJob> {
-        vec![AddonsJob::ReadFilter]
+        vec![AddonsJob::ReadFilter, AddonsJob::ReadStreamFilter]
     }
 
     pub fn gen(&self) -> u32 {
@@ -133,6 +141,18 @@ impl AddonsStore {
     /// Search's per-addon switches.
     pub fn filter(&self) -> &AddonFilter {
         &self.filter
+    }
+
+    /// The addons a stream list asks (an addon switched off on the Streams page is not).
+    pub fn stream_filter(&self) -> &AddonFilter {
+        &self.streams
+    }
+
+    /// Switch `addon_id` off for stream queries, or back on (a stream list's addon dropdown).
+    pub fn toggle_streams(&mut self, addon_id: &str) -> Vec<AddonsJob> {
+        self.streams.toggle(addon_id);
+        self.changed(false);
+        vec![AddonsJob::WriteStreamFilter(self.streams.clone())]
     }
 
     /// Is `addon_id` asked by a search?
@@ -212,7 +232,7 @@ impl AddonsStore {
                         vec![AddonsJob::WriteCache { user_id, bytes }]
                     }
                     Err(e) => {
-                        self.refresh = Refresh::Failed(e.to_string());
+                        self.refresh = Refresh::Failed(super::api_reason(&e));
                         self.changed(false);
                         Vec::new()
                     }
@@ -221,6 +241,13 @@ impl AddonsStore {
             AddonsLanding::FilterRead(filter) => {
                 if filter != self.filter {
                     self.filter = filter;
+                    self.changed(false);
+                }
+                Vec::new()
+            }
+            AddonsLanding::StreamFilterRead(filter) => {
+                if filter != self.streams {
+                    self.streams = filter;
                     self.changed(false);
                 }
                 Vec::new()
@@ -332,5 +359,22 @@ pub(crate) mod tests {
         let mut restored = AddonsStore::new();
         restored.land(AddonsLanding::FilterRead(s.filter().clone()));
         assert!(!restored.searched("com.linvo.cinemeta"));
+    }
+
+    /// The Streams page's per-addon switch (a long-press on its chip) is its own, per addon id,
+    /// persisted on the device (never the account), and apart from search's.
+    #[test]
+    fn the_stream_switch_is_per_addon_persisted_and_apart_from_search() {
+        let mut s = AddonsStore::new();
+        assert!(s.boot().iter().any(|j| matches!(j, AddonsJob::ReadStreamFilter)), "read at boot");
+        let jobs = s.toggle_streams("org.example.torrent");
+        assert!(!s.stream_filter().allows("org.example.torrent") && s.stream_filter().allows("org.example.other"));
+        assert!(s.searched("org.example.torrent"), "search is not affected");
+        assert!(matches!(&jobs[..], [AddonsJob::WriteStreamFilter(f)] if !f.allows("org.example.torrent")));
+        let mut restored = AddonsStore::new();
+        restored.land(AddonsLanding::StreamFilterRead(s.stream_filter().clone()));
+        assert!(!restored.stream_filter().allows("org.example.torrent"), "survives a restart");
+        let jobs = restored.toggle_streams("org.example.torrent");
+        assert!(restored.stream_filter().allows("org.example.torrent") && matches!(&jobs[..], [AddonsJob::WriteStreamFilter(_)]));
     }
 }

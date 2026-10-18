@@ -564,8 +564,10 @@ fn every_fed_codec_has_a_framing_and_nothing_else_does() {
     assert_eq!(VideoFraming::of_codec_id(AV_CODEC_ID_HEVC), Some(VideoFraming::AnnexB { hevc: true }));
     assert_eq!(VideoFraming::of_codec_id(AV_CODEC_ID_AV1), Some(VideoFraming::Av1));
     assert_eq!(VideoFraming::of_codec_id(AV_CODEC_ID_VP9), Some(VideoFraming::Vp9));
-    // any other id (0 = none, 139 = VP8, 2 = MPEG-2, 0x15002 = AAC) is refused, never Annex-B
-    for id in [0, 2, 139, 1, 0x15002, -1] {
+    assert_eq!(VideoFraming::of_codec_id(AV_CODEC_ID_VP8), Some(VideoFraming::Vp8));
+    // any other id (0 = none, 2 = MPEG-2, 12 = MPEG-4 Part 2, 70 = VC-1, 71 = WMV3, 0x15002 =
+    // AAC) is refused, never Annex-B: the buffer feed takes none of them
+    for id in [0, 2, 12, 70, 71, 1, 0x15002, -1] {
         assert_eq!(VideoFraming::of_codec_id(id), None, "{id}");
     }
 }
@@ -581,6 +583,7 @@ fn a_framing_names_the_load_declaration_it_goes_with() {
         (AV_CODEC_ID_HEVC, LoadVideo::H265),
         (AV_CODEC_ID_AV1, LoadVideo::Av1),
         (AV_CODEC_ID_VP9, LoadVideo::Vp9),
+        (AV_CODEC_ID_VP8, LoadVideo::Vp8),
     ] {
         let f = VideoFraming::of_codec_id(id).unwrap();
         assert_eq!(f.load_video(), lv, "{id}");
@@ -590,7 +593,121 @@ fn a_framing_names_the_load_declaration_it_goes_with() {
             LoadVideo::H265 => "hevc",
             LoadVideo::Av1 => "av1",
             LoadVideo::Vp9 => "vp9",
+            LoadVideo::Vp8 => "vp8",
         };
         assert_eq!(LoadVideo::of_stream(spelling), Some(lv));
     }
+}
+
+// -- strip_dv_nals: Dolby Vision Profile 7 played as its HDR10 base layer -------------------
+//
+// HEVC NAL header byte 0 is `type << 1`: 62 (RPU) is 0x7C, 63 (enhancement layer) 0x7E. A
+// single-track Profile 7 access unit is the base layer's units, then the EL's (each NAL 63,
+// wrapping a whole EL NAL inside), then the RPU. No genuine Profile 7 stream is available on
+// this host, so the units here are synthetic in their payloads and real in their framing.
+
+const AUD: &[u8] = &[0x46, 0x01, 0x50];
+const IDR: &[u8] = &[0x26, 0x01, 0xAF, 0x00, 0x11]; // type 19 IDR_W_RADL
+const TRAIL: &[u8] = &[0x02, 0x01, 0xD0, 0x00]; // type 1
+const EL: &[u8] = &[0x7E, 0x01, 0x40, 0x01, 0x0C]; // type 63
+const RPU: &[u8] = &[0x7C, 0x01, 0x19, 0x08, 0x09, 0x80]; // type 62
+
+#[test]
+fn length_prefixed_p7_keeps_the_base_layer_byte_exact_and_its_keyframe() {
+    let param = [0u8, 0, 0, 1, 0x40, 0x01, 0x0C, 0, 0, 0, 1, 0x42, 0x01];
+    let (key, mut out) = to_annexb(&avcc(&[AUD, IDR, EL, EL, RPU]), true, &param);
+    assert!(key, "the IDR still makes it a keyframe");
+    assert_eq!(strip_dv_nals(&mut out), 3);
+    let (_, base_only) = to_annexb(&avcc(&[AUD, IDR]), true, &param);
+    assert_eq!(out, base_only, "exactly the AU the base layer alone would have been");
+    // a non-key AU, and one with nothing to strip
+    let (key, mut out) = to_annexb(&avcc(&[TRAIL, RPU, EL]), true, &[]);
+    assert!(!key);
+    assert_eq!(strip_dv_nals(&mut out), 2);
+    assert_eq!(out, to_annexb(&avcc(&[TRAIL]), true, &[]).1);
+    let (_, mut plain) = to_annexb(&avcc(&[AUD, TRAIL]), true, &[]);
+    let before = plain.clone();
+    assert_eq!(strip_dv_nals(&mut plain), 0);
+    assert_eq!(plain, before);
+}
+
+#[test]
+fn annexb_p7_keeps_each_kept_units_own_start_code() {
+    let sc4 = |n: &[u8]| [&[0u8, 0, 0, 1][..], n].concat();
+    let sc3 = |n: &[u8]| [&[0u8, 0, 1][..], n].concat();
+    let au = [sc4(AUD), sc3(IDR), sc4(EL), sc3(RPU), sc3(TRAIL)].concat();
+    let mut out = au.clone();
+    assert_eq!(strip_dv_nals(&mut out), 2);
+    assert_eq!(out, [sc4(AUD), sc3(IDR), sc3(TRAIL)].concat());
+    // the keyframe scan over the Annex-B input is unchanged by what follows it
+    let mut v = Vec::new();
+    assert!(unsafe { packet_to_annexb(au.as_ptr(), au.len(), 0, true, &[], &mut v) });
+    assert_eq!(v, au, "Annex-B in is passed through whole before stripping");
+}
+
+#[test]
+fn an_au_of_only_dolby_vision_units_strips_to_nothing() {
+    let (_, mut out) = to_annexb(&avcc(&[RPU]), true, &[]);
+    assert_eq!(strip_dv_nals(&mut out), 1);
+    assert!(out.is_empty());
+    let (_, mut out) = to_annexb(&avcc(&[EL, RPU]), true, &[]);
+    assert_eq!(strip_dv_nals(&mut out), 2);
+    assert!(out.is_empty());
+    let mut empty = Vec::new();
+    assert_eq!(strip_dv_nals(&mut empty), 0);
+}
+
+/// **The feed, Profile 7 → 8.1**: a length-prefixed (Matroska/MP4) single-track Profile 7 packet
+/// — base layer, EL units, a real FEL RPU from dovi_tool's test assets — framed by
+/// `packet_to_annexb` and rewritten by the demux loop's `dovi::P81Feed` is exactly the Annex-B AU
+/// of a Profile 8.1 packet carrying dovi_tool's `convert --mode 2` RPU. The keyframe survives.
+#[test]
+fn length_prefixed_p7_becomes_the_p8_1_access_unit() {
+    let rpu7 = [&[0x7C, 0x01][..], &include_bytes!("../../../tests/fixtures/dovi/fel_orig.bin")[4..]].concat();
+    let rpu81 = [&[0x7C, 0x01][..], &include_bytes!("../../../tests/fixtures/dovi/fel_orig.to81.bin")[4..]].concat();
+    let param = [0u8, 0, 0, 1, 0x40, 0x01, 0x0C, 0, 0, 0, 1, 0x42, 0x01];
+    let mut feed = crate::dovi::P81Feed::default();
+    let (key, mut out) = to_annexb(&avcc(&[AUD, IDR, EL, EL, &rpu7]), true, &param);
+    assert!(key);
+    let rep = feed.rewrite(&mut out, true);
+    assert_eq!((rep.dropped, rep.converted, rep.newly_seen), (2, 1, Some(crate::dovi::ElType::Fel)));
+    assert_eq!(out, to_annexb(&avcc(&[AUD, IDR, &rpu81]), true, &param).1);
+    // a later non-key AU
+    let (_, mut out) = to_annexb(&avcc(&[TRAIL, EL, &rpu7]), true, &[]);
+    feed.rewrite(&mut out, true);
+    assert_eq!(out, to_annexb(&avcc(&[TRAIL, &rpu81]), true, &[]).1);
+    assert_eq!((feed.converted, feed.el_dropped, feed.failed), (2, 3, 0));
+}
+
+// ---- VP8 ---------------------------------------------------------------------------------
+
+/// VP8 frames as they came, declared `VP8` (libpf `findVideoCodecType` 0xd00).
+#[test]
+fn vp8_has_a_framing_and_a_load_name() {
+    assert_eq!(VideoFraming::of_codec_id(AV_CODEC_ID_VP8), Some(VideoFraming::Vp8));
+    assert_eq!(VideoFraming::Vp8.load_video().payload_name(), "VP8");
+}
+
+// ---- Annex-B packets whose parameter sets live only in the extradata (ASF, some AVI) ----------
+
+/// ASF stores H.264 as Annex-B packets and keeps SPS/PPS in an Annex-B extradata only: the
+/// keyframe the dev set was fed began with an SEI, and nothing was ever presented. The extradata
+/// is the prepend blob, and a keyframe without its own SPS gets it.
+#[test]
+fn an_annexb_extradata_is_prepended_to_a_keyframe_that_lacks_it() {
+    let ed = [0u8, 0, 0, 1, 0x67, 0x64, 0, 0x28, 0, 0, 0, 1, 0x68, 0xEE];
+    let (blob, nls) = unsafe { parse_extradata(ed.as_ptr(), ed.len(), false) };
+    assert_eq!((blob.as_slice(), nls), (&ed[..], 0), "Annex-B in, the record kept whole");
+    let idr = [0u8, 0, 1, 0x06, 0x05, 0xFF, 0, 0, 1, 0x65, 0x88];
+    let mut out = Vec::new();
+    assert!(unsafe { packet_to_annexb(idr.as_ptr(), idr.len(), 0, false, &blob, &mut out) });
+    assert_eq!(&out[..ed.len()], &ed[..]);
+    assert_eq!(&out[ed.len()..], &idr[..]);
+    // a keyframe that carries its own SPS (MPEG-TS) is passed whole, never doubled
+    let ts_idr = [0u8, 0, 0, 1, 0x67, 0x64, 0, 0, 0, 1, 0x65, 0x88];
+    assert!(unsafe { packet_to_annexb(ts_idr.as_ptr(), ts_idr.len(), 0, false, &blob, &mut out) });
+    assert_eq!(out, ts_idr);
+    let p = [0u8, 0, 1, 0x41, 0x9A];
+    assert!(!unsafe { packet_to_annexb(p.as_ptr(), p.len(), 0, false, &blob, &mut out) });
+    assert_eq!(out, p, "a delta frame gets nothing");
 }

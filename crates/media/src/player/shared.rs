@@ -23,12 +23,17 @@ use std::time::{Duration, Instant};
 pub struct TrackNames {
     pub audio: Vec<String>,
     pub subs: Vec<String>,
+    /// Each audio track's `language` tag (ISO 639-2 in Matroska/MP4: `eng`, `ger`), `""` when the
+    /// file has none — dense and in file order, like the names.
+    pub audio_langs: Vec<String>,
+    /// The same for the subtitle tracks.
+    pub sub_langs: Vec<String>,
 }
 
 impl TrackNames {
     /// `Default`, but callable from `Shared::new`, which is a `const fn`.
     pub const fn new() -> Self {
-        Self { audio: Vec::new(), subs: Vec::new() }
+        Self { audio: Vec::new(), subs: Vec::new(), audio_langs: Vec::new(), sub_langs: Vec::new() }
     }
     /// The name of the `i`-th subtitle stream in file order, or `""` (`-1`, an external sidecar,
     /// can be passed straight in).
@@ -39,6 +44,18 @@ impl TrackNames {
     pub fn audio(&self, i: i32) -> &str {
         usize::try_from(i).ok().and_then(|i| self.audio.get(i)).map(String::as_str).unwrap_or("")
     }
+}
+
+/// **One chapter of the open file**, as its container lists it (Matroska `Chapters`, MP4 chapter
+/// track): where it starts on the content timeline and what the file calls it.
+///
+/// `title` is the file's own text, from a stranger's file — show it, never log it. Empty when the
+/// chapter has no title. Published by the demuxer when it opens a part ([`super::chapters`]),
+/// sorted by `start_ms`, an empty list for a file without chapters.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Chapter {
+    pub start_ms: i64,
+    pub title: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -569,6 +586,17 @@ pub struct Shared {
     /// the ordinal a track-menu row selects. Empty strings for a file that tags nothing, and an
     /// empty Vec until a demuxer has opened. See `ff::stream_name`.
     pub track_names: Mutex<TrackNames>,
+    /// The file's chapters (D -> M), published beside [`Self::track_names`] and cleared with them.
+    pub chapters: Mutex<Vec<Chapter>>,
+    /// The demux thread is inside `av_seek_frame` (D -> M). A Matroska file's FIRST seek reads its
+    /// Cues (at the END of the file, ~102 GB into a UHD remux) and seeks back: three range reopens
+    /// before the call returns, seconds on a slow debrid host. The pump's stuck watchdog does not
+    /// count that time — retrying or reloading into it only aborts a reopen that was landing.
+    pub demux_seeking: AtomicBool,
+    /// Running estimate of one range reopen's latency on this playback's server, in ms (0 = no
+    /// sample yet). Written by `ff::seek_cb` on the demux thread only; the pump scales the stuck
+    /// watchdog by it (`pump::seek_stuck_ms`). Kept across a reload: same server.
+    pub reopen_ms_est: AtomicU32,
     pub ass_sources: Mutex<super::ass_source::Store>,
     pub ass_renderer: super::ass::Runtime,
     pub sub_bitmaps: Mutex<Vec<SubBitmap>>, // image-sub cues (every image track while subs are on)
@@ -616,6 +644,8 @@ pub struct Shared {
     // set once the pipeline has drained to true end-of-stream (EOS pushed AND the last fed frame
     // has been presented). app.rs polls player::ended() to tear the player down at the credits.
     pub ended: AtomicBool,
+    /// The stream is a debrid service's "still downloading" placeholder clip (`player::note_media_path`).
+    pub debrid_placeholder: AtomicBool,
 
     // close-to-interrupt handle: raw ptr to the Engine-owned HttpStream box, so
     // the pump/teardown can close(fd) to unblock a blocked recv. The box outlives
@@ -715,7 +745,7 @@ pub struct Shared {
     pub dg_fed_v_pts: AtomicI64,
     pub dg_fed_a_pts: AtomicI64,
     /// The codec strings this session actually put in the Starfish Load payload, as small codes
-    /// (0 = none/not built; video 1 = H264, 2 = H265, 3 = AV1, 4 = VP9; audio 1 = AC3, 2 = AC3 PLUS, 3 = AAC).
+    /// (0 = none/not built; video: `engine::LoadVideo::diag_code`, audio: `stream::AudioFeed::payload`).
     ///
     /// Codes rather than strings so they need no lock on the render path — and the PAYLOAD's view
     /// rather than a re-derivation, because the whole class of bug here is the payload disagreeing
@@ -723,6 +753,12 @@ pub struct Shared {
     /// "there is no sound": the pipeline was never asked for any.
     pub dg_load_v: AtomicU8,
     pub dg_load_a: AtomicU8,
+    /// The Load declared a dual-layer Dolby Vision stream as its base layer alone, so the demuxer
+    /// drops its RPU and enhancement-layer NAL units (`dovi::P81Feed`). Written at every Load.
+    pub dv_strip_layers: AtomicBool,
+    /// The Load declared a Profile 7 stream as the 8.1 it is converted to, so the demuxer drops its
+    /// enhancement-layer NAL units and rewrites every RPU (`dovi::P81Feed`). Written at every Load.
+    pub dv_convert_p7: AtomicBool,
     /// `vp_place` return, and the size it was called with. `i32::MIN` = never called.
     pub dg_place_rv: AtomicI32,
     pub dg_placed_w: AtomicI32,
@@ -764,6 +800,8 @@ impl Shared {
             dg_fed_a_pts: AtomicI64::new(0),
             dg_load_v: AtomicU8::new(0),
             dg_load_a: AtomicU8::new(0),
+            dv_strip_layers: AtomicBool::new(false),
+            dv_convert_p7: AtomicBool::new(false),
             dg_place_rv: AtomicI32::new(i32::MIN),
             dg_placed_w: AtomicI32::new(0),
             dg_placed_h: AtomicI32::new(0),
@@ -796,6 +834,9 @@ impl Shared {
             native_load_elapsed_ms: AtomicU64::new(0),
             desired_sub_idx: AtomicI32::new(-1),
             track_names: Mutex::new(TrackNames::new()),
+            chapters: Mutex::new(Vec::new()),
+            demux_seeking: AtomicBool::new(false),
+            reopen_ms_est: AtomicU32::new(0),
             ass_sources: Mutex::new(super::ass_source::Store::new()),
             ass_renderer: super::ass::Runtime::new(),
             sub_bitmaps: Mutex::new(Vec::new()),
@@ -810,6 +851,7 @@ impl Shared {
             audio_tail_ns: AtomicI64::new(-1),
             clock: Mutex::new(ClockState::new()),
             ended: AtomicBool::new(false),
+            debrid_placeholder: AtomicBool::new(false),
             hs_ptr: AtomicPtr::new(std::ptr::null_mut()),
         }
     }
@@ -1406,6 +1448,11 @@ impl Shared {
         // a reload onto another stream would otherwise leave the old file's names under its
         // track list.
         *self.track_names.lock().unwrap() = TrackNames::new();
+        self.chapters.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        self.demux_seeking.store(false, Ordering::Relaxed);
+        if !for_reload {
+            self.reopen_ms_est.store(0, Ordering::Relaxed);
+        }
         self.file_size.store(0, Ordering::Relaxed);
         self.video_w.store(0, Ordering::Relaxed);
         self.video_h.store(0, Ordering::Relaxed);
@@ -1417,6 +1464,7 @@ impl Shared {
         self.audio_tail_ns.store(-1, Ordering::Relaxed);
         self.reset_clock();
         self.ended.store(false, Ordering::Relaxed);
+        self.debrid_placeholder.store(false, Ordering::Relaxed);
         self.hs_ptr.store(std::ptr::null_mut(), Ordering::Release);
     }
 

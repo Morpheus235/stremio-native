@@ -103,7 +103,8 @@ fn the_bundled_faces_go_in_inter_first_then_the_manifest_order() {
     let names: Vec<String> = files.iter().map(|p| p.file_name().unwrap().to_string_lossy().into()).collect();
     assert_eq!(&names[..2], ["appfont.ttf", "appfont-bold.ttf"]);
     let listed: Vec<String> = faces().iter().map(|f| f["file"].as_str().unwrap().to_string()).collect();
-    assert_eq!(&names[2..], &listed[..]);
+    assert_eq!(&names[2..names.len() - 1], &listed[..]);
+    assert_eq!(names.last().map(String::as_str), Some(EMOJI), "the emoji face goes last");
     assert!(listed.len() >= 20, "{} faces", listed.len());
     for f in &files {
         assert!(f.is_file(), "{f:?} is not shipped");
@@ -128,7 +129,7 @@ fn a_missing_or_hostile_manifest_is_fonts_unavailable() {
         assert!(matches!(bundled(&root), Err(Fault::FontsUnavailable)), "{body}");
     }
     std::fs::write(subs.join(MANIFEST), r#"{"faces":[{"file":"a.ttf"}]}"#).unwrap();
-    assert_eq!(bundled(&root).unwrap().len(), 3);
+    assert_eq!(bundled(&root).unwrap().len(), 4);
     std::fs::remove_dir_all(&root).unwrap();
 }
 
@@ -288,6 +289,35 @@ fn shaped_scripts_keep_their_layout_tables() {
             assert!(table(&bytes, b"GPOS").is_some(), "{} lost GPOS", f["file"]);
         }
     }
+}
+
+/// The emoji face answers to the families libass looks for, keeps its own name for FreeType, and
+/// sizes like the UI: its win total is Inter Bold's / 0.8 em (libass sizes a face by that total,
+/// so the emoji em is 0.8 of Inter Bold's) and its split is Inter Bold's, so a line with an emoji
+/// is no taller than one without. It carries nothing Inter Bold has.
+#[test]
+fn the_emoji_face_is_reachable_and_sized_like_the_ui() {
+    let bytes = read(EMOJI);
+    for id in [1, 4] {
+        let rec = family_records(&bytes, id);
+        assert!(rec.contains(&(0x407, "PlxSubs".into())), "id {id}: {rec:?}");
+        assert!(rec.contains(&(0x40C, "Inter".into())), "id {id}: {rec:?}");
+    }
+    for strict in [false, true] {
+        assert_eq!(freetype_family(&bytes, strict), "Noto Emoji");
+    }
+    let win = |font: &[u8]| {
+        let os2 = table(font, b"OS/2").unwrap();
+        let upem = be16(table(font, b"head").unwrap(), 18) as f64;
+        let (asc, desc) = (be16(os2, 74) as f64, be16(os2, 76) as f64);
+        ((asc + desc) / upem, asc / (asc + desc))
+    };
+    let ((em, split), (inter_em, inter_split)) = (win(&bytes), win(&read("appfont-bold.ttf")));
+    assert!((em * 0.8 - inter_em).abs() < 0.001, "{em} em x 0.8 vs Inter Bold's {inter_em}");
+    assert!((split - inter_split).abs() < 0.001, "split {split} vs Inter Bold's {inter_split}");
+    let (emoji, inter) = (cov(EMOJI), cov("appfont-bold.ttf"));
+    assert!(emoji.contains(0x1F6F0) && emoji.contains(0x1F3E0));
+    assert!((0..=0x10FFFFu32).all(|cp| !(emoji.contains(cp) && inter.contains(cp))), "the emoji face duplicates Inter Bold");
 }
 
 /// Every language code the manifest names sits in exactly one bucket (a face's `languages`,

@@ -3,9 +3,9 @@
 //! no longer buffers forever at the start".
 //!
 //! **The failure under test.** The two lanes are filled from ONE sequential read of the file, and
-//! each has a byte cap (the video lane's is `engine::aq_caps().0`, 10 MiB). An MKV whose audio
-//! carries a container `Delay` of ~11 s has no audio block for the first 11 s, so more video than
-//! the cap precedes the first audio packet. The demuxer fills the video lane, parks in `aq_push`,
+//! each has a byte cap (the video lane's is `engine::aq_caps().0`, 48 MiB). An MKV whose audio
+//! carries a container `Delay` of ~11 s has no audio block for the first 11 s, so at a high enough
+//! bitrate and delay more video than the cap precedes the first audio packet. The demuxer fills the video lane, parks in `aq_push`,
 //! and never reads the audio packet — while the pipeline, which will not start its clock without
 //! audio, drains no video. Neither side can move: a spinner at 0:00 forever.
 //!
@@ -27,11 +27,11 @@
 //! A fourth pins the other side of the grant: an ORDINARY interleaved file, whose video lane never
 //! fills before its first audio packet, never has its cap raised at all.
 //!
-//! **The fixture.** H.264 from a noise source at 12 Mbit/s: noise is how ~13 MB of video is made
+//! **The fixture.** 720p H.264 from a noise source at 24 Mbit/s: noise is how ~60 MB of video is made
 //! to precede the first audio packet in a few seconds of encoding (the real film got there with
 //! 9.5 Mbit/s of near-black frames over 11 s; black would need the same bitrate to be forced, and
 //! noise forces it without depending on an encoder's rate control). E-AC-3 audio, `-itsoffset`
-//! 11.008 s — the delay of the reported film. The control is the same file with the audio at 0.
+//! 20 s — longer than the reported film's 11.008 s, which the 48 MiB base cap now holds alone. The control is the same file with the audio at 0.
 //!
 //! Like `ff_image_subtitle_tests`, it needs the host FFmpeg libraries, so it is `#[ignore]`d in the
 //! plain suite. It skips (returns, loudly) when the `ffmpeg` / `ffprobe` command line tools are
@@ -50,16 +50,18 @@ use std::time::{Duration, Instant};
 
 /// How long the audio lane gets to deliver the first AU AND the engine's whole lead-in after it
 /// ([`AUDIO_LEAD_IN_NS`](crate::player::engine::AUDIO_LEAD_IN_NS)). Healthy, it takes well under a
-/// second (a loopback read of ~20 MB); broken, it never comes, and this is how long the failing
+/// second (a loopback read of ~70 MB); broken, it never comes, and this is how long the failing
 /// run waits before it says so. Long enough that a loaded CI host cannot flake it, short enough
 /// that red is seconds, not a hung test binary.
 const FIRST_AUDIO_DEADLINE: Duration = Duration::from_secs(10);
 
 /// The fixture's video bitrate, bits per second (the `-b:v` of [`generate`]).
-const FIXTURE_VIDEO_BPS: i64 = 12_000_000;
+const FIXTURE_VIDEO_BPS: i64 = 24_000_000;
 
-/// The delay the reported film carried on its E-AC-3 track, in seconds.
-const LATE_AUDIO_DELAY_S: f64 = 11.008;
+/// The fixture's audio delay, in seconds: past the base cap (with the pump's throttle) yet inside
+/// the headroom with the lead-in — 60 MB before the audio, 67.5 MB with the lead-in, against
+/// 55.1 MB and 75.5 MB.
+const LATE_AUDIO_DELAY_S: f64 = 20.0;
 
 /// Whether a command line tool runs at all. A missing tool is a skip, never a failure.
 pub(super) fn tool_present(name: &str) -> bool {
@@ -89,22 +91,22 @@ impl Drop for Scratch {
     }
 }
 
-/// Write an MKV: 640x360 H.264 noise at 12 Mbit/s for `video_s` seconds, plus 3 s of E-AC-3 whose
+/// Write an MKV: 1280x720 H.264 noise at 24 Mbit/s for `video_s` seconds, plus 3 s of E-AC-3 whose
 /// first packet lands `audio_delay_s` into the file. Returns its path.
 fn generate(dir: &Path, audio_delay_s: f64, video_s: u32) -> PathBuf {
     let out = dir.join("late_audio.mkv");
     let status = Command::new("ffmpeg")
         .args(["-nostdin", "-v", "error", "-y"])
         // Grey frames with temporal + uniform noise on every frame: incompressible, so the
-        // encoder spends the whole 12 Mbit/s budget on every picture.
-        .args(["-f", "lavfi", "-i", &format!("color=c=gray:s=640x360:r=25:d={video_s},noise=alls=100:allf=t+u")])
+        // encoder spends the whole 24 Mbit/s budget on every picture.
+        .args(["-f", "lavfi", "-i", &format!("color=c=gray:s=1280x720:r=25:d={video_s},noise=alls=100:allf=t+u")])
         // The container delay: `-itsoffset` shifts the next input's timestamps, so the muxer
         // writes this track's first block at that time — what mkvmerge's `Delay` does.
         .args(["-itsoffset", &format!("{audio_delay_s}")])
         .args(["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=3"])
         .args(["-map", "0:v", "-map", "1:a"])
         .args(["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-g", "25"])
-        .args(["-b:v", "12M", "-maxrate", "12M", "-bufsize", "12M"])
+        .args(["-b:v", "24M", "-maxrate", "24M", "-bufsize", "24M"])
         .args(["-c:a", "eac3", "-b:a", "192k"])
         .arg(&out)
         .status()
@@ -406,13 +408,13 @@ fn prepare_with(tag: &str, make: impl FnOnce(&Path) -> PathBuf) -> Option<Prepar
 
 /// [`prepare`], then report what reached the audio lane within the deadline.
 fn demux_fixture(tag: &str, audio_delay_s: f64) -> Option<(Observed, f64, u64)> {
-    let mut p = prepare(tag, audio_delay_s, 14)?;
+    let mut p = prepare(tag, audio_delay_s, 24)?;
     let seen = p.run.observe(FIRST_AUDIO_DEADLINE, crate::player::engine::AUDIO_LEAD_IN_NS);
     Some((seen, p.first_audio_s, p.video_before))
 }
 
-/// **The regression.** Audio 11 s late, and ~13 MB of video ahead of it — more than the video
-/// lane's 10 MiB cap. The first audio AU must still reach the audio lane: the demuxer must not
+/// **The regression.** Audio 20 s late, and ~60 MB of video ahead of it — more than the video
+/// lane's 48 MiB cap. The first audio AU must still reach the audio lane: the demuxer must not
 /// park on the full video lane in front of it. Before the fix this fails after the deadline with
 /// an empty audio lane and a video lane pinned at its cap.
 #[test]
@@ -506,8 +508,8 @@ fn an_on_time_audio_track_reaches_the_audio_lane_at_once() {
     assert_lead_in_reached(&seen, pts, crate::player::engine::aq_caps().0);
 }
 
-/// **The bound.** Audio so late that the video ahead of it (~36 MB at 12 Mbit/s) outruns even the
-/// pre-audio headroom (the base cap plus `PRE_AUDIO_VIDEO_HEADROOM`, 34 MiB). Nothing pops the video
+/// **The bound.** Audio so late that the video ahead of it (~90 MB at 24 Mbit/s) outruns even the
+/// pre-audio headroom (the base cap plus `PRE_AUDIO_VIDEO_HEADROOM`, 72 MiB). Nothing pops the video
 /// lane and no audio will ever be read, so parking would be a spinner nobody can leave: the demuxer
 /// must fail the open (`demux_io_failed`, which the pump turns into a route recovery or the failure
 /// read-out) instead, with the audio lane still empty.
@@ -515,7 +517,7 @@ fn an_on_time_audio_track_reaches_the_audio_lane_at_once() {
 #[ignore = "needs the host build of the bundled FFmpeg and the ffmpeg CLI — see the module doc"]
 fn a_video_lane_filled_to_the_headroom_with_no_audio_fails_the_open() {
     let _g = sn_base::testlock::serial();
-    // 30 s of delay at 12 Mbit/s is ~45 MB of video before the first audio packet; 32 s of video
+    // 30 s of delay at 24 Mbit/s is ~90 MB of video before the first audio packet; 32 s of video
     // so the file does not end before the bound is reached.
     let Some(mut p) = prepare("exhausted", 30.0, 32) else {
         return;

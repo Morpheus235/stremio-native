@@ -62,5 +62,7 @@
     "one": "{count} titre",
     "many": "{count} titres",
     "other": "{count} titres"
-  }
+  },
+  "app.library.none_of_type": "Aucun élément « {kind} » dans votre bibliothèque",
+  "app.library.empty_hint": "Maintenez OK sur un titre pour l’ajouter à votre bibliothèque."
 }

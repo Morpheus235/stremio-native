@@ -256,5 +256,16 @@
     "args": {
       "count": "i64"
     }
+  },
+  "app.library.none_of_type": {
+    "value": "No {kind} in your library",
+    "description": "Library: read-out when the type filter is set to a type the library holds nothing of. {kind} is the type's plural label (Movies, Series).",
+    "args": {
+      "kind": "str"
+    }
+  },
+  "app.library.empty_hint": {
+    "value": "Hold OK on a title to add it to your library.",
+    "description": "Library: the hint under the empty-library verdict, saying how to add a title."
   }
 }

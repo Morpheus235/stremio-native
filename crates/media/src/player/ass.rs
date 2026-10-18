@@ -853,7 +853,7 @@ pub struct NativeStats {
 
 /// The facade ABI this file is written against (`SN_ASS_ABI_VERSION` in `include/ass.h`); a
 /// library reporting any other number is not loaded.
-const NATIVE_ABI: u32 = 3;
+const NATIVE_ABI: u32 = 4;
 
 /// libass's glyph-count and bitmap-MiB cache bounds for every renderer.
 const CACHE_GLYPHS: i32 = 1000;
@@ -878,7 +878,10 @@ sn_base::dynlib! {
     }
 }
 
-struct Native(*mut c_void);
+/// A renderer, and the font bytes it reads: `sn_ass_add_font` LENDS them to libass (ABI 4) rather
+/// than copying, so they live exactly as long as the renderer — `Drop` destroys it before the
+/// fields go. An anime release's 25 MB of attached fonts is held once here, not twice.
+struct Native(*mut c_void, Vec<Arc<[u8]>>);
 
 #[cfg(test)]
 thread_local! {
@@ -942,10 +945,10 @@ impl Native {
         if ptr.is_null() {
             return Err(Fault::InitFailed);
         }
-        let mut native = Self(ptr);
+        let mut native = Self(ptr, Vec::new());
         native.configure()?;
         // Inter, Inter Bold, then the per-script Noto faces (`fonts.rs`: the order is load-bearing,
-        // and the files are read here, per renderer, never kept). The CJK face is libass's DEFAULT
+        // and the files are read here, per renderer, and held only by it). The CJK face is libass's DEFAULT
         // path (`sn_ass_create`), which maps the file instead of copying it; as a memory font it
         // would cost a ~13 MB malloc+copy per renderer, reachable only by the family name
         // "Noto Sans CJK KR", while glyph fallback never goes through it.
@@ -955,7 +958,7 @@ impl Native {
                 return Err(Fault::FontTooLarge);
             }
             let name = path.file_name().and_then(|n| n.to_str()).ok_or(Fault::FontsUnavailable)?;
-            native.font(name, &bytes)?;
+            native.font(name, bytes.into())?;
         }
         // A font the renderer cannot take (unnamed, over the budget, rejected by the native
         // side) is skipped: the text still shows, in the default face.
@@ -966,7 +969,7 @@ impl Native {
             {
                 continue;
             }
-            let _ = native.font(&font.name, &font.data);
+            let _ = native.font(&font.name, font.data.clone());
         }
         if unsafe { sn_ass_load(native.0, data.as_ptr(), data.len(), script) } < 0 {
             return Err(Fault::Unreadable);
@@ -1012,11 +1015,13 @@ impl Native {
         stats
     }
 
-    fn font(&mut self, name: &str, bytes: &[u8]) -> Result<(), Fault> {
+    fn font(&mut self, name: &str, bytes: Arc<[u8]>) -> Result<(), Fault> {
         let name = CString::new(name).map_err(|_| Fault::FontName)?;
         if unsafe { sn_ass_add_font(self.0, name.as_ptr(), bytes.as_ptr(), bytes.len()) } < 0 {
             return Err(Fault::TrackFonts);
         }
+        // libass reads these bytes until `sn_ass_destroy`
+        self.1.push(bytes);
         Ok(())
     }
 

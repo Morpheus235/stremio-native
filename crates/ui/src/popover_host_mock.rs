@@ -9,6 +9,8 @@ thread_local! {
     /// How many times the snapshot was thrown away on this thread (`FrameCache::invalidate`), for
     /// a test that grades WHEN the dispatcher re-takes it.
     pub(super) static INVALIDATIONS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    /// How many times its texture was freed (`FrameCache::release`).
+    pub(super) static RELEASES: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
 pub(super) struct FrameCache {
@@ -19,6 +21,10 @@ pub(super) struct FrameCache {
 impl FrameCache {
     pub(super) const fn new() -> Self {
         Self { snapshot: None, off: false }
+    }
+    pub(super) fn release(&mut self) {
+        RELEASES.with(|c| c.set(c.get() + 1));
+        self.snapshot = None;
     }
     pub(super) fn invalidate(&mut self) {
         INVALIDATIONS.with(|c| c.set(c.get() + 1));

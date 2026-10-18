@@ -17,6 +17,7 @@
 //! `[dev-dependencies]` only, so no shipped build sees it.
 
 pub mod aq;
+pub mod dovi; // Dolby Vision Profile 7 -> 8.1 in the feed: EL units dropped, each RPU rewritten (a port of dovi_tool's convert --mode 2)
 pub mod curlio; // the HTTPS media plane: a remote file pulled by byte range over libcurl-multi (stream.rs is the plaintext-socket twin)
 #[macro_use]
 pub mod ff; // THE demuxer -- the FFmpeg 9.0 this app BUNDLES and pins (majors 63/63/61), dlopen'd by absolute path beside the binary, never the television's

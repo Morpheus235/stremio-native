@@ -41,8 +41,13 @@ pub struct PlaybackStart {
     /// first audio stream of the declared codec.
     pub audio_track: Option<i32>,
     /// The subtitle stream to show, as its 0-based position among the file's SUBTITLE streams.
-    /// `None`: subtitles off.
+    /// `None`: subtitles off (or, with [`Self::tracks`], the probe's pick).
     pub subtitle_track: Option<i32>,
+    /// The viewer's language preferences (Settings > Playback) for the tracks this start names
+    /// none of: the probe picks the audio track by them before the Load (`stream::
+    /// derive_declaration`) and, without a `subtitle_track`, the subtitle track
+    /// ([`PlaybackSession::resolve`]). `None`: the file's audio choice and subtitles off.
+    pub tracks: Option<sn_base::tracks::TrackPrefs>,
     /// What the stream is, as the Load must declare it — an OVERRIDE. `None` (the default, and
     /// what a Stremio stream has): the player probes the stream with the bundled demuxer before
     /// it builds the Load, and derives this from what the container says.
@@ -64,6 +69,7 @@ impl PlaybackStart {
             start_ns: 0,
             audio_track: None,
             subtitle_track: None,
+            tracks: None,
             stream: None,
             preview: false,
             observer: None,
@@ -78,6 +84,7 @@ impl std::fmt::Debug for PlaybackStart {
             .field("start_ns", &self.start_ns)
             .field("audio_track", &self.audio_track)
             .field("subtitle_track", &self.subtitle_track)
+            .field("tracks", &self.tracks)
             .field("stream", &self.stream)
             .field("headers", &self.headers)
             .field("preview", &self.preview)
@@ -134,6 +141,46 @@ pub enum StartRefusal {
     Probe(ProbeFailure),
 }
 
+/// The subtitle stream `prefs` pick over audio stream `audio` of `probed` (`None`: off).
+fn pick_subtitle(prefs: &sn_base::tracks::TrackPrefs, probed: &ProbedStreams, audio: Option<i32>) -> Option<i32> {
+    let subs: Vec<sn_base::tracks::Track<'_>> = probed
+        .subs
+        .iter()
+        .map(|t| sn_base::tracks::Track { language: &t.language, forced: t.forced, default: t.default })
+        .collect();
+    prefs.subtitle(audio_language(probed, audio), &subs).and_then(|i| i32::try_from(i).ok())
+}
+
+fn audio_language(probed: &ProbedStreams, audio: Option<i32>) -> &str {
+    audio.and_then(|i| probed.audio.get(usize::try_from(i).ok()?)).map_or("", |a| a.language.as_str())
+}
+
+/// One line per playback naming the tracks it starts on and why (never a URL):
+/// `tracks: audio #1 (deu) by pref, subs #2 (eng, forced) by mode=auto`.
+fn log_tracks(prefs: &sn_base::tracks::TrackPrefs, probed: &ProbedStreams, audio: Option<i32>, sub: Option<i32>, picked: (bool, bool)) {
+    let tag = |l: &str| if l.is_empty() { "und".to_string() } else { l.to_string() };
+    let a = match audio {
+        None => "audio none".to_string(),
+        Some(i) => {
+            let lang = audio_language(probed, audio);
+            let why = if !picked.0 {
+                "by start"
+            } else if prefs.audio_rank(lang) < prefs.audio.len() {
+                "by pref"
+            } else {
+                "by file"
+            };
+            format!("audio #{i} ({}) {why}", tag(lang))
+        }
+    };
+    let mode = if picked.1 { format!("mode={}", format!("{:?}", prefs.mode).to_ascii_lowercase()) } else { "start".to_string() };
+    let s = match sub.and_then(|i| Some((i, probed.subs.get(usize::try_from(i).ok()?)?))) {
+        Some((i, t)) => format!("subs #{i} ({}{}) by {mode}", tag(&t.language), if t.forced { ", forced" } else { "" }),
+        None => format!("subs off by {mode}"),
+    };
+    sn_base::eventlog::log(&format!("tracks: {a}, {s}"));
+}
+
 /// The main-thread playback state (see the module doc).
 pub struct PlaybackSession {
     start: Option<PlaybackStart>,
@@ -149,6 +196,9 @@ pub struct PlaybackSession {
     pub repair_status: sn_platform::tv::sandbox::State,
     /// The observer has been told this playback started (first frame), so it is told once.
     started_reported: bool,
+    /// The Profile 7 → 8.1 trial ([`DvPresentation::is_p7_trial`]) has been decided — a first
+    /// frame presented, or the fallback taken — so the pump stops watching it.
+    dv_trial_settled: bool,
     /// What the probe read off the container, once a probed start resolved: the file's audio
     /// tracks (codec, channels, name) for a track menu, which an addon cannot describe.
     probed: Option<ProbedStreams>,
@@ -165,6 +215,7 @@ impl PlaybackSession {
         native_start_refused: false,
         repair_status: sn_platform::tv::sandbox::State::Idle,
         started_reported: false,
+        dv_trial_settled: false,
         probed: None,
     };
 
@@ -188,9 +239,12 @@ impl PlaybackSession {
     }
 
     /// **A probed start's declaration has arrived**: derive it (`stream::derive_declaration`,
-    /// which also picks the audio track when the start named none), install it on the start and
-    /// make the decisions [`begin`](Self::begin) makes for a declared one. `Ok` carries the audio
-    /// stream to feed. `Err` is a refusal that stays on the session, exactly as `begin`'s does — a
+    /// which also picks the audio track when the start named none, by the start's
+    /// [`tracks`](PlaybackStart::tracks) preferences), pick the subtitle track by them when the
+    /// start named none (`sn_base::tracks::TrackPrefs::subtitle`, logged once as `tracks: ...`),
+    /// install both on the start and make the decisions [`begin`](Self::begin) makes for a
+    /// declared one. `Ok` carries the audio stream to feed; the subtitle is
+    /// [`subtitle_track`](Self::subtitle_track). `Err` is a refusal that stays on the session, exactly as `begin`'s does — a
     /// probe that found no video track among them.
     ///
     /// Only an [`unresolved`](Self::unresolved) start can be resolved; anything else is a stale
@@ -211,8 +265,9 @@ impl PlaybackSession {
             return Ok(None);
         }
         let mut start = self.start.take().expect("an unresolved session holds its start");
-        let derived = crate::stream::derive_declaration(&probed, start.audio_track, |a| {
-            AudioFeed::decide(&a.codec, a.channels, caps, sw)
+        let prefs = start.tracks.clone().unwrap_or_default();
+        let derived = crate::stream::derive_declaration(&probed, start.audio_track, &prefs, |a| {
+            AudioFeed::decide_at(&a.codec, a.channels, a.sample_rate, caps, sw)
         });
         let (decl, track) = match derived {
             Ok(d) => d,
@@ -232,6 +287,13 @@ impl PlaybackSession {
             decl.audio_channels,
             probed.audio.len()
         ));
+        if start.tracks.is_some() {
+            let picked = (start.audio_track.is_none(), start.subtitle_track.is_none());
+            if picked.1 {
+                start.subtitle_track = pick_subtitle(&prefs, &probed, track);
+            }
+            log_tracks(&prefs, &probed, track, start.subtitle_track, picked);
+        }
         start.stream = Some(decl);
         start.audio_track = track;
         self.decide(start, caps, sw, dv_of)?;
@@ -270,6 +332,7 @@ impl PlaybackSession {
         self.jail_load_blocked = false;
         self.native_start_refused = false;
         self.started_reported = false;
+        self.dv_trial_settled = false;
         self.probed = None;
         let Some(decl) = start.stream.as_ref() else {
             // Unresolved: nothing to decide until the probe lands (`resolve`).
@@ -281,8 +344,8 @@ impl PlaybackSession {
         };
         let hevc = matches!(decl.vcodec.to_ascii_lowercase().as_str(), "hevc" | "h265");
         let dv = dv_of(&decl.dovi, hevc);
-        let audio = AudioFeed::decide(&decl.acodec, decl.audio_channels, caps, sw);
-        let refusal = video_refusal(&decl.vcodec, caps)
+        let audio = AudioFeed::decide_at(&decl.acodec, decl.audio_channels, decl.audio_sample_rate, caps, sw);
+        let refusal = video_refusal(&decl.vcodec, decl.raster, decl.vprofile, caps)
             .or_else(|| dv.refusal().map(StartRefusal::DolbyVision))
             .or_else(|| match &audio {
                 AudioFeed::NeedsSoftwareDecode { codec, channels } => {
@@ -364,6 +427,31 @@ impl PlaybackSession {
         self.dv
     }
 
+    /// The native Dolby Vision Profile 7 declaration is still on trial: no frame presented yet.
+    pub fn dv_on_trial(&self) -> bool {
+        self.dv.is_p7_trial() && !self.dv_trial_settled
+    }
+
+    /// The trial's first frame is up: Profile 7 converted to 8.1 was taken. Logs once.
+    pub fn settle_dv_trial(&mut self) {
+        if self.dv_on_trial() {
+            self.dv_trial_settled = true;
+            sn_base::eventlog::log("dv: profile 7 as 8.1 accepted — first frame presented");
+        }
+    }
+
+    /// The trial failed: play the same stream as its HDR10 base layer from here on (the caller
+    /// reloads). `false` when there was no trial to fall back from.
+    pub fn fall_back_to_base_layer(&mut self, why: &str) -> bool {
+        if !self.dv_on_trial() {
+            return false;
+        }
+        self.dv_trial_settled = true;
+        self.dv = DvPresentation::BaseLayer;
+        sn_base::eventlog::log(&format!("dv: profile 7 as 8.1 not accepted, playing HDR10 ({why})"));
+        true
+    }
+
     /// The audio feed frozen at [`begin`](Self::begin) (or the last [`select_audio`](Self::select_audio)).
     pub fn audio(&self) -> &AudioFeed {
         &self.audio
@@ -409,16 +497,51 @@ impl PlaybackSession {
     }
 }
 
-/// A video codec the pipeline cannot be fed, or that this set's table lists no decoder for.
-fn video_refusal(vcodec: &str, caps: &sn_platform::devcaps::Caps) -> Option<StartRefusal> {
-    let refused = match vcodec.to_ascii_lowercase().as_str() {
+/// A video codec the pipeline cannot be fed, or that this set's table lists no decoder for, or a
+/// `raster` larger than that codec's own row in the table (PlxNative's `video_direct_plays`
+/// resolution gate, per codec: its shared `hevc_max` is the MIN over H.264 and HEVC and would
+/// refuse a 4K HEVC file on a SoC whose AVC decoder stops at 1080p, and there is no server here to
+/// transcode it). An axis that is 0 (unknown, or not stated — every row of an unread table) never
+/// convicts.
+fn video_refusal(vcodec: &str, raster: (u16, u16), profile: i32, caps: &sn_platform::devcaps::Caps) -> Option<StartRefusal> {
+    let codec = vcodec.to_ascii_lowercase();
+    // H.264 beyond 8-bit 4:2:0 (FFmpeg's AV_PROFILE_H264_* ids): the TV decodes none of them
+    if codec == "h264" {
+        let beyond = match profile {
+            110 => Some("10-bit"),
+            122 => Some("4:2:2"),
+            244 | 44 => Some("4:4:4"),
+            _ => None,
+        };
+        if let Some(what) = beyond {
+            return Some(StartRefusal::VideoUnsupported(format!("h264 {what}")));
+        }
+    }
+    let refused = match codec.as_str() {
         "" | "h264" => false,
         "hevc" | "h265" => !caps.hevc,
         "av1" => !caps.av1,
         "vp9" => !caps.vp9,
+        "vp8" => !caps.vp8,
+        // Everything else has no caps in libpf's buffer feed (`CustomPipeline::getVideoCaps`):
+        // MPEG-4 Part 2 (Xvid, DivX), MPEG-1/2, H.263, WMV1-3, VC-1 (its caps never negotiate),
+        // RealVideo, MJPEG, even where the
+        // table lists a decoder for them (the TV's own file player reaches those, this feed cannot).
         _ => true,
     };
-    refused.then(|| StartRefusal::VideoUnsupported(vcodec.to_ascii_lowercase()))
+    if refused {
+        return Some(StartRefusal::VideoUnsupported(codec));
+    }
+    let (w, h) = (u32::from(raster.0), u32::from(raster.1));
+    let (rw, rh, _) = match codec.as_str() {
+        "hevc" | "h265" => caps.hevc_row,
+        "av1" => caps.av1_row,
+        "vp9" => caps.vp9_row,
+        "vp8" => caps.vp8_row,
+        _ => caps.h264_row,
+    };
+    let fits = (rw == 0 || w <= rw) && (rh == 0 || h <= rh);
+    (!fits).then(|| StartRefusal::VideoUnsupported(format!("{codec} {w}x{h}")))
 }
 
 #[cfg(test)]
@@ -454,12 +577,65 @@ mod tests {
         }
     }
 
+    /// Ported from PlxNative's `video_direct_plays` (test `a_source_beyond_the_device_bound_does_
+    /// not_direct_play`), per codec: a source larger than its codec's row in the table is refused
+    /// before any Load instead of failing as a pipeline error. An axis nobody knows (0) never
+    /// convicts, and an unread table (`assumed()`, every row 0) refuses no raster.
+    /// 10-bit H.264 (anime Blu-ray encodes with FLAC): the TV's decoder takes 8-bit H.264 only, and
+    /// such a Load was refused by the pipeline before any picture (`type=18 num=100`) on every one
+    /// of the beta's H.264+FLAC streams. Refused here, with a reason, before the Load.
+    #[test]
+    fn ten_bit_h264_is_refused_before_the_load() {
+        let caps = Caps::assumed();
+        assert_eq!(video_refusal("h264", (1920, 1080), 110, &caps), Some(StartRefusal::VideoUnsupported("h264 10-bit".into())));
+        assert_eq!(video_refusal("h264", (1920, 1080), 122, &caps), Some(StartRefusal::VideoUnsupported("h264 4:2:2".into())));
+        assert_eq!(video_refusal("h264", (1920, 1080), 244, &caps), Some(StartRefusal::VideoUnsupported("h264 4:4:4".into())));
+        assert_eq!(video_refusal("h264", (1920, 1080), 100, &caps), None, "High (8-bit) plays");
+        assert_eq!(video_refusal("h264", (1920, 1080), -99, &caps), None, "an unknown profile convicts nothing");
+        assert_eq!(video_refusal("hevc", (1920, 1080), 2, &caps), None, "HEVC Main 10 plays");
+    }
+
+    #[test]
+    fn a_source_beyond_its_codecs_row_is_refused_before_the_load() {
+        let at = |codec: &str, w: u16, h: u16, caps: &Caps| video_refusal(codec, (w, h), -99, caps);
+        assert_eq!(at("hevc", 7680, 4320, &Caps::assumed()), None, "an unread table bounds nothing");
+        let mut caps = Caps::assumed();
+        caps.h264_row = (1920, 1088, 60);
+        caps.hevc_row = (4096, 2176, 60);
+        caps.vp9 = true;
+        caps.vp9_row = (1920, 1080, 60);
+        assert_eq!(at("hevc", 3840, 2160, &caps), None, "4K HEVC beside a 1080p AVC decoder");
+        assert_eq!(at("h264", 3840, 1600, &caps), Some(StartRefusal::VideoUnsupported("h264 3840x1600".into())));
+        assert_eq!(at("hevc", 7680, 4320, &caps), Some(StartRefusal::VideoUnsupported("hevc 7680x4320".into())));
+        assert_eq!(at("vp9", 3840, 2160, &caps), Some(StartRefusal::VideoUnsupported("vp9 3840x2160".into())));
+        assert_eq!(at("h264", 0, 0, &caps), None, "an unknown raster is the pipeline's to find out");
+        assert_eq!(at("mpeg2video", 720, 576, &caps), Some(StartRefusal::VideoUnsupported("mpeg2video".into())));
+    }
+
+    /// VP8 plays where the table lists its decoder and within its row; every codec the buffer feed
+    /// does not take stays refused, whatever the table says: MPEG-4 Part 2 (Xvid, DivX), MPEG-2,
+    /// MPEG-1, H.263, WMV1-3, VC-1, RealVideo, MJPEG.
+    #[test]
+    fn vp8_plays_where_the_table_lists_it_and_nothing_else_is_fed() {
+        let at = |codec: &str, w: u16, h: u16, caps: &Caps| video_refusal(codec, (w, h), -99, caps);
+        let assumed = Caps::assumed();
+        assert!(at("vp8", 1280, 720, &assumed).is_some(), "no row read: not claimed");
+        let mut c1 = Caps::assumed();
+        c1.vp8 = true;
+        c1.vp8_row = (1920, 1088, 30);
+        assert_eq!(at("vp8", 1920, 1080, &c1), None);
+        assert_eq!(at("vp8", 3840, 2160, &c1), Some(StartRefusal::VideoUnsupported("vp8 3840x2160".into())));
+        for codec in ["mpeg4", "mpeg2video", "mpeg1video", "h263", "vc1", "wmv3", "wmv2", "msmpeg4v3", "rv40", "mjpeg"] {
+            assert_eq!(at(codec, 1280, 720, &c1), Some(StartRefusal::VideoUnsupported(codec.into())), "{codec}");
+        }
+    }
+
     fn probed_dts(channels: i64) -> ProbedStreams {
         use crate::stream::{ProbedAudio, ProbedVideo};
         ProbedStreams {
-            video: Some(ProbedVideo { codec: "hevc".into(), width: 1920, height: 1080, fps: 24.0, dovi: Dovi::NONE }),
+            video: Some(ProbedVideo { codec: "hevc".into(), width: 1920, height: 1080, fps: 24.0, dovi: Dovi::NONE, profile: -99 }),
             audio: vec![ProbedAudio { codec: "dts".into(), channels, sample_rate: 48_000, default: true, ..Default::default() }],
-            duration_ns: 0,
+            ..Default::default()
         }
     }
 
@@ -474,7 +650,7 @@ mod tests {
         assert_eq!(ps.begin_against(PlaybackStart::new("https://cdn.example/v.mkv"), &caps), Ok(()));
         assert!(ps.unresolved());
         assert_eq!((ps.audio(), ps.refusal()), (&AudioFeed::Silent, None));
-        let sw = SoftwareAudio { dts_to_ac3: true };
+        let sw = SoftwareAudio { ac3_encoder: true, decoders: 1, ..SoftwareAudio::NONE };
         assert_eq!(ps.resolve_against(probed_dts(8), &caps, sw, no_dv), Ok(Some(0)));
         assert!(!ps.unresolved());
         assert_eq!(ps.audio(), &AudioFeed::TranscodeAc3 { source: "dts".into(), channels: 8 });
@@ -490,6 +666,102 @@ mod tests {
             ps.resolve_against(probed_dts(8), &caps, SoftwareAudio::NONE, no_dv),
             Err(StartRefusal::AudioUnsupported { codec: "dts".into(), channels: 8 })
         );
+    }
+
+    /// A file with English (default, AC-3 5.1) and German (E-AC-3 Atmos) audio and three
+    /// subtitle streams: English full, English forced (by its title only), German full.
+    fn bilingual() -> ProbedStreams {
+        use crate::stream::{ProbedAudio, ProbedSub};
+        let mut p = probed_dts(6);
+        p.audio = vec![
+            ProbedAudio { codec: "ac3".into(), channels: 6, default: true, language: "eng".into(), ..Default::default() },
+            ProbedAudio { codec: "eac3".into(), channels: 8, atmos: true, language: "deu".into(), ..Default::default() },
+        ];
+        p.subs = vec![
+            ProbedSub { language: "eng".into(), ..Default::default() },
+            ProbedSub { language: "en".into(), name: "Forced".into(), forced: true, ..Default::default() },
+            ProbedSub { language: "ger".into(), ..Default::default() },
+        ];
+        p
+    }
+
+    fn prefs(audio: &[&str], subs: &[&str], mode: sn_base::tracks::SubsMode) -> sn_base::tracks::TrackPrefs {
+        let own = |l: &[&str]| l.iter().map(|c| (*c).to_string()).collect();
+        let native = audio.first().copied().unwrap_or("EN").to_string();
+        sn_base::tracks::TrackPrefs { audio: own(audio), subtitles: own(subs), mode, native, forced_fallback: false }
+    }
+
+    /// Resolve `probed` for a start carrying `tracks`: (audio, subtitle) and the declared codec.
+    fn resolve_with(tracks: Option<sn_base::tracks::TrackPrefs>, probed: ProbedStreams) -> (i32, i32, String) {
+        let mut caps = Caps::assumed();
+        caps.audio = "aac,ac3,eac3".into();
+        let mut ps = PlaybackSession::IDLE;
+        let mut start = PlaybackStart::new("https://cdn.example/v.mkv");
+        start.tracks = tracks;
+        ps.begin_against(start, &caps).unwrap();
+        ps.resolve_against(probed, &caps, SoftwareAudio::NONE, no_dv).unwrap();
+        (ps.audio_track(), ps.subtitle_track(), ps.stream().acodec)
+    }
+
+    /// **The audio language preference picks the track before the Load**: the declaration is the
+    /// German track's (E-AC-3 Atmos), so nothing reloads once it plays.
+    #[test]
+    fn a_german_preference_picks_the_german_track_before_the_load() {
+        use sn_base::tracks::SubsMode::*;
+        let (a, s, codec) = resolve_with(Some(prefs(&["DE", "EN"], &["DE", "EN"], Auto)), bilingual());
+        assert_eq!((a, codec.as_str()), (1, "eac3"), "the German track is declared");
+        assert_eq!(s, -1, "Auto over audio in the preferred language: no forced German track, so none");
+        // file default keeps today's pick (the default English track) and, with no preferences at
+        // all, subtitles stay off as they always were
+        assert_eq!(resolve_with(Some(prefs(&[], &["EN"], Off)), bilingual()), (0, -1, "ac3".into()));
+        assert_eq!(resolve_with(None, bilingual()), (0, -1, "ac3".into()));
+    }
+
+    #[test]
+    fn auto_turns_subtitles_on_only_when_the_audio_is_not_understood() {
+        use sn_base::tracks::SubsMode::*;
+        let mut en_only = bilingual();
+        en_only.audio.truncate(1);
+        assert_eq!(resolve_with(Some(prefs(&["DE", "EN"], &["DE", "EN"], Auto)), en_only.clone()).1, 2, "German subtitles over English audio");
+        assert_eq!(resolve_with(Some(prefs(&[], &["EN"], Auto)), en_only.clone()).1, 1, "English audio understood: its forced track");
+        assert_eq!(resolve_with(Some(prefs(&["DE"], &["DE"], On)), en_only).1, 2);
+    }
+
+    /// Forced-only: a forced track (by its flag or its title) in the audio's language, else none.
+    #[test]
+    fn forced_only_shows_the_audios_forced_track() {
+        use sn_base::tracks::SubsMode::*;
+        assert_eq!(resolve_with(Some(prefs(&["EN"], &["DE"], Forced)), bilingual()).1, 1, "titled Forced, English like the audio");
+        assert_eq!(resolve_with(Some(prefs(&["DE"], &["DE"], Forced)), bilingual()).1, -1, "no forced German track");
+        // a start that names its tracks keeps them
+        let mut ps = PlaybackSession::IDLE;
+        let mut start = PlaybackStart::new("https://cdn.example/v.mkv");
+        (start.tracks, start.audio_track, start.subtitle_track) = (Some(prefs(&["DE"], &["DE"], Forced)), Some(0), Some(2));
+        ps.begin_against(start, &Caps::assumed()).unwrap();
+        ps.resolve_against(bilingual(), &Caps::assumed(), SoftwareAudio::NONE, no_dv).unwrap();
+        assert_eq!((ps.audio_track(), ps.subtitle_track()), (0, 2));
+    }
+
+    /// The C1 beta's FLAC file (`probed h264 1920x1080 ... audio=flac 2ch track=Some(0) of 2`):
+    /// refused `AudioUnsupported` without the software decoder, resolved to a PCM feed with it.
+    #[test]
+    fn a_probed_flac_file_resolves_to_a_pcm_feed_not_a_refusal() {
+        let mut flac = probed_dts(2);
+        flac.audio[0].codec = "flac".into();
+        flac.audio.push(flac.audio[0].clone());
+        flac.audio[1].default = false;
+        let mut ps = PlaybackSession::IDLE;
+        ps.begin_against(PlaybackStart::new("https://cdn.example/v.mkv"), &Caps::assumed()).unwrap();
+        assert_eq!(
+            ps.resolve_against(flac.clone(), &Caps::assumed(), SoftwareAudio::NONE, no_dv),
+            Err(StartRefusal::AudioUnsupported { codec: "flac".into(), channels: 2 })
+        );
+        ps.begin_against(PlaybackStart::new("https://cdn.example/v.mkv"), &Caps::assumed()).unwrap();
+        let sw = SoftwareAudio { pcm: true, ..SoftwareAudio::NONE };
+        assert_eq!(ps.resolve_against(flac, &Caps::assumed(), sw, no_dv), Ok(Some(0)));
+        assert_eq!(ps.refusal(), None);
+        assert_eq!(ps.audio(), &AudioFeed::SoftPcm { source: "flac".into(), channels: 2, dplii: false });
+        assert_eq!(ps.audio().payload(), Some(("PCM", 6)));
     }
 
     /// A probe failure is a refusal on the session — never an unresolved start left spinning —
@@ -541,6 +813,28 @@ mod tests {
         );
         assert_eq!(ps.decide_t(start("h264", "aac", 2), &caps, no_dv), Ok(()));
         assert_eq!(ps.audio().payload(), Some(("AAC", 3)));
+    }
+
+    /// The Profile 7 → 8.1 trial: watched until a frame or a fallback, and the fallback turns
+    /// the session into the base-layer (HDR10) presentation exactly once.
+    #[test]
+    fn a_profile_7_trial_falls_back_to_the_base_layer_once() {
+        let caps = Caps::assumed();
+        let trial = DvPresentation::ConvertTo81;
+        let mut ps = PlaybackSession::IDLE;
+        ps.decide_t(start("hevc", "eac3", 6), &caps, |_, _| trial).unwrap();
+        assert!(ps.dv_on_trial());
+        assert!(ps.fall_back_to_base_layer("test"));
+        assert_eq!(ps.dv(), DvPresentation::BaseLayer);
+        assert!(!ps.dv_on_trial() && !ps.fall_back_to_base_layer("again"));
+        let mut ps = PlaybackSession::IDLE;
+        ps.decide_t(start("hevc", "eac3", 6), &caps, |_, _| trial).unwrap();
+        ps.settle_dv_trial();
+        assert!(!ps.dv_on_trial() && !ps.fall_back_to_base_layer("late"), "a presented frame ends the trial");
+        assert_eq!(ps.dv(), trial);
+        let mut ps = PlaybackSession::IDLE;
+        ps.decide_t(start("hevc", "eac3", 6), &caps, no_dv).unwrap();
+        assert!(!ps.dv_on_trial() && !ps.fall_back_to_base_layer("none"));
     }
 
     #[test]

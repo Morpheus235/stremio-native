@@ -1069,6 +1069,15 @@ pub fn surface_with(rect: Rect, rises: bool) -> Option<Surface> {
         })
     })
 }
+/// Drop every retained backdrop (and the walk's record of what it showed), so the next walk
+/// captures afresh. For `gfx::release_offscreen`, whose chain the images name.
+pub fn clear_retained() {
+    WALK.with(|w| {
+        if let Some(w) = w.borrow().as_ref() {
+            w.sources.borrow_mut().clear();
+        }
+    });
+}
 pub fn image(z: Z) -> Option<Rc<crate::gfx::BackdropImage>> {
     WALK.with(|w| {
         w.borrow()

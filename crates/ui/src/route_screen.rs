@@ -1099,7 +1099,7 @@ mod tests {
         }
         let measure = TitleMeasure;
         let min_content = RouteLayout::screen().content.w;
-        for preference in [sn_platform::i18n::Preference::En, sn_platform::i18n::Preference::Es, sn_platform::i18n::Preference::Be, sn_platform::i18n::Preference::Fr] {
+        for preference in sn_platform::i18n::SHIPPED {
             let locale = sn_platform::i18n::LocaleContext::resolve(preference, None, None, None, None);
             let title = sn_platform::i18n::msg::browse_person_filmography_in(&locale);
             let layout = RouteLayout::screen_for_title(480.0, min_content, title, &measure);

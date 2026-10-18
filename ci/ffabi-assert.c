@@ -99,6 +99,22 @@ SAME32(offsetof(AVFormatContext, streams), 28, "AVFormatContext.streams moved");
 SAME64(offsetof(AVFormatContext, streams), 48, "AVFormatContext.streams moved [host]");
 SAME32(offsetof(AVFormatContext, duration), 64, "OFF_FMT_DURATION != 64");
 SAME64(offsetof(AVFormatContext, duration), 104, "OFF_FMT_DURATION != 64 [host]");
+SAME32(offsetof(AVFormatContext, start_time), 56, "OFF_FMT_START_TIME != OFF_FMT_DURATION - 8");
+SAME64(offsetof(AVFormatContext, start_time), 96, "OFF_FMT_START_TIME != OFF_FMT_DURATION - 8 [host]");
+/* The chapter list, read once at open for the scrub preview (`ff::read_chapters`). */
+SAME32(offsetof(AVFormatContext, nb_chapters), 40, "OFF_FMT_NB_CHAPTERS != 40");
+SAME64(offsetof(AVFormatContext, nb_chapters), 72, "OFF_FMT_NB_CHAPTERS != 40 [host]");
+SAME32(offsetof(AVFormatContext, chapters), 44, "OFF_FMT_CHAPTERS != 44");
+SAME64(offsetof(AVFormatContext, chapters), 80, "OFF_FMT_CHAPTERS != 44 [host]");
+SAME(sizeof(((AVFormatContext *)0)->nb_chapters), 4, "AVFormatContext.nb_chapters is not 32-bit");
+/* AVChapter: ff.rs models it whole (#[repr(C)]); every field and the size, both widths. */
+SAME(offsetof(AVChapter, id), 0, "AVChapter.id moved");
+SAME(sizeof(((AVChapter *)0)->id), 8, "AVChapter.id is not int64");
+SAME(offsetof(AVChapter, time_base), 8, "AVChapter.time_base moved");
+SAME(offsetof(AVChapter, start), 16, "AVChapter.start moved");
+SAME(offsetof(AVChapter, end), 24, "AVChapter.end moved");
+SAME(offsetof(AVChapter, metadata), 32, "AVChapter.metadata moved");
+SAME(sizeof(AVChapter), 40, "sizeof(AVChapter) != 40");
 
 /* --- AVFrame: poked directly by the encode path. --- */
 SAME(offsetof(AVFrame, data), 0, "OFF_FRAME_DATA != 0");
@@ -263,6 +279,7 @@ SAME(offsetof(AVContentLightMetadata, MaxCLL), 0, "AVContentLightMetadata.MaxCLL
 SAME(offsetof(AVContentLightMetadata, MaxFALL), 4, "AVContentLightMetadata.MaxFALL moved");
 SAME(AV_CODEC_ID_VP9, 166, "AV_CODEC_ID_VP9 != 166");
 SAME(AV_CODEC_ID_AV1, 222, "AV_CODEC_ID_AV1 != 222");
+SAME(AV_CODEC_ID_VP8, 139, "AV_CODEC_ID_VP8 != 139");
 SAME(AV_CODEC_ID_AAC, 0x15002, "AV_CODEC_ID_AAC moved");
 SAME(AV_CODEC_ID_AC3, 0x15003, "AV_CODEC_ID_AC3 moved");
 SAME(AV_CODEC_ID_EAC3, 0x15028, "AV_CODEC_ID_EAC3 != 0x15028 (0x15029 names ATRAC3P here)");
@@ -288,11 +305,19 @@ SAME(AVMEDIA_TYPE_ATTACHMENT, 4, "AVMEDIA_TYPE_ATTACHMENT != 4");
    r_frame_rate sits past the embedded AVPacket attached_pic (80 bytes on ARM). */
 SAME32(offsetof(AVStream, disposition), 56, "OFF_STREAM_DISPOSITION != 56");
 SAME64(offsetof(AVStream, disposition), 64, "OFF_STREAM_DISPOSITION != 56 [host]");
+/* AVStream.discard follows disposition: the demuxer marks the tracks it does not play AVDISCARD_ALL
+   so mov/mkv skip their samples (an MP4's 14 subtitle tracks, stored apart from the video, cost an
+   HTTP range reopen per sample and stalled a 4K stream). */
+SAME32(offsetof(AVStream, discard), 60, "OFF_STREAM_DISCARD != 60");
+SAME64(offsetof(AVStream, discard), 68, "OFF_STREAM_DISCARD != 60 [host]");
+SAME(AVDISCARD_ALL, 48, "AVDISCARD_ALL != 48");
+SAME(AVDISCARD_DEFAULT, 0, "AVDISCARD_DEFAULT != 0");
 SAME32(offsetof(AVStream, avg_frame_rate), 76, "OFF_STREAM_AVG_FRAME_RATE != 76");
 SAME64(offsetof(AVStream, avg_frame_rate), 88, "OFF_STREAM_AVG_FRAME_RATE != 76 [host]");
 SAME32(offsetof(AVStream, r_frame_rate), 172, "OFF_STREAM_R_FRAME_RATE != 172");
 SAME64(offsetof(AVStream, r_frame_rate), 204, "OFF_STREAM_R_FRAME_RATE != 172 [host]");
 SAME(AV_DISPOSITION_DEFAULT, 1, "AV_DISPOSITION_DEFAULT != 1");
+SAME(AV_DISPOSITION_FORCED, 0x40, "AV_DISPOSITION_FORCED != 0x40");
 
 /* AVCodecParameters: the rest of ff.rs's modelled prefix that the probe and the transcoder read or
    write. The transcoder configures its AC-3 encoder by filling a LIBRARY-ALLOCATED

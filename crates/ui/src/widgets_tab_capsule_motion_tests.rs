@@ -649,3 +649,34 @@ fn the_play_glyph_appears_exactly_where_the_press_plays() {
         Some(theme::TEXT_SECONDARY),
     );
 }
+
+/// **The top bar's current-page plate is the accent unless focus is elsewhere in the bar.** Bar
+/// unfocused: the current pill is the accent plate with accent ink. Focus on another pill: that pill
+/// is the purple one and the current falls back to the wash (never two purple pills). Focus on the
+/// current pill: the purple focus capsule over it.
+#[test]
+fn the_current_pill_is_purple_unless_focus_is_on_another() {
+    let _g = serial_for_motion();
+    let w = widths_for(5);
+    let settle = |sel: c_int, foc: c_int| {
+        let mut s = TabStrip::new();
+        for _ in 0..90 {
+            s.update(sel, foc, |i| (i < w.len()).then(|| span_of(&w, i)), SelMark::Travels, DT);
+        }
+        s
+    };
+    let ground = TabGround::Tracked { glass: false };
+    let near = |a: [f32; 4], b: [f32; 4]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-3);
+    let ink = |(f, s): (f32, f32)| TabPill::mixed_ink(f, s);
+    let unfocused = settle(1, -1);
+    assert!(near(unfocused.selection_colour(ground), theme::TAB_CURRENT), "bar unfocused: the current pill is the accent");
+    assert!(near(ink(unfocused.tracked_mixes(span_of(&w, 1))), crate::ACCENT_INK), "…inked for it");
+    let elsewhere = settle(1, 3);
+    assert!(near(elsewhere.selection_colour(ground), theme::TAB_CURRENT_UNDER_FOCUS), "focus on another pill: the current is the wash");
+    assert!(near(ink(elsewhere.tracked_mixes(span_of(&w, 1))), theme::TEXT_PRIMARY), "…inked as selected");
+    assert!(near(ink(elsewhere.tracked_mixes(span_of(&w, 3))), crate::ACCENT_INK), "the focused pill is the purple one");
+    let on_current = settle(1, 1);
+    assert!(near(ink(on_current.tracked_mixes(span_of(&w, 1))), crate::ACCENT_INK), "focus on the current pill: the purple capsule");
+    assert!(on_current.mixes(span_of(&w, 1)).0 > 0.999, "…which is the focus capsule's");
+    assert!(near(settle(1, -1).selection_colour(TabGround::Plated { pop: 1.0 }), theme::TAB_PLATE_SELECTED_OVER), "the season strip is unchanged");
+}

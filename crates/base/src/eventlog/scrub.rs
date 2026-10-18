@@ -495,42 +495,65 @@ const ADDON_RESOURCES: [&str; 6] = ["manifest.json", "catalog", "meta", "stream"
 fn scrub_paths(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
-    while let Some(at) = rest.find("://") {
-        let after = at + 3;
-        let Some(slash) = rest[after..].find(|c: char| c == '/' || c == '?' || c.is_whitespace()) else {
-            break;
-        };
-        let path_at = after + slash;
+    loop {
+        // The next path: after a URL's authority, or a `path=` field printed apart from its host.
+        let url = rest.find("://").and_then(|at| {
+            let after = at + 3;
+            let slash = rest[after..].find(|c: char| c == '/' || c == '?' || c.is_whitespace())?;
+            Some(after + slash)
+        });
+        let field = rest.find("path=/").map(|at| at + "path=".len());
+        let Some(path_at) = [url, field].into_iter().flatten().min() else { break };
         out.push_str(&rest[..path_at]);
         rest = &rest[path_at..];
         if !rest.starts_with('/') {
+            if rest.is_empty() {
+                break;
+            }
+            // a URL with no path: step past the character that ended its authority
+            let c = rest.chars().next().map_or(1, char::len_utf8);
+            out.push_str(&rest[..c]);
+            rest = &rest[c..];
             continue;
         }
         let end = rest
             .find(|c: char| c == '?' || c == '#' || c == '"' || c == '\'' || c.is_whitespace())
             .unwrap_or(rest.len());
-        let segments: Vec<&str> = rest[1..end].split('/').collect();
-        let config = segments.iter().position(|seg| ADDON_RESOURCES.contains(seg)).filter(|&i| i > 0);
-        let mut kept: Vec<&str> = Vec::with_capacity(segments.len());
-        if let Some(i) = config {
-            kept.push("<config>");
-            kept.extend_from_slice(&segments[i..]);
-        } else {
-            kept.extend_from_slice(&segments);
-        }
-        for seg in kept {
-            out.push('/');
-            out.push_str(if looks_like_key(seg) { "<redacted>" } else { seg });
-        }
+        out.push_str(&scrub_path(&rest[..end]));
         rest = &rest[end..];
     }
     out.push_str(rest);
     out
 }
 
+/// One path (`/a/b/c`), made safe: addon configuration before the resource name becomes
+/// `<config>`, key-shaped segments `<redacted>`, and everything from a base64-JSON token
+/// (`eyJ…`, which may itself contain `/`) onward one `<redacted>`.
+fn scrub_path(path: &str) -> String {
+    let segments: Vec<&str> = path[1..].split('/').collect();
+    let config = segments.iter().position(|seg| ADDON_RESOURCES.contains(seg)).filter(|&i| i > 0);
+    let kept: &[&str] = match config {
+        Some(i) => &segments[i..],
+        None => &segments,
+    };
+    let mut out = String::with_capacity(path.len());
+    if config.is_some() {
+        out.push_str("/<config>");
+    }
+    for seg in kept {
+        out.push('/');
+        if seg.starts_with("eyJ") && seg.len() >= 12 {
+            out.push_str("<redacted>");
+            return out;
+        }
+        out.push_str(if looks_like_key(seg) { "<redacted>" } else { seg });
+    }
+    out
+}
+
 fn looks_like_key(seg: &str) -> bool {
     seg.len() >= 20
-        && seg.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        && seg.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'+' | b'='))
         && seg.bytes().any(|b| b.is_ascii_digit())
         && seg.bytes().any(|b| b.is_ascii_alphabetic())
 }
@@ -653,6 +676,18 @@ mod tests {
         let out = kept("player: open https://dl.example/resolve/realdebrid/Q1w2E3r4T5y6U7i8O9p0/abc/1/file.mkv");
         assert!(!out.contains("Q1w2E3r4T5y6U7i8O9p0"), "{out}");
         assert!(out.ends_with("/resolve/realdebrid/<redacted>/abc/1/file.mkv"), "{out}");
+    }
+
+    /// A stream line that prints the URL's path apart from its host (`stream: … path=…`), with a
+    /// debrid playback token as a base64 segment (`+`, `/`, `=`), seen in a beta's device log.
+    #[test]
+    fn a_token_in_a_separate_path_field_never_survives() {
+        let tok = "eyJpIjoiN3Z5OXQvRkRIMU9hUzFRa2JoNWg2Zz09IiwiZSI6Ilk5azdmSDVKU1FKZndjVUNQUERp+QUl1cU5F==";
+        let out = kept(&format!("stream: https://debrid.example path=/api/v1/debrid/playback/{tok}"));
+        assert!(!out.contains("eyJpIjoi"), "{out}");
+        assert!(out.contains("path=/api/v1/debrid/playback/<redacted>"), "{out}");
+        let out = kept("stream: https://cdn.example path=/extractor/video?host=x.example");
+        assert!(out.contains("path=/extractor/video"), "an ordinary path stays: {out}");
     }
 
     /// The Stremio session key, in the API's JSON bodies and in query form.

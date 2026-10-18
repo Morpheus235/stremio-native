@@ -678,6 +678,13 @@ pub fn card_art_request<'a>(art: &Art<'a>) -> Option<(u16, &'a str, c_int, c_int
     })
 }
 
+/// A poster tile whose art will never arrive: no `thumb` at all, or one the source has settled as
+/// a miss ([`crate::tex::failed_on`] at the key [`card_art_request`] asks for). It draws its
+/// title fallback (`collection_tile::draw_title`) — an answer, not a wait.
+fn poster_absent(m: &TileFacts<'_>) -> bool {
+    m.thumb.is_empty() || crate::tex::failed_on(m.src, m.thumb, POSTER_RES.0, POSTER_RES.1, false)
+}
+
 /// The name a poster card draws on the neutral collection tile, when it draws one: a collection
 /// row whose server sent no `thumb`. A composite or custom thumb is artwork and draws as a poster.
 fn neutral_collection_name<'a>(m: Option<&TileFacts<'a>>) -> Option<&'a str> {
@@ -731,9 +738,13 @@ pub fn card_named(p: Painter, frame: Rect, art: Art, fan_name: Option<&str>, rad
                 if let Some(m) = m.filter(|m| m.kind == TileKind::Collection && m.composite_thumb) {
                     crate::collection_tile::draw_fan_name(p, frame, r, m.title);
                 }
+            } else if let Some(m) = m.filter(|m| poster_absent(m)) {
+                // Nothing will arrive (no poster, or its art settled as a miss): the item's name on
+                // the tinted absent ground, never a skeleton that reads as loading forever.
+                crate::collection_tile::draw_title(p, frame, r, rad, m.title);
             } else {
-                // Counted where it is DRAWN: `Art::Poster(None)` (a not-yet-loaded index) and an
-                // empty thumb path reach here with no resolve at all, as does a miss.
+                // Counted where it is DRAWN: `Art::Poster(None)` (a not-yet-loaded index) and art
+                // still on its way.
                 crate::placeholder::skeleton(p, crate::placeholder::Reason::CardSkeleton,
                     m.map_or("", |m| m.thumb), r, rad);
             }
@@ -1874,80 +1885,189 @@ pub fn continuous_scroll_rail(
     );
 }
 
-// ---- Pending placeholders --------------------------------------------------------------------
+// ---- Scrubber: the player's seek bar ------------------------------------------------------------
 
-/// **One light pass across a placeholder** — the pending sweep, and a deliberate addition to this
-/// product's motion set (`Person Screen.dc.html`: "it does not pulse, scale or move the block
-/// itself"). Nothing here pulses; arrival is the dip, which is `Xfade`'s job, not this one's.
-pub const SKELETON_PERIOD_MS: u32 = 1500;
-/// The resting fill of a TEXT-line placeholder, and the peak the sweep lifts it to.
-const SKEL_BAR_A: f32 = 0.08;
-const SKEL_SHEEN_A: f32 = 0.06;
-/// How wide the moving highlight is, as a fraction of the block it crosses.
-const SKEL_BAND: f32 = 0.35;
-/// The sweep is drawn as a few flat strips rather than one interpolated quad. At six per cent alpha
-/// the steps are invisible on the panel, and it keeps the whole thing on `Painter::rect` — no
-/// `grad4` corner convention to get wrong, and no scissor to pair.
-const SKEL_STRIPS: usize = 6;
-
-/// Phase 0..1 from a millisecond clock, for a caller accumulating its own — [`Spinner::phase`]'s
-/// pattern. Stepping the clock itself needs no `sn_machine::idle` report (see that module: the six phase
-/// accumulators tick unconditionally); the report is [`skeleton_sheen`]'s, from the draw, exactly
-/// as [`Spinner::draw`] does it and for the same reason recorded there.
-pub fn skeleton_phase(ms: u32) -> f32 {
-    (ms % SKELETON_PERIOD_MS) as f32 / SKELETON_PERIOD_MS as f32
+/// **The transport scrubber** — the player HUD's seek bar, all vector quads: a slim pill-ended
+/// rail ([`theme::RAIL_TRACK`]), the BUFFERED range ahead of the playhead
+/// ([`theme::RAIL_BUFFERED`]), the played part in the brand accent with a soft glow under it
+/// ([`theme::SCRUB_PLAYED`], [`theme::SCRUB_GLOW`]), chapter boundaries as small cuts in the rail
+/// (the ground through it — never a mark), and a round playhead that grows while the bar holds
+/// focus and more while a scrub is live. While scrubbing a TIME BUBBLE stands above the playhead
+/// (its time, and the hold's step when one runs), clamped inside the rail's span.
+///
+/// Fractions are of the whole length (0..=1); [`Scrubber::geom`] is the pure layout so a host test
+/// can hold the knob, the fill and the bubble to their places.
+pub struct Scrubber<'a> {
+    /// The rail's line: `x`, `w` its span, `y` its CENTRE, `h` its resting thickness.
+    pub rail: Rect,
+    /// Where the playhead is shown (a live scrub's target, else the position).
+    pub pos: f32,
+    /// The end of the buffered range, when the pipeline says.
+    pub buffered: Option<f32>,
+    /// Focus and scrub emphasis, 0..=1 each (the caller eases them): the knob grows with both.
+    pub focus: f32,
+    pub scrub: f32,
+    /// The bubble's text while scrubbing (`None`: no bubble).
+    pub bubble: Option<&'a str>,
+    /// Chapter starts, as fractions (0 and 1 are not cut).
+    pub chapters: &'a [f32],
 }
 
-/// The sweep, over whatever ground the caller has already laid down.
-///
-/// Reports to `sn_machine::idle` from HERE, not from the clock that feeds it — `Spinner::draw`'s rule:
-/// only a placeholder actually ON SCREEN should hold the loop awake, and reporting from draw can
-/// only latch the gate on for the next frame, never off, so it self-sustains for exactly as long as
-/// something keeps drawing one.
-fn skeleton_sheen(p: Painter, r: Rect, rad: f32, phase: f32) {
-    // placeholder-exempt: the sweep is paint over a skeleton its caller (`skeleton_bar`, `skeleton_sheet`) counted first
-    sn_machine::idle::invalidate();
-    let band = (r.w * SKEL_BAND).max(1.0);
-    // travel from fully off the left edge to fully off the right, so the block is clean at both
-    // ends of the cycle rather than starting mid-flash
-    let centre = r.x - band * 0.5 + phase * (r.w + band);
-    let step = band / SKEL_STRIPS as f32;
-    for k in 0..SKEL_STRIPS {
-        let sx = centre - band * 0.5 + step * k as f32;
-        let (x0, x1) = (sx.max(r.x), (sx + step).min(r.x + r.w));
-        if x1 <= x0 {
-            continue;
+/// The scrubber's laid-out parts, in screen space.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScrubGeom {
+    /// The rail at its current thickness.
+    pub track: Rect,
+    /// The played part (zero width at 0).
+    pub played: Rect,
+    /// The playhead's centre and radius.
+    pub knob: (f32, f32, f32),
+}
+
+impl<'a> Scrubber<'a> {
+    /// The rail's thickness at rest and fully focused.
+    pub const RAIL_REST: f32 = 6.0;
+    pub const RAIL_FOCUS: f32 = 8.0;
+    /// The playhead's radius at rest (a small dot), focused, and scrubbing.
+    pub const KNOB_REST: f32 = 6.0;
+    pub const KNOB_FOCUS: f32 = 11.0;
+    pub const KNOB_SCRUB: f32 = 14.0;
+    /// The bubble's type, and the air between it and the knob.
+    pub const BUBBLE_SZ: c_int = theme::size::LABEL;
+    pub const BUBBLE_GAP: f32 = 14.0;
+
+    pub fn new(rail: Rect, pos: f32) -> Self {
+        Scrubber { rail, pos, buffered: None, focus: 0.0, scrub: 0.0, bubble: None, chapters: &[] }
+    }
+    pub fn buffered(mut self, b: Option<f32>) -> Self {
+        self.buffered = b;
+        self
+    }
+    pub fn emphasis(mut self, focus: f32, scrub: f32) -> Self {
+        (self.focus, self.scrub) = (focus.clamp(0.0, 1.0), scrub.clamp(0.0, 1.0));
+        self
+    }
+    pub fn bubble(mut self, text: Option<&'a str>) -> Self {
+        self.bubble = text;
+        self
+    }
+    pub fn chapters(mut self, c: &'a [f32]) -> Self {
+        self.chapters = c;
+        self
+    }
+
+    /// The pure layout.
+    pub fn geom(&self) -> ScrubGeom {
+        let r = self.rail;
+        let th = Self::RAIL_REST + (Self::RAIL_FOCUS - Self::RAIL_REST) * self.focus.max(self.scrub);
+        let track = Rect::new(r.x, r.y - th * 0.5, r.w, th);
+        let x = r.x + r.w * self.pos.clamp(0.0, 1.0);
+        let played = Rect::new(r.x, track.y, x - r.x, th);
+        let knob_r = Self::KNOB_REST + (Self::KNOB_FOCUS - Self::KNOB_REST) * self.focus + (Self::KNOB_SCRUB - Self::KNOB_FOCUS) * self.scrub;
+        ScrubGeom { track, played, knob: (x, r.y, knob_r) }
+    }
+
+    /// The bubble's pill for `text_w` of text, above the knob, inside the rail's span.
+    pub fn bubble_rect(&self, text_w: f32, line_h: f32) -> Rect {
+        let g = self.geom();
+        let (w, h) = (text_w + 2.0 * theme::space::MD, line_h + 2.0 * theme::space::XS);
+        let x = (g.knob.0 - w * 0.5).clamp(self.rail.x, self.rail.x + self.rail.w - w);
+        Rect::new(x, g.knob.1 - g.knob.2 - Self::BUBBLE_GAP - h, w, h)
+    }
+
+    pub fn draw(&self, p: Painter, measure: &dyn sn_machine::machine::Measure) {
+        let g = self.geom();
+        let rad = g.track.h * 0.5;
+        p.rrect(g.track, rad, rad, theme::RAIL_TRACK);
+        if let Some(b) = self.buffered.filter(|b| *b > self.pos) {
+            let bw = self.rail.w * b.clamp(0.0, 1.0);
+            p.rrect(Rect::new(g.track.x, g.track.y, bw, g.track.h), rad, rad, theme::RAIL_BUFFERED);
         }
-        // a linear tent, peaking at the band's centre
-        let t = 1.0 - ((sx + step * 0.5 - centre).abs() / (band * 0.5)).clamp(0.0, 1.0);
-        let c = theme::white(SKEL_SHEEN_A * t);
-        p.rect(Rect::new(x0, r.y, x1 - x0, r.h), rad, c, c, 0.0);
+        if g.played.w > 0.5 {
+            // the glow first, under the fill: a soft accent halo, brighter as the bar is engaged
+            let glow = theme::with_a(theme::SCRUB_GLOW, theme::SCRUB_GLOW[3] * (0.45 + 0.55 * self.focus.max(self.scrub)));
+            p.shadow_outside(g.played, rad, 10.0, 0.0, glow);
+            p.rrect(g.played, rad, rad.min(g.played.w * 0.5), theme::SCRUB_PLAYED);
+        }
+        for c in self.chapters.iter().filter(|c| **c > 0.0 && **c < 1.0) {
+            let cx = self.rail.x + self.rail.w * c;
+            p.rect(Rect::new(cx - 1.5, g.track.y, 3.0, g.track.h), 0.0, theme::SCRUB_CHAPTER_CUT, theme::SCRUB_CHAPTER_CUT, 0.0);
+        }
+        let (kx, ky, kr) = g.knob;
+        let knob = Rect::new(kx - kr, ky - kr, 2.0 * kr, 2.0 * kr);
+        p.shadow_outside(knob, kr, 8.0, 2.0, theme::SCRUB_KNOB_SHADOW);
+        p.rect(knob, kr, theme::SCRUB_KNOB, theme::SCRUB_KNOB, 0.0);
+        // an accent core while engaged: the knob reads as the bar's own, not a stray white dot
+        let core = kr * 0.42 * self.focus.max(self.scrub);
+        if core > 0.5 {
+            p.rect(Rect::new(kx - core, ky - core, 2.0 * core, 2.0 * core), core, theme::SCRUB_PLAYED, theme::SCRUB_PLAYED, 0.0);
+        }
+        if let Some(text) = self.bubble {
+            let w = measure.width_str(text, Self::BUBBLE_SZ, true);
+            let b = self.bubble_rect(w, measure.line_h(Self::BUBBLE_SZ));
+            p.rect(b, b.h * 0.5, theme::SCRUB_BUBBLE, theme::SCRUB_BUBBLE, 0.0);
+            let c = std::ffi::CString::new(text.replace('\0', "")).unwrap_or_default();
+            Label::new(c.as_ptr(), Self::BUBBLE_SZ, theme::TEXT_PRIMARY).bold().h(HAlign::Center).v(VAlign::Middle).draw(p, b);
+        }
     }
 }
 
+#[cfg(test)]
+mod scrubber_tests {
+    use super::*;
+
+    /// The played part ends at the playhead; the knob grows with focus and more while scrubbing;
+    /// the bubble stands above the knob and never leaves the rail's span.
+    #[test]
+    fn the_knob_grows_and_the_bubble_stays_on_the_rail() {
+        let rail = Rect::new(100.0, 900.0, 1000.0, 6.0);
+        let at = |pos: f32, f: f32, s: f32| Scrubber::new(rail, pos).emphasis(f, s).geom();
+        let g = at(0.25, 0.0, 0.0);
+        assert_eq!((g.played.x + g.played.w, g.knob.0), (350.0, 350.0));
+        assert!(at(0.25, 0.0, 0.0).knob.2 < at(0.25, 1.0, 0.0).knob.2 && at(0.25, 1.0, 0.0).knob.2 < at(0.25, 1.0, 1.0).knob.2);
+        assert!(at(0.25, 1.0, 0.0).track.h > g.track.h, "the rail thickens with focus");
+        for pos in [0.0, 0.5, 1.0] {
+            let b = Scrubber::new(rail, pos).emphasis(1.0, 1.0).bubble_rect(120.0, 32.0);
+            assert!(b.x >= rail.x && b.x + b.w <= rail.x + rail.w, "{pos}: {b:?}");
+            assert!(b.y + b.h < rail.y - Scrubber::KNOB_SCRUB, "above the knob: {b:?}");
+        }
+    }
+}
+
+// ---- Pending placeholders --------------------------------------------------------------------
+
+/// The resting fill of a TEXT-line placeholder.
+const SKEL_BAR_A: f32 = 0.08;
+
 /// **A line of text that has not arrived** — a chip-radius bar at the run's own measured height, so
-/// the block it stands in keeps its height and nothing reflows when the words land.
-pub fn skeleton_bar(p: Painter, r: Rect, phase: f32) {
+/// the block it stands in keeps its height and nothing reflows when the words land. It wears THE
+/// shimmer every placeholder shares (`placeholder::shimmer`: one crest sweeping the screen left to
+/// right), not a sweep of its own.
+pub fn skeleton_bar(p: Painter, r: Rect) {
     crate::placeholder::note(p, crate::placeholder::Reason::SkeletonBar, "");
     let rad = r.h * 0.5; // a chip radius on a text-line bar IS its half height
     if crate::placeholder::sentinel_fill(p, r, rad) {
         return;
     }
+    // placeholder-exempt: counted just above; the crest moves, so the loop stays awake while one shows
+    sn_machine::idle::invalidate();
     let base = theme::white(SKEL_BAR_A);
-    p.rect(r, rad, base, base, 0.0);
-    skeleton_sheen(p, r, rad, phase);
+    let (top, bot) = crate::placeholder::shimmer(p, r, base, base);
+    p.rect(r, rad, top, bot, 0.0);
 }
 
 /// **Artwork that has not arrived** — the structural top→bottom sheet [`Art`] already draws for a
-/// missing poster, plus the sweep. Same geometry and same resting card edge as the real tile, which
-/// is the whole point: the placeholder is the card, without the picture.
-pub fn skeleton_sheet(p: Painter, r: Rect, rad: f32, phase: f32) {
+/// missing poster, under the shared shimmer. Same geometry and same resting card edge as the real
+/// tile, which is the whole point: the placeholder is the card, without the picture.
+pub fn skeleton_sheet(p: Painter, r: Rect, rad: f32) {
     crate::placeholder::note(p, crate::placeholder::Reason::SkeletonSheet, "");
-    p.rect(r, rad, theme::SKELETON_TOP, theme::SKELETON_BOT, 0.0);
     if crate::placeholder::sentinel_fill(p, r, rad) {
         return;
     }
-    skeleton_sheen(p, r, rad, phase);
+    // placeholder-exempt: counted just above
+    sn_machine::idle::invalidate();
+    let (top, bot) = crate::placeholder::shimmer(p, r, theme::SKELETON_TOP, theme::SKELETON_BOT);
+    p.rect(r, rad, top, bot, 0.0);
     // the resting card edge, so the placeholder holds its own boundary exactly as the real tile does
     p.rring(r, rad, theme::CARD_SHEEN_W, theme::CARD_SHEEN);
 }
@@ -2029,7 +2149,7 @@ pub fn still_ground(p: Painter, card: Rect, rad: f32, h: f32, a: f32) {
         band,
         0.0,
         rad,
-        [1.0, 1.0, 1.0, 1.0],
+        theme::TINT_WHITE,
         sn_gfx::gfx::GlassRim::Standing,
         sn_gfx::gfx::GlassFace::NONE,
         theme::Material::UltraThin,
@@ -2378,6 +2498,37 @@ pub fn hero_ground(
     p.hero_ground(tex, r, art_a, ramp, hero_ground_wedge(strength));
 }
 
+/// A UNIFORM veil of alpha `a` as the one-pass ground's atmospheric ramp: both segments sit above
+/// the panel, so the field is `a` at every `y` on it ([`hero_ground_ramp_a`]).
+pub const fn veil_ramp(a: f32) -> [f32; 4] {
+    [-2.0, -1.0, a, a]
+}
+
+/// **A full-bleed backdrop under a page-wide veil and the left hero wedge** — the detail page's
+/// whole ground. `tex` 0 (art not resident) draws the veil and the wedge alone, as it always has.
+///
+/// Shipped, it is three stacked full-panel layers: the art (2.07M px), the veil as an SDF rect
+/// (2.07M px, every one blended over a pixel the art already wrote) and the wedge's two gradient
+/// quads (1.41M px). Armed by `/tmp/stremionative-heroground`, a resident art draws all three as
+/// ONE `fs_hero` pass ([`hero_ground`] with [`veil_ramp`]) — the same composite in real
+/// arithmetic (`one_blend_lands_where_three_stacked_ones_do`), up to the 8-bit rounding the
+/// three-pass path adds. An A/B rather than a default, the policy the hero ground already has:
+/// folding scrims into an art pass was measured DEARER once on the T820 (`gfx::draw_art_wash`),
+/// so only a television A/B may flip it.
+pub fn veiled_backdrop(p: Painter, tex: u32, tw: f32, th: f32, veil_a: f32) {
+    let full = Rect::FULL;
+    if tex != 0 && hero_ground_armed() {
+        hero_ground(p, tex, full.cover(tw, th), 1.0, veil_ramp(veil_a), 1.0);
+        return;
+    }
+    if tex != 0 {
+        p.tex_uv(tex, full.cover_uv(tw, th, crate::Crop::Centre), full, 0.0, theme::TINT_WHITE);
+    }
+    let veil = theme::scrim(veil_a);
+    p.rect(full, 0.0, veil, veil, 0.0);
+    hero_scrim(p, 1.0, false);
+}
+
 /// The profile chip's diameter: ONE control height with the tab pills and the circle-button
 /// family, so the focused chip's capsule — the avatar plus [`TAB_TRACK_PAD`] all round — is
 /// exactly the tab-bar track's band, and the two sit concentric on the top chrome line.
@@ -2599,6 +2750,26 @@ pub struct ProfileChipRead<'a> {
     pub initial: &'a CStr,
     pub name: &'a CStr,
     pub name_w: f32,
+    /// The avatar's face while it has no picture (a [`theme::AVATAR_FILLS`] stop for an account,
+    /// [`theme::CONTROL_IDLE_FILL`] behind the signed-out person glyph).
+    pub fill: [f32; 4],
+    /// The name stands beside the avatar at rest, not only while focused: there is room for it
+    /// before the tab track ([`chip_rests_open`]).
+    pub rest_open: bool,
+    /// The page up is the chip's own (StremioNative's Settings and Addons): its capsule wears the
+    /// bar's current-page plate, as a selected pill does ([`theme::TAB_CURRENT`]).
+    pub current: bool,
+    /// Focus is somewhere in the bar, so the current-page plate steps back to its faint wash
+    /// ([`theme::TAB_CURRENT_UNDER_FOCUS`]), as the strip's does.
+    pub bar_focused: bool,
+}
+
+/// **Does the chip's name fit beside it at rest?** The fully unfurled capsule for a name `name_w`
+/// wide, plus one [`theme::space::MD`] of air, ends before the tab track of `widths` begins. Pure,
+/// so a fit test can grade every shipped language's bar.
+pub fn chip_rests_open(widths: &[f32], name_w: f32) -> bool {
+    let cap = chip_cap(1.0, name_w);
+    cap.x + cap.w + theme::space::MD <= tab_geometry(widths, 0.0).track.x
 }
 
 /// The borrowed shared-chrome publication used by both its normal paint and a scrim lift.
@@ -2651,7 +2822,9 @@ pub fn profile_chip_with(p: Painter, data: ProfileChipRead<'_>, chip_expand: f32
     {
         // The rect comes from [`chip_cap`] rather than being built here, because it is also what
         // [`GLASS_TRACK_MAX`] is solved against — see there.
-        let cap = chip_cap(e, name_w);
+        // a chip with room beside it stands open at rest; the unfurl is then focus's plate alone
+        let open = if data.rest_open { 1.0 } else { e };
+        let cap = chip_cap(open, name_w);
         // the tab track's own material — literally the same material: glass when the track
         // resolved glass this frame, the flat capsule when it did not.
         if !chip_capsule(p, cap, 1.0, bar_material) {
@@ -2662,17 +2835,27 @@ pub fn profile_chip_with(p: Painter, data: ProfileChipRead<'_>, chip_expand: f32
                 theme::scrim_black(theme::TAB_TRACK_A_BOT),
             );
         }
+        // the strip's two marks, on the chip's capsule: the current page's plate (the chip's own
+        // page is up), and over it the focus capsule's accent
+        if data.current {
+            let plate = if data.bar_focused { theme::TAB_CURRENT_UNDER_FOCUS } else { theme::TAB_CURRENT };
+            p.rect_sheened(cap, cap.h * 0.5, plate, plate);
+        }
+        if e > 0.004 {
+            p.alpha(e).rect_sheened(cap, cap.h * 0.5, theme::ACCENT, theme::ACCENT);
+        }
         // the name rides in on the TAIL of the widening, so the glyphs land in a capsule that has
         // already made room for them instead of smearing across the grow
-        let na = ((e - 0.55) / 0.45).clamp(0.0, 1.0);
+        let na = ((open - 0.55) / 0.45).clamp(0.0, 1.0);
         if na > 0.004 {
+            let lit = if data.current && !data.bar_focused { 1.0 } else { e };
             let ty = sn_gfx::text::text_vcenter_y(theme::size::BODY, 1, r.cy());
             p.alpha(na).text(
                 name_c.as_ptr(),
                 r.x + d + CHIP_NAME_GAP,
                 ty,
                 theme::size::BODY,
-                theme::TEXT_PRIMARY,
+                theme::cross(theme::TEXT_PRIMARY, theme::ACCENT_INK, lit),
                 0,
                 1,
             );
@@ -2694,16 +2877,11 @@ pub fn profile_chip_with(p: Painter, data: ProfileChipRead<'_>, chip_expand: f32
     if !drew {
         if thumb_s.is_empty() {
             // no picture to wait for: the face is the avatar (absence, not a wait)
-            p.rect_sheened(
-                r,
-                d * 0.5,
-                theme::CONTROL_IDLE_FILL,
-                theme::CONTROL_IDLE_FILL,
-            );
+            p.rect_sheened(r, d * 0.5, data.fill, data.fill);
         } else {
             // a picture is on its way: the same face, counted
             crate::placeholder::face(p, crate::placeholder::Reason::ProfileChip, thumb_s, r, d * 0.5,
-                theme::CONTROL_IDLE_FILL, theme::CONTROL_IDLE_FILL);
+                data.fill, data.fill);
         }
         if initial_c.to_bytes().is_empty() {
             // nobody to name — signed out, or signed in with no roster landed yet. A generic
@@ -2721,7 +2899,7 @@ pub fn profile_chip_with(p: Painter, data: ProfileChipRead<'_>, chip_expand: f32
                 r.x + d * 0.5,
                 ty,
                 theme::size::HEADLINE,
-                theme::TEXT_PRIMARY,
+                theme::ACCENT_INK,
                 1,
                 1,
             );
@@ -3175,7 +3353,7 @@ impl Spinner {
             cy,
             r,
             phase: 0,
-            col: [1.0, 1.0, 1.0, 1.0],
+            col: theme::white(1.0),
             dots: 10,
             dot_r: Self::dot_r(r),
         }
@@ -3227,6 +3405,80 @@ impl View for Spinner {
             let (dx, dy) = (self.cx + self.r * ang.cos(), self.cy + self.r * ang.sin());
             let d = self.dot_r;
             p.rect(Rect::new(dx - d, dy - d, 2.0 * d, 2.0 * d), d, c, c, 0.0);
+        }
+    }
+}
+
+// ---- ProgressRing: a wait that can say how far along it is. ----
+
+/// **A progress ring** — the page-sized wait of a surface that may know HOW FAR along it is (the
+/// player's start buffer): a circle of [`ProgressRing::DOTS`] small dots on a faint track, the arc
+/// already done lit, and a comet running round it so the ring reads as alive whether or not a
+/// fraction is known. [`Spinner`]'s rules hold: it is driven by a clock, reports to the frame gate
+/// from its draw (only a ring ON SCREEN keeps the loop awake), and stands still while the phase
+/// clocks are held. One quad per dot, nothing rasterised.
+pub struct ProgressRing {
+    pub cx: f32,
+    pub cy: f32,
+    pub r: f32,
+    pub phase: u32,
+    /// The share done, 0..1; `None`: unknown (the comet alone).
+    pub progress: Option<f32>,
+    pub col: [f32; 4],
+}
+impl ProgressRing {
+    /// The dots round the ring.
+    pub const DOTS: usize = 40;
+    /// One lap of the comet, in ms.
+    pub const PERIOD_MS: u32 = 1200;
+    /// The player's working read-out's radius.
+    pub const R_PAGE: f32 = 46.0;
+    /// The dots the comet's tail spans.
+    const TAIL: f32 = 12.0;
+    /// The track's alpha, and the done arc's.
+    const TRACK_A: f32 = 0.16;
+    const DONE_A: f32 = 0.70;
+    pub fn new(cx: f32, cy: f32, r: f32) -> Self {
+        Self { cx, cy, r, phase: 0, progress: None, col: theme::white(1.0) }
+    }
+    pub fn phase(mut self, ms: u32) -> Self {
+        self.phase = ms;
+        self
+    }
+    pub fn progress(mut self, p: Option<f32>) -> Self {
+        self.progress = p.map(|p| p.clamp(0.0, 1.0));
+        self
+    }
+    pub fn tint(mut self, c: [f32; 4]) -> Self {
+        self.col = c;
+        self
+    }
+    /// Dot `i`'s alpha (0 at twelve o'clock, clockwise): the track, the done arc, or the comet's
+    /// head and tail, whichever is brightest.
+    pub fn dot_alpha(&self, i: usize) -> f32 {
+        let n = Self::DOTS as f32;
+        let i = i as f32;
+        let done = self.progress.is_some_and(|p| i < (p * n).round());
+        let base = if done { Self::DONE_A } else { Self::TRACK_A };
+        let head = (self.phase % Self::PERIOD_MS) as f32 / Self::PERIOD_MS as f32 * n;
+        let behind = (head - i).rem_euclid(n);
+        let comet = if behind < Self::TAIL { 1.0 - behind / Self::TAIL } else { 0.0 };
+        base.max(comet)
+    }
+}
+impl View for ProgressRing {
+    fn draw(&self, _e: &Env, p: Painter) {
+        // placeholder-exempt: a wait mark; its caller counts the read-out it belongs to
+        if !sn_machine::motion::phase_clocks_held() {
+            sn_machine::idle::invalidate();
+        }
+        let d = (self.r * 0.075).max(2.5);
+        for i in 0..Self::DOTS {
+            let ang = i as f32 / Self::DOTS as f32 * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;
+            let a = self.dot_alpha(i);
+            let c = [self.col[0], self.col[1], self.col[2], self.col[3] * a];
+            let (x, y) = (self.cx + self.r * ang.cos(), self.cy + self.r * ang.sin());
+            p.rect(Rect::new(x - d, y - d, 2.0 * d, 2.0 * d), d, c, c, 0.0);
         }
     }
 }
@@ -4440,7 +4692,15 @@ pub struct TransportButton {
     /// The FOCUS POP, as a factor on the frame — see [`CircleButton::scale`], whose contract this
     /// shares (these discs are that same face at 64px).
     pub scale: f32,
+    /// The disc's "on" mark ([`TransportButton::lit`]): a dot under the glyph, in the glyph's ink.
+    pub lit: bool,
 }
+/// The "on" mark's radius and its centre's drop below the disc's centre, as fractions of the disc.
+const TRANSPORT_LIT_R: f32 = 0.055;
+const TRANSPORT_LIT_DROP: f32 = 0.34;
+/// [`TransportButton`]'s `which` for the player's Episodes disc (its show icon).
+pub const TRANSPORT_EPISODES: i32 = 3;
+
 impl TransportButton {
     pub fn new(which: i32, frame: Rect) -> Self {
         Self {
@@ -4450,6 +4710,7 @@ impl TransportButton {
             ground: ControlGround::Keyed,
             palette: ControlPalette::default(),
             scale: 1.0,
+            lit: false,
         }
     }
     pub fn focused(mut self, f: bool) -> Self {
@@ -4467,6 +4728,12 @@ impl TransportButton {
     }
     pub fn scale(mut self, s: f32) -> Self {
         self.scale = s;
+        self
+    }
+    /// The disc is a TOGGLE that is on (the player's Subtitles disc while subtitles show), or the
+    /// disc whose menu is open: a small dot under the glyph says so, focused or not.
+    pub fn lit(mut self, on: bool) -> Self {
+        self.lit = on;
         self
     }
 }
@@ -4507,11 +4774,21 @@ impl View for TransportButton {
         let id = match self.which {
             1 => Icon::Audio,
             2 => Icon::More,
+            TRANSPORT_EPISODES => Icon::Show,
             _ => Icon::Cc,
         };
         let s = (r.w * DISC_ICON_RATIO).round();
         let ir = Rect::new(r.x + (r.w - s) * 0.5, r.y + (r.h - s) * 0.5, s, s);
-        crate::icons::draw(p, id, ir, ink);
+        if self.lit {
+            // the glyph rides up a little so the dot has its own room under it
+            let ir = Rect::new(ir.x, ir.y - r.h * 0.06, s, s);
+            crate::icons::draw(p, id, ir, ink);
+            let d = r.w * TRANSPORT_LIT_R;
+            let (cx, cy) = (r.cx(), r.cy() + r.h * TRANSPORT_LIT_DROP);
+            p.rect(Rect::new(cx - d, cy - d, 2.0 * d, 2.0 * d), d, ink, ink, 0.0);
+        } else {
+            crate::icons::draw(p, id, ir, ink);
+        }
     }
 }
 
@@ -5516,12 +5793,7 @@ impl TabStrip {
                 }
             }
         };
-        let plated = matches!(ground, TabGround::Plated { .. });
-        let sel_col = if plated {
-            theme::TAB_PLATE_SELECTED_OVER
-        } else {
-            theme::OVERLAY_FOCUS_PILL
-        };
+        let sel_col = self.selection_colour(ground);
         // The SELECTION capsule never scales, on either strip. It marks which season you are
         // browsing, which is a fact about the page and not about the control under your thumb — and
         // a plate that dipped with the press would say the selection had moved when it had not.
@@ -5562,6 +5834,21 @@ impl TabStrip {
     /// hand straight to [`TabPill::mix`].
     pub fn mixes(&self, pill: (f32, f32)) -> (f32, f32) {
         (self.foc.mix(pill), self.sel.mix(pill))
+    }
+    /// The selection plate's fill. On the top bar (`Tracked`) it is the accent while the bar holds
+    /// no focus and the faint wash while it does ([`theme::TAB_CURRENT`]), blended by the focus
+    /// capsule's alpha so the hand-over travels with it and two pills are never purple at once.
+    pub fn selection_colour(&self, ground: TabGround) -> [f32; 4] {
+        match ground {
+            TabGround::Plated { .. } => theme::TAB_PLATE_SELECTED_OVER,
+            TabGround::Tracked { .. } => theme::cross(theme::TAB_CURRENT, theme::TAB_CURRENT_UNDER_FOCUS, self.foc.alpha()),
+        }
+    }
+    /// [`mixes`](Self::mixes) for the top bar: the current pill's ink follows its plate to
+    /// [`theme::ACCENT_INK`] as far as the plate is accent ([`selection_colour`](Self::selection_colour)).
+    pub fn tracked_mixes(&self, pill: (f32, f32)) -> (f32, f32) {
+        let (f, s) = self.mixes(pill);
+        (f.max(s * (1.0 - self.foc.alpha())), s)
     }
 }
 
@@ -6753,7 +7040,7 @@ impl StripRender {
                 track,
                 0.0,
                 track.h * 0.5,
-                [1.0, 1.0, 1.0, 1.0],
+                theme::TINT_WHITE,
                 // The line and the hairline, no ramp — the design system's rule for this container,
                 // and the one the panel treatment gets wrong here: 76px tall has 20px of interior
                 // left once a 28px chamfer has run in from both edges, so the "rim" stops being an
@@ -6855,7 +7142,7 @@ impl StripRender {
                 // ink comes from how covered this pill is by the capsules above — never from its own
                 // booleans, or a mid-travel label could darken toward ACCENT_INK with nothing bright
                 // under it (`cap_cover` is the one rule both sides read).
-                let (fm, sm) = self.top_strip.mixes((px, widths[i]));
+                let (fm, sm) = self.top_strip.tracked_mixes((px, widths[i]));
                 if i + 1 == n {
                     // The Search pill is a MARK, and it takes its ink from exactly the same
                     // `mixed_ink` the labels do — so it darkens toward ACCENT_INK under the focus
@@ -6957,7 +7244,7 @@ pub enum ControlStyle {
 /// both face levels, while `Unkeyed` drops that palette, uses the HUD's light film and stronger
 /// idle edge at rest, flattens focus back to [`theme::ACCENT`] and raises its rim to pure white.
 /// Focus still means the same
-/// thing on both grounds — bright face, dark ink, pop and cast — but video cannot borrow a hue from
+/// thing on both grounds — violet face, white ink, pop and cast — but video cannot borrow a hue from
 /// pixels this process never sees.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ControlGround {
@@ -6975,8 +7262,8 @@ pub enum ControlGround {
 ///
 /// Home and Detail read the pixels they already rendered under the row — artwork AFTER its scrims,
 /// not the PMS artwork envelope. The sample's LIGHTNESS never reaches the control: it contributes
-/// only OKLCH hue and a fraction of chroma. That is the difference between a white object catching
-/// the scene's light and a white chip averaged toward a dark photograph (which turns muddy). A
+/// only OKLCH hue and a fraction of chroma, and only to the IDLE face — the focused face is the
+/// fixed [`theme::ACCENT`] violet and its one-step-darker body. A
 /// screen computes this once for its control row and copies it into every face; the player may
 /// receive one accidentally, but [`ControlGround::Unkeyed`] ignores it by construction.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -7012,14 +7299,12 @@ impl ControlPalette {
         let keyed = |l: f32, scale: f32, alpha: f32| {
             oklab_to_srgb([l, ha * chroma * scale, hb * chroma * scale], alpha)
         };
-        let focus_top = keyed(
-            theme::CONTROL_FOCUS_FACE_L,
-            theme::CONTROL_FOCUS_AMBIENT_C,
-            1.0,
-        );
-        let focus_body = keyed(
-            theme::CONTROL_FOCUS_FACE_L - theme::CONTROL_FOCUS_BODY_STEP,
-            theme::CONTROL_FOCUS_AMBIENT_C,
+        // Focus is the fixed ACCENT violet on every page (the Stremio palette sync); the key reaches
+        // only the idle face. The body is the same hue and chroma one lightness step down.
+        let focus_top = theme::ACCENT;
+        let accent = srgb_to_oklab(theme::ACCENT);
+        let focus_body = oklab_to_srgb(
+            [accent[0] - theme::CONTROL_FOCUS_BODY_STEP, accent[1], accent[2]],
             1.0,
         );
         let idle = keyed(
@@ -7152,8 +7437,8 @@ struct ControlFace {
 /// shadow went (`Button::draw`).
 ///
 /// Unconditional on focus, which is the point: the design's rule is that the card constants are not
-/// states and the FILL is what focus owns. On the focused near-white `ACCENT` face a white rim is
-/// invisible by construction, which is the sign it is an edge and not a fill.
+/// states and the FILL is what focus owns. On the focused violet `ACCENT` face the same white rim
+/// reads as a faint light edge — the echo of Stremio's white focus outline — and not as a state.
 ///
 /// **[`ControlGround::Unkeyed`] is the one exception, and it is the ground asking, not the state.**
 /// Over the video plane both states use the 1.25px unkeyed geometry. Idle takes
@@ -7678,6 +7963,16 @@ pub enum BadgeStyle {
     /// chip in that hue over a tile that already carries a state mark would be a second, competing
     /// claim about the same item (see `ui/CLAUDE.md`'s one-vocabulary rule).
     OverArt,
+    /// A PRESSABLE chip — a Detail page's genre, cast and director links: [`OverArt`]'s idle
+    /// control capsule at rest, and the focused control's face (`ACCENT` plate, `ACCENT_INK` label,
+    /// `value_chip`'s focus) while it holds focus, so it reads as the pill family's small member.
+    ///
+    /// [`OverArt`]: BadgeStyle::OverArt
+    Link { focused: bool },
+    /// NO ground at all: the glyph and the label in `col` — an icon-led FACT LINE (a stream row's
+    /// "🎞 HEVC · HDR10", stremio-web's stream facts) that reads as text, not as a control. Same
+    /// box and centring as every other style, so a line mixing it with outlined chips stays even.
+    Bare { col: [f32; 4] },
 }
 /// The chip's height — one band for every style, so a row mixing them stays on one line. Public
 /// because a caller that pins a chip to an edge (the episode still's duration pill) needs to know
@@ -7853,11 +8148,17 @@ pub fn badge(
             p.rrect(r, 7.0, 7.0, theme::BADGE_FILL);
             theme::TEXT_HEADING
         }
-        BadgeStyle::OverArt => {
+        BadgeStyle::OverArt | BadgeStyle::Link { focused: false } => {
             let rad = r.h * 0.5;
             p.rrect(r, rad, rad, theme::CONTROL_IDLE_FILL);
             theme::CONTROL_IDLE_INK
         }
+        BadgeStyle::Link { focused: true } => {
+            let rad = r.h * 0.5;
+            p.rrect(r, rad, rad, crate::ACCENT);
+            crate::ACCENT_INK
+        }
+        BadgeStyle::Bare { col } => col,
     };
     let ty = sn_gfx::text::text_vcenter_y(sz, 1, cy);
     // [glyph + gap + label] centred in the chip as ONE run — the same composition `Button::draw`

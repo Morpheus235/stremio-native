@@ -404,6 +404,22 @@ pub fn draw(p: Painter, rest: Rect, r: Rect, rad: f32, name: &str) {
     draw_lines(p, &fit, column.cx(), column.y + NAME_CAP_DROP * fit.sz as f32, theme::TEXT_SECONDARY);
 }
 
+/// **A poster that will never arrive** — the item has no poster, or its art settled as a miss (a
+/// 404, an undecodable body, a host that keeps failing): its NAME, set like the neutral tile's
+/// and centred on the tinted absent ground. Text over a fill, so a fallback costs no texture.
+/// `rest` is the resting rect the name is fitted to, `r` the drawn (popped) one.
+pub fn draw_title(p: Painter, rest: Rect, r: Rect, rad: f32, name: &str) {
+    // placeholder-exempt: absence, a poster that will never arrive; nothing is on its way
+    p.rrect_sheened(r, rad, theme::CARD_ABSENT);
+    let band = (rest.h - 2.0 * NAME_BOTTOM * type_k(rest.w)).max(0.0);
+    let fit = fitted(name, &NEUTRAL_NAME, rest, band);
+    if fit.lines.is_empty() {
+        return;
+    }
+    let ink = fit.ink(&crate::widgets::LegacyMeasure);
+    draw_lines(p, &fit, r.cx(), r.y + (r.h - ink) * 0.5, theme::TEXT_SECONDARY);
+}
+
 // ── The name on a baked fan: G1's `.art b`, set by [`fit_name`] and centred under the fan.
 
 /// `text-shadow: 0 2px …` — the drop's offset, in mock px.

@@ -68,9 +68,12 @@ only for a local debug build). The NDK is published for linux-aarch64 and macOS 
 which the player dlopens from the app directory. `make ipk` builds it with `ci/build-ffmpeg.sh`
 into `vendor/ffmpeg-prefix` (`make ffmpeg` alone; incremental after the first ~minutes);
 `BUNDLED_LIB_DIR=<dir>` takes prebuilt `-sn` libraries instead. A missing required library stops
-the build with its name. libass (`libass-sn.so.0`, styled ASS/SSA subtitles) is packaged when
-`LIBASS_SO=<path>` (default `vendor/libass-prefix/lib/libass-sn.so.0`) exists; without it the build
-warns and the player renders plain-text subtitles only.
+the build with its name. libass (`libass-sn.so.0`, every text subtitle: SRT, WebVTT, ASS/SSA) is
+built by `make ipk` with `ci/build-libass.sh` (`make libass` alone) into `vendor/libass-prefix`:
+libass, FreeType, FriBidi, HarfBuzz and libunibreak at the versions pinned in `ci/dependencies.json`,
+linked static into one library that exports only `sn_ass_*` and needs only libc, libm and libgcc_s.
+It needs `cmake` and `pkg-config` on the host. `LIBASS_SO=<path>` takes a prebuilt one; a missing
+one only warns, and the player then shows no text subtitles.
 
 The package is reproducible: `ci/mkipk.py` normalises every archive field, so the same inputs give
 the same sha256, and `make ipk` reads the result back (`ci/mkipk.py --verify`). The launcher art in

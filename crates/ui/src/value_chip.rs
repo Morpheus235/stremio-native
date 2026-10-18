@@ -61,6 +61,23 @@ impl View for ValueChip<'_> {
     }
 }
 
+/// A row of chips' left edges from their widths (Search's addon filter, Home's and the Library's
+/// type filter): laid out from the margin `gap` apart, and shifted left just enough that the
+/// focused chip ends inside the right margin (a row that fits never moves).
+pub fn row_xs(widths: &[f32], focused: Option<usize>, gap: f32) -> Vec<f32> {
+    use crate::consts::{MARGIN_X, SCR_W};
+    let mut xs = Vec::with_capacity(widths.len());
+    let mut x = MARGIN_X;
+    for w in widths {
+        xs.push(x);
+        x += w + gap;
+    }
+    let shift = focused
+        .and_then(|i| Some(xs.get(i)? + widths.get(i)?))
+        .map_or(0.0, |right| (right - (SCR_W - MARGIN_X)).max(0.0));
+    xs.into_iter().map(|x| x - shift).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,6 +104,22 @@ mod tests {
             (" - Title".into(), theme::size::LABEL, true),
             ("  owner".into(), theme::size::MICRO, false),
         ]);
+    }
+
+    /// Fourteen chips run past the screen's right edge; whichever is focused must be laid out on
+    /// screen, and with focus elsewhere the row starts at the margin.
+    #[test]
+    fn the_focused_chip_of_a_row_is_always_on_screen() {
+        use crate::consts::{MARGIN_X, SCR_W};
+        let widths = [260.0_f32; 14];
+        let right = SCR_W - MARGIN_X;
+        for focused in 0..widths.len() {
+            let x = row_xs(&widths, Some(focused), 12.0)[focused];
+            assert!(x >= MARGIN_X - 0.5 && x + widths[focused] <= right + 0.5, "chip {focused} at {x}");
+        }
+        assert_eq!(row_xs(&widths, None, 12.0)[0], MARGIN_X);
+        assert_eq!(row_xs(&widths, Some(0), 12.0)[0], MARGIN_X);
+        assert_eq!(row_xs(&[200.0, 200.0], Some(1), 12.0)[0], MARGIN_X, "a row that fits never scrolls");
     }
 
     #[test]

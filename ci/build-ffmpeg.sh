@@ -3,7 +3,7 @@
 #
 # Ported from PlxNative's ci/build-ffmpeg.sh (the GPL project this one derives from), renamed to
 # the `-sn` build suffix and SONAMEs `crates/media/src/ff.rs` dlopens: libavutil-sn.so.61,
-# libavcodec-sn.so.63, libavformat-sn.so.63, libswscale-sn.so.10. History quoted below
+# libavcodec-sn.so.63, libavformat-sn.so.63, libswscale-sn.so.10, libswresample-sn.so.N. History quoted below
 # (measurements, release notes) is PlxNative's.
 #
 # WHY WE BUNDLE. The app used to demux with the television's own FFmpeg, which meant reading its
@@ -171,19 +171,31 @@ fi
 # function of this list. Each line maps to real code:
 #   demuxers   matroska/mov/mpegts are the containers Stremio addons hand out (mkv/webm, mp4,
 #              TS); h264/hevc are the raw Annex-B paths (/tmp/sample.h264 and the dev triggers).
+#              avi/asf carry the AVI and WMV/ASF files on LG's supported list: H.264 in AVI and WMV,
+#              and Xvid/VC-1/WMV3 files the player then refuses BY NAME instead of failing to open
+#              (without `avi`, the raw `h264` demuxer probed an AVI's video and lost its audio).
+#              mpegps (.mpg/.vob) and rm (RealMedia) are here for the same naming: MPEG-1/2 and
+#              RealVideo are refused by codec, not reported as a stream that would not open.
 #   parsers    needed by avformat_find_stream_info to fill AVCodecParameters. `dca` also frames
 #              DTS out of MPEG-TS PES payloads (which carry several frames per packet), so every
 #              packet the demuxer hands `ff::dts_core_packet` or the transcoder is ONE frame.
 #   bsf        AVCC -> Annex-B for mp4-family video, which the Starfish pipeline requires.
 #   decoders   SUBTITLES, plus `dca`. Video and the audio the TV decodes natively go to its
-#              hardware via Starfish; FFmpeg here never touches a video frame. `dca` is the one
-#              audio decoder, and it exists for the DTS -> AC-3 fallback (`sn_media::transcode`):
+#              hardware via Starfish; FFmpeg here never touches a video frame. `dca` exists for
+#              the DTS -> AC-3 fallback (`sn_media::transcode`):
 #              a DTS track the television's codec table cannot take (no DTS row, or more channels
 #              than its DTS ceiling) is decoded core-only on the CPU and re-encoded as AC-3, the
 #              audio path the Starfish feed is proven on.
-#   encoders   `ac3` -- the FLOAT AC-3 encoder, not `ac3_fixed`: `dca` outputs float planar and the
-#              float encoder takes exactly float planar, so no sample-format conversion exists and
-#              libswresample stays disabled. Channel order needs no resampler either: the
+#              The second decoder line is the SOFTWARE-DECODE -> PCM path (`sn_media::adec`,
+#              native/adec.c, ported from PlxNative): Opus, Vorbis, FLAC, TrueHD/MLP, MP2,
+#              MP3 (only where the set's table has no MPEG audio row), ALAC, WMA (1, 2, Pro) and the LPCM variants Blu-ray remuxes carry are decoded on the CPU and fed to
+#              Starfish as S16LE 48 kHz PCM. Their parsers frame them for find_stream_info and
+#              out of MPEG-TS. libswresample is built for that shim (format/rate/layout to S16
+#              stereo or 5.1); libavcodec also NEEDs it for Opus.
+#   encoders   `ac3` -- the FLOAT AC-3 encoder, not `ac3_fixed`: it takes float planar, which
+#              `dca` emits as it is; the other decoders the AC-3 path serves (multichannel TrueHD,
+#              FLAC, LPCM, ...) are converted to float planar in Rust (`transcode::to_planar_f32`),
+#              not by libswresample. Channel order needs no resampler either: the
 #              transcoder hands the encoder the decoder's own native layout (or picks planes out
 #              by channel id when it has to reduce one to 5.1). Kept in RELEASE builds: it is
 #              playback, not a dev tool.
@@ -231,15 +243,17 @@ set -- "$@" \
   --enable-shared --disable-static --enable-pic \
   --extra-cflags='-Dstatic_assert=_Static_assert' \
   --disable-programs --disable-doc --disable-avdevice --disable-avfilter \
-  --disable-network --disable-swresample \
+  --disable-network \
   --disable-debug --enable-small \
   --disable-everything \
   --disable-autodetect \
   --enable-zlib \
-  --enable-demuxer=matroska,mov,mpegts,h264,hevc \
-  --enable-parser=h264,hevc,aac,ac3,dca,dvdsub,dvbsub \
+  --enable-demuxer=matroska,mov,mpegts,h264,hevc,avi,asf,mpegps,rm \
+  --enable-parser=h264,hevc,aac,ac3,dca,dvdsub,dvbsub,opus,vorbis,flac,mlp,mpegaudio \
   --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,extract_extradata \
   --enable-decoder=pgssub,dvdsub,dvbsub,ass,srt,subrip,text,mov_text,webvtt,dca \
+  --enable-decoder=opus,vorbis,flac,truehd,mlp,mp3float,mp2float,alac,wmav1,wmav2,wmapro \
+  --enable-decoder=pcm_s16le,pcm_s16be,pcm_s24le,pcm_s24be,pcm_s32le,pcm_f32le,pcm_bluray,pcm_dvd \
   --enable-encoder=ac3 \
   --enable-protocol=file
 
@@ -504,7 +518,7 @@ mkdir -p "$PREFIX"
 cp -R "$WORK/destdir/sn/." "$PREFIX/"
 # Strip each real ELF, then prove the exact strip transformation against its link receipt.
 if [ -z "$HOST" ]; then
-  for elf in "$SRC"/libavutil/libavutil-sn.so.* "$SRC"/libavcodec/libavcodec-sn.so.* "$SRC"/libavformat/libavformat-sn.so.* "$SRC"/libswscale/libswscale-sn.so.*; do
+  for elf in "$SRC"/libavutil/libavutil-sn.so.* "$SRC"/libavcodec/libavcodec-sn.so.* "$SRC"/libavformat/libavformat-sn.so.* "$SRC"/libswscale/libswscale-sn.so.* "$SRC"/libswresample/libswresample-sn.so.*; do
     case "$elf" in *.link.*) continue ;; esac
     [ -f "$elf" ] && [ ! -L "$elf" ] || continue
     target="$PREFIX/lib/$(basename "$elf")"

@@ -14,6 +14,9 @@ crate-type = ["rlib"]
 [dependencies]
 serde = { version = "1", default-features = false, features = ["derive", "alloc", "std"] }
 serde_json = { version = "1", default-features = false, features = ["alloc", "std"] }
+sn_base = { path = "../base" }
+# A library item's watched bitfield is zlib-deflated (`watched`). Pure Rust (miniz_oxide), already in the build.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 [lints]
 workspace = true

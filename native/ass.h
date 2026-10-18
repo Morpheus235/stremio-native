@@ -22,7 +22,9 @@ typedef struct {
 /* ABI 3: sn_ass_set_features, sn_ass_set_cache_limits, sn_ass_set_line_spacing,
  * sn_ass_replace_track and sn_ass_stats join the 2 surface. sn_ass_load now scans the fonts
  * (ass_set_fonts) only on a context's first load. */
-#define SN_ASS_ABI_VERSION 3
+/* ABI 4: sn_ass_add_font LENDS the bytes instead of copying them: they must stay valid until
+ * sn_ass_destroy. */
+#define SN_ASS_ABI_VERSION 4
 
 typedef struct {
     uint32_t library_fonts; /* fonts the library holds: added through sn_ass_add_font or extracted */

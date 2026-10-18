@@ -119,7 +119,8 @@ pub unsafe fn construct(mt: MainThread) -> Result<App, c_int> {
         log("net: the User-Agent was refused; requests go without one");
     }
     let _ = sn_net::net::global_init();
-    sn_platform::i18n::initialize(sn_platform::i18n::Preference::System, false);
+    // the interface language the viewer chose (Settings > Interface), else the TV's
+    sn_platform::i18n::initialize(super::prefs::language(&super::prefs::path()), false);
 
     let art = Art::new(Box::new(Workers)).install();
     let mut pages = sn_ui::dispatch::Dispatcher::with_transition(Box::new(sn_ui::containers::transition::PageDip::new()));
@@ -143,14 +144,28 @@ pub unsafe fn construct(mt: MainThread) -> Result<App, c_int> {
     .with_settings(loaded, settings_path);
     bridge.boot();
     log("boot: Home requested");
+    // A debug build armed with `/tmp/stremionative-playurl` opens the player on that stream.
+    #[cfg(feature = "devtriggers")]
+    match sn_media::player::playurl::playurl().map(|p| p.and_then(|p| p.to_start().map_err(|e| format!("{e:?}")))) {
+        Some(Ok(start)) => {
+            bridge.playback.start_dev(start);
+            let arg = sn_screens::registry::PlayerArg { title: "playurl".into(), item: None, addon: String::new(), resumed_ms: 0 };
+            pages.request(sn_machine::machine::MachineId::Nav, sn_machine::machine::NavOp::Push(AppArg::Player(arg)));
+            log("boot: playurl trigger — player opened");
+        }
+        Some(Err(e)) => log(&format!("boot: playurl trigger unreadable ({e}) — ignored")),
+        None => {}
+    }
     let glass = sn_ui::frame::glass::GlassPlan::new();
-    Ok(App { win, pages, bridge, glass, running: true, backgrounded: false, ev: [0; 64] })
+    Ok(App { win, pages, bridge, glass, running: true, backgrounded: false, ev: [0; 64], pointer: Default::default(), diagnostics: Default::default() })
 }
 
 /// Leave cleanly: end a playback (the Starfish pipeline must be unloaded, not abandoned), free the
 /// render cache, close SDL.
 pub fn shutdown(app: &mut App) {
     app.bridge.playback.stop();
+    // the stop's Unload runs off-frame: never exit inside it, nor with its objects undestroyed
+    app.bridge.playback.adapter.finish_release();
     sn_ui::tex::shutdown(&mut super::bridge::GfxUploader);
     log("shutdown");
     // SAFETY: the main thread, after the last frame.

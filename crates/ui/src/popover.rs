@@ -872,10 +872,25 @@ pub mod host {
         mock::INVALIDATIONS.with(|c| c.get())
     }
 
+    /// How many times [`release`] freed the texture on this thread (host-test stand-in only).
+    #[cfg(test)]
+    pub fn releases() -> u32 {
+        mock::RELEASES.with(|c| c.get())
+    }
+
     /// Throw the snapshot away; the next page pass will draw the real page and take a new one.
     pub fn invalidate() {
         unsafe {
             (*std::ptr::addr_of_mut!(CACHE)).invalidate();
+            HELD = Held::Nothing;
+        }
+    }
+
+    /// Free the snapshot's texture: a bound video plane cannot be photographed
+    /// (`gfx::video_plane_refuses`), so for the length of a playback it is 8.3 MB of nothing.
+    pub fn release() {
+        unsafe {
+            (*std::ptr::addr_of_mut!(CACHE)).release();
             HELD = Held::Nothing;
         }
     }

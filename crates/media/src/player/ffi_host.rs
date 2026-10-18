@@ -878,6 +878,8 @@ unsafe fn vp_window_id() -> *const c_char {
     }
 }
 unsafe fn vp_place(
+    _src_x: c_int,
+    _src_y: c_int,
     _src_w: c_int,
     _src_h: c_int,
     _dst_x: c_int,
@@ -1020,6 +1022,8 @@ impl VideoSink for HostSink {
     unsafe fn place_window(
         &self,
         _: &MainThread,
+        src_x: c_int,
+        src_y: c_int,
         src_w: c_int,
         src_h: c_int,
         dst_x: c_int,
@@ -1027,7 +1031,7 @@ impl VideoSink for HostSink {
         dst_w: c_int,
         dst_h: c_int,
     ) -> c_int {
-        vp_place(src_w, src_h, dst_x, dst_y, dst_w, dst_h)
+        vp_place(src_x, src_y, src_w, src_h, dst_x, dst_y, dst_w, dst_h)
     }
     unsafe fn destroy_window(&self, _: &MainThread) {
         vp_destroy_window()

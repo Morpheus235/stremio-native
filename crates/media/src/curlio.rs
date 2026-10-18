@@ -1264,6 +1264,7 @@ impl CurlSource {
                     return Err(e);
                 }
             };
+            crate::player::note_media_path(&next.path);
             let same = target_of(original).is_some_and(|first| same_origin(&first.origin, &next.origin));
             crate::player::log(&format!(
                 "curlio: redirect {status} -> {} hop={} same_origin={same}",

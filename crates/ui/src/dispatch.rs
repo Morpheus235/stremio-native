@@ -115,6 +115,13 @@ where
     fn seat(&self, g: GroupId, from: Placed, cx: &Cx<'_, H>) -> FocusKey<H::Elem> {
         match &self.strip {
             Some((spec, members)) if spec.id == g => {
+                // Focus entering the bar lands on the page's own pill (the selected destination),
+                // wherever the control it left stands: the pill nearest the page's left-margin
+                // dropdown is Home's, so on every other tab UP read as the bar re-pointing itself
+                // at another page. Nearest is only the rule for a strip with no selected member.
+                if let Some(own) = self.strip_fallback.filter(|k| members.iter().any(|m| m.elem == *k)) {
+                    return FocusKey { entry: self.entry, elem: own };
+                }
                 let cx_ = from.rect.cx();
                 let mut best = (f32::MAX, 0usize);
                 for (i, member) in members.iter().enumerate() {
@@ -379,6 +386,9 @@ pub struct Dispatcher<H: Host> {
     /// The page element the surface pass lifted out of the dim on the previous drawn frame
     /// ([`Self::lifted_opener`]); a change re-takes the host snapshot (`draw_with`).
     lifted_last: Option<FocusKey<H::Elem>>,
+    /// Was the last drawn frame a video-plane frame? Its rising edge frees the offscreen targets
+    /// nothing may sample while the plane is bound ([`Self::draw_with`]).
+    video_plane_last: bool,
     /// This frame's prepare pass ran (a `draw` after a non-presenting frame runs it itself).
     prepared: bool,
     /// The previous frame's page-owned motion/resource verdict, retained past `Present::take` so
@@ -431,6 +441,7 @@ where
             pending_back: false,
             last_tick: Tick::default(),
             lifted_last: None,
+            video_plane_last: false,
             prepared: false,
             page_quiescent: false,
         }
@@ -652,7 +663,7 @@ where
     }
 
     /// **Which page element, if any, the opener lift repaints this frame** — the ONE decision the
-    /// lift and the page pass share (`(host page, element)`; the application's `opener_lift` is
+    /// lift and the page pass share (`(host page, element)`; `Self::draw_opener_lift` reads
     /// this). The lift is the opener tile drawn again above the dim *because it is the focused
     /// one*. That stops being true the moment the menu is dismissed: `ModalStack::dismiss` hands
     /// input back to the page on the same frame, but the surface stays in the stack until its fade
@@ -672,6 +683,26 @@ where
             if live.is_some() && live != opener { return None; }
         }
         Some((entry, opener))
+    }
+
+    /// Repaint [`Self::lifted_opener`]'s element through its page's [`Screen::redraw_focused`], with
+    /// the press's live scale and only that element focused.
+    fn draw_opener_lift(&self, rig: &mut dyn Rig<H>, navigation: super::screen::NavPresentation) {
+        let Some((entry, focus)) = self.lifted_opener() else { return };
+        let Some(inst) = self.nav.entry(entry).and_then(|e| e.inst.as_ref()) else { return };
+        let _layer = super::frame::backdrop::layer(super::frame::backdrop::Z::OPENER, false);
+        // live paint above a page that may be served from its cached quad
+        let _live = super::popover::host::live();
+        let parts = CxParts {
+            tick: Tick { ms: 0, dt_us: 0 },
+            press: PressRead { scale: self.input.press.scale(), is_long: false, held_ms: None, owner: self.input.dip_owner },
+            focus: FocusRead { current: focus, ..Default::default() },
+            owner: InputOwner::Entry(entry),
+        };
+        let Split { views, measure, .. } = rig.split();
+        let cx = parts.cx::<H>(views, measure);
+        let mut f = DrawFrame::with_navigation(&cx, Painter::root(), navigation);
+        inst.screen.redraw_focused(&mut f, focus);
     }
 
     /// Feed the owner's focus from outside a step: a test's premise (no group is remembered).
@@ -1362,6 +1393,18 @@ where
         // §9: armed for the LENGTH OF THE DRAW, and restored rather than cleared, exactly as the
         // page freeze is. Every framebuffer-sampling door is refused while it is up.
         let video_plane = self.video_plane_frame();
+        // A bound plane refuses every framebuffer-sampling door, so the frozen-host snapshot and
+        // the blur chain (≈19 MB of GPU memory) hold nothing usable for the whole playback: free
+        // them as it starts. The first page that wants either after it makes it again.
+        if video_plane && !self.video_plane_last {
+            super::popover::host::release();
+            sn_gfx::gfx::release_offscreen();
+        } else if !video_plane && self.video_plane_last {
+            // …and the blur chain is built again as the plane goes, not on the first menu after
+            // it: `gfx::init_blur` says why that frame must not pay for it.
+            sn_gfx::gfx::rebuild_offscreen();
+        }
+        self.video_plane_last = video_plane;
         let was_video_plane = sn_gfx::gfx::set_video_plane_frame(video_plane);
         if !sn_gfx::gfx::blur_source_pass() { rig.clear_opaque_region(); }
         let parts = self.parts(tick);
@@ -1649,6 +1692,13 @@ where
         }
         if drain_surface_text && !capture_surface && !source_pass && warm_budget_us > 0 {
             sn_base::diag::spans::span("warmdrain", || sn_gfx::text::drain_prewarm(warm_budget_us, || rig.now_us()));
+        }
+        // **The opener lift: the element a surface opened from, drawn live above everything.** The
+        // page pass left it out (`DrawFrame::lifted`), so this is its ONE copy; a frame without it
+        // shows the card nowhere. The press is the dispatcher's own, so the card springs from its
+        // dip to its pop as the menu opens. A Replaced host draws no page, so no lift either.
+        if pages && Z::OPENER < ceiling && host_render != HostRender::Replaced {
+            self.draw_opener_lift(rig, navigation);
         }
         // the hit map swaps only on a presented frame (§7.6); a legacy page registers nothing
         let hit_page = self.hit_page();

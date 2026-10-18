@@ -24,8 +24,12 @@
 //! **Failures are told apart.** A transport failure, a timeout or a 5xx/429/408 is TRANSIENT: the
 //! key parks for a bounded backoff (250 ms doubling to 8 s, [`RETRY_MIN_MS`]..[`RETRY_MAX_MS`]) and
 //! the next DRAW after it is due asks again. Anything else (a 404, bytes that do not decode) has
-//! SETTLED: [`Source::failed`](tex::Source::failed) says so for [`FAILED_MS`], and the tile can
-//! stop showing a skeleton. A key the render cache refused to keep resident cools for
+//! SETTLED: [`Source::failed`](tex::Source::failed) says so, and the tile draws its fallback (the
+//! title on a tinted card) instead of a skeleton. A first settled miss is asked once more after
+//! [`SETTLED_RETRY_MS`] by a draw (the card back in view), a second settles for [`FAILED_MS`]; a key
+//! that has failed transiently [`FALLBACK_AFTER_ATTEMPTS`] times in a row also reads as failed while
+//! its backoff keeps asking. A key that has missed keeps reading failed through its retry, so the
+//! fallback does not flicker back to a skeleton; the pixels replace it if they ever arrive. A key the render cache refused to keep resident cools for
 //! [`REFUSED_MS`]; one it lost under pressure is asked again by the next draw that wants it
 //! (cheaply, from the disk tier).
 //!
@@ -63,6 +67,14 @@ pub const RETRY_MIN_MS: u64 = 250;
 pub const RETRY_MAX_MS: u64 = 8_000;
 /// How long a settled miss (a 404, an undecodable body) stays settled.
 pub const FAILED_MS: u64 = 300_000;
+/// A FIRST settled miss is asked once more this much later, by the next draw that wants it (the
+/// card scrolled back into view): a CDN's passing 404 or a truncated body does not cost the
+/// poster for [`FAILED_MS`]. A second miss settles for the full [`FAILED_MS`].
+pub const SETTLED_RETRY_MS: u64 = 30_000;
+/// Transient failures in a row after which [`Source::failed`](tex::Source::failed) answers
+/// `true`: the tile shows its designed fallback while the backoff keeps asking, instead of a
+/// skeleton for as long as the host keeps failing.
+pub const FALLBACK_AFTER_ATTEMPTS: u32 = 3;
 /// How long a key the render cache refused to keep resident cools down.
 pub const REFUSED_MS: u64 = 15_000;
 
@@ -385,6 +397,11 @@ struct Slot {
     drawn: u64,
     born: u64,
     attempts: u32,
+    /// Settled misses since the pixels last arrived (the first is retried sooner).
+    settled: u32,
+    /// The key has missed (settled, or [`FALLBACK_AFTER_ATTEMPTS`] transient failures): it reads
+    /// as failed until its pixels arrive, retries included.
+    missed: bool,
     cancel: Cancel,
 }
 
@@ -502,6 +519,8 @@ impl Art {
                     Outcome::Ready(d, origin) => {
                         slot.state = State::Ready;
                         slot.attempts = 0;
+                        slot.settled = 0;
+                        slot.missed = false;
                         match origin {
                             Origin::Disk => stats.disk_hits += 1,
                             Origin::Network => stats.fetched += 1,
@@ -512,11 +531,15 @@ impl Art {
                         slot.attempts = slot.attempts.saturating_add(1);
                         let backoff = (RETRY_MIN_MS << (slot.attempts - 1).min(8)).min(RETRY_MAX_MS);
                         slot.state = State::Retry(now + Duration::from_millis(backoff));
+                        slot.missed |= slot.attempts >= FALLBACK_AFTER_ATTEMPTS;
                         stats.retries += 1;
                         None
                     }
                     Outcome::Failed { transient: false, error } => {
-                        slot.state = State::Failed(now + Duration::from_millis(FAILED_MS));
+                        slot.settled = slot.settled.saturating_add(1);
+                        slot.missed = true;
+                        let hold = if slot.settled == 1 { SETTLED_RETRY_MS } else { FAILED_MS };
+                        slot.state = State::Failed(now + Duration::from_millis(hold));
                         stats.failed += 1;
                         Some(Err(error))
                     }
@@ -647,7 +670,7 @@ impl Art {
         inner.by_req.insert(req, key);
         let url = sized_url(path, w, h).into_owned();
         let drawn = if touch == Touch::Draw { frame } else { 0 };
-        inner.slots.insert(key, Slot { url, w, h, state: State::Wanted, drawn, born: frame, attempts: 0, cancel: Cancel::default() });
+        inner.slots.insert(key, Slot { url, w, h, state: State::Wanted, drawn, born: frame, attempts: 0, settled: 0, missed: false, cancel: Cancel::default() });
         Some((key, true))
     }
 
@@ -697,7 +720,7 @@ impl tex::Source for Art {
             .by_req
             .get(&(path.to_string(), w, h))
             .and_then(|k| inner.slots.get(k))
-            .is_some_and(|s| matches!(s.state, State::Failed(_)))
+            .is_some_and(|s| s.missed && s.state != State::Ready)
     }
 
     fn unresident(&self, key: PosterKey, refused: bool) {
@@ -913,6 +936,83 @@ mod tests {
         }
         assert_eq!(keys(&started).len(), 1);
         assert!(art.failed(0, url, 250, 375, false));
+        tex::reset_for_test(64 << 20);
+    }
+
+    /// Move key's parked state to "due now", as if its hold had run out.
+    fn expire(art: &Art, key: u32) {
+        let mut inner = art.inner.borrow_mut();
+        let slot = inner.slots.get_mut(&key).unwrap();
+        slot.state = match slot.state {
+            State::Failed(_) => State::Failed(Instant::now()),
+            State::Retry(_) => State::Retry(Instant::now()),
+            s => s,
+        };
+    }
+
+    fn hold_left(art: &Art, key: u32) -> Duration {
+        match art.state(key) {
+            Some(State::Failed(at) | State::Retry(at)) => at.saturating_duration_since(Instant::now()),
+            s => panic!("not parked: {s:?}"),
+        }
+    }
+
+    /// A first settled miss (a 404) is asked ONCE more, soon, by the next draw that wants it (the
+    /// card back in view), and the tile keeps reading failed (its fallback) through that retry;
+    /// a second miss settles for the full hold; pixels arriving clear it.
+    #[test]
+    fn a_settled_miss_is_retried_once_by_a_later_draw_and_keeps_its_fallback_meanwhile() {
+        let _g = sn_base::testlock::serial();
+        tex::reset_for_test(64 << 20);
+        let (art, started) = art(true);
+        let url = "https://img.example/sometimes-404.jpg";
+        let miss = |key| art.tx.send(Fetched { key, outcome: Outcome::Failed { transient: false, error: PosterError::Fetch } }).unwrap();
+        art.probe(0, url, 250, 375, false);
+        let key = keys(&started)[0];
+        miss(key);
+        art.drain();
+        assert!(art.failed(0, url, 250, 375, false), "settled: the fallback");
+        assert!(hold_left(&art, key) <= Duration::from_millis(SETTLED_RETRY_MS), "the first miss is held briefly");
+        expire(&art, key);
+        art.drain(); // nobody drew it: nothing is asked
+        assert_eq!(keys(&started).len(), 1);
+        art.probe(0, url, 250, 375, false);
+        assert_eq!(keys(&started).len(), 2, "the draw after the hold asks once more");
+        assert!(art.failed(0, url, 250, 375, false), "while it is out the tile keeps its fallback");
+        miss(key);
+        art.drain();
+        assert!(hold_left(&art, key) > Duration::from_millis(SETTLED_RETRY_MS), "a second miss settles for long");
+        expire(&art, key);
+        art.probe(0, url, 250, 375, false);
+        assert_eq!(keys(&started).len(), 3);
+        ready(&art, key, 250, 375);
+        art.drain();
+        assert!(!art.failed(0, url, 250, 375, false), "the pixels arrived");
+        tex::reset_for_test(64 << 20);
+    }
+
+    /// A host that keeps failing transiently (a timeout, a 503, an empty body) keeps being asked
+    /// with backoff, but after a few tries the tile shows its fallback instead of a skeleton.
+    #[test]
+    fn repeated_transient_failures_read_failed_while_the_backoff_keeps_asking() {
+        let _g = sn_base::testlock::serial();
+        tex::reset_for_test(64 << 20);
+        let (art, started) = art(true);
+        let url = "https://img.example/down.jpg";
+        art.probe(0, url, 250, 375, false);
+        let key = keys(&started)[0];
+        for n in 1..=FALLBACK_AFTER_ATTEMPTS {
+            assert!(!art.failed(0, url, 250, 375, false), "attempt {n}: still a wait");
+            art.tx.send(Fetched { key, outcome: Outcome::Failed { transient: true, error: PosterError::Fetch } }).unwrap();
+            art.drain();
+            expire(&art, key);
+            art.probe(0, url, 250, 375, false);
+        }
+        assert!(art.failed(0, url, 250, 375, false), "the fallback, after {FALLBACK_AFTER_ATTEMPTS} transient failures");
+        assert_eq!(keys(&started).len() as u32, FALLBACK_AFTER_ATTEMPTS + 1, "and it is still asked");
+        ready(&art, key, 250, 375);
+        art.drain();
+        assert!(!art.failed(0, url, 250, 375, false));
         tex::reset_for_test(64 << 20);
     }
 

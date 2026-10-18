@@ -179,8 +179,20 @@ pub fn addon_collection(fetch: &dyn Fetch, auth_key: &str) -> Result<Vec<Addon>,
 /// each exactly as the API sent it. [`parse_collection_cache`] reads it back.
 pub fn addon_collection_cached(fetch: &dyn Fetch, auth_key: &str) -> Result<(Vec<Addon>, Vec<u8>), ApiError> {
     let c: Collection = call(fetch, "addonCollectionGet", json!({"type": "AddonCollectionGet", "authKey": auth_key, "update": true}))?;
-    let kept: Vec<serde_json::Value> =
-        c.addons.into_iter().filter(|v| serde_json::from_value::<Descriptor>(v.clone()).is_ok()).collect();
+    let kept: Vec<serde_json::Value> = c
+        .addons
+        .into_iter()
+        .filter(|v| match serde_json::from_value::<Descriptor>(v.clone()) {
+            Ok(_) => true,
+            Err(e) => {
+                // the name and the decoder's reason only: the transport URL can carry the
+                // addon's configuration (keys), which never goes to the log
+                let name = v.pointer("/manifest/name").and_then(|n| n.as_str()).unwrap_or("?");
+                sn_base::eventlog::log(&format!("addons: '{name}' skipped — its manifest does not decode: {e}"));
+                false
+            }
+        })
+        .collect();
     let cache = json!({ "addons": kept }).to_string().into_bytes();
     Ok((addons_of(Collection { addons: kept }), cache))
 }

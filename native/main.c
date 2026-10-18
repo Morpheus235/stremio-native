@@ -78,7 +78,13 @@ static int open_fd_log(const char *path, int flags);
  * LAN addresses, Plex GUIDs, search queries and household names this file once held in the clear
  * are rewritten before they reach the disk. */
 static FILE *open_event_log(void) {
-    int fd = open_fd_log(runtime_path("stremionative-events.log"), O_TRUNC | O_APPEND);
+    /* The last session's log is kept as `.prev` first: a session that froze and was closed is
+     * otherwise gone the moment the app starts again, and that is the one a report needs. rename()
+     * acts on the entry, never through a symlink, and the sticky runtime dir refuses it on a name
+     * another uid owns; a failure (no earlier log) just leaves nothing to keep. */
+    const char *events = runtime_path("stremionative-events.log");
+    (void)rename(events, runtime_path("stremionative-events.prev.log"));
+    int fd = open_fd_log(events, O_TRUNC | O_APPEND);
     return fd >= 0 ? fdopen(fd, "a") : NULL;
 }
 

@@ -23,7 +23,7 @@ use sn_stremio::account::ApiError;
 use sn_screens::stores::grid::{GridJob, GridLanding};
 use sn_screens::stores::search::{SearchJob, SearchLanding};
 use sn_stremio::streams::GroupState;
-use sn_stremio::types::{CatalogPage, MetaResponse};
+use sn_stremio::types::CatalogPage;
 use sn_stremio::{get_json, Fetch, FetchError};
 
 use crate::account::Services;
@@ -41,6 +41,10 @@ pub enum Done {
     Library(LibraryLanding),
     Search(SearchLanding),
     Grid(GridLanding),
+    /// A playback's skip markers (`gen` names the playback), from `source`.
+    Skips { gen: u32, source: &'static str, result: Result<sn_stremio::skip::Skips, FetchError> },
+    /// One subtitles addon's answer for a playback (`gen` names it), by the addon's name.
+    Subtitles { gen: u32, addon: String, result: Result<Vec<sn_stremio::types::Subtitle>, FetchError> },
 }
 
 /// The mailbox: workers post, the frame thread drains.
@@ -124,7 +128,8 @@ impl Work {
                 AddonsJob::ReadCache { user_id } => Some(AddonsLanding::CacheRead { user_id: user_id.clone(), addons: None }),
                 AddonsJob::Fetch { user_id, .. } => Some(AddonsLanding::Fetched { user_id: user_id.clone(), result: Err(api_refused()) }),
                 AddonsJob::ReadFilter => Some(AddonsLanding::FilterRead(Default::default())),
-                AddonsJob::WriteCache { .. } | AddonsJob::DropCache { .. } | AddonsJob::WriteFilter(_) => None,
+                AddonsJob::ReadStreamFilter => Some(AddonsLanding::StreamFilterRead(Default::default())),
+                AddonsJob::WriteCache { .. } | AddonsJob::DropCache { .. } | AddonsJob::WriteFilter(_) | AddonsJob::WriteStreamFilter(_) => None,
             };
             let services = services.clone();
             runner.run(
@@ -143,6 +148,15 @@ impl Work {
                 LibraryJob::Fetch { user_id, .. } => LibraryLanding::Fetched { user_id: user_id.clone(), result: Err(api_refused()) },
                 LibraryJob::Add { user_id, entry, .. } => {
                     LibraryLanding::Added { user_id: user_id.clone(), id: entry.id.clone(), result: Err(api_refused()) }
+                }
+                LibraryJob::Edit { user_id, id, .. } => {
+                    LibraryLanding::Edited { user_id: user_id.clone(), id: id.clone(), result: Err(api_refused()) }
+                }
+                LibraryJob::Mark { user_id, entry, .. } => {
+                    LibraryLanding::Edited { user_id: user_id.clone(), id: entry.id.clone(), result: Err(api_refused()) }
+                }
+                LibraryJob::Progress { user_id, last, .. } => {
+                    LibraryLanding::Progressed { user_id: user_id.clone(), last: *last, result: Err(api_refused()) }
                 }
             };
             let services = services.clone();
@@ -176,7 +190,14 @@ impl Work {
                 "addon-search",
                 Box::new(move |off| {
                     let fetch = NetFetch::new(off, Profile::Api).cancelled_by(job.cancel);
-                    Done::Search(SearchLanding { qgen: job.qgen, row: job.row, result: get_json::<CatalogPage>(&fetch, &job.url, &[]) })
+                    let began = std::time::Instant::now();
+                    let result = get_json::<CatalogPage>(&fetch, &job.url, &[]);
+                    let outcome = match &result {
+                        Ok(p) => format!("{} items", p.metas.len()),
+                        Err(e) => format!("failed ({})", sn_base::eventlog::scrub::scrub_local(&e.to_string())),
+                    };
+                    sn_base::eventlog::log(&format!("addon: search {} in {} ms: {outcome}", job.label, began.elapsed().as_millis()));
+                    Done::Search(SearchLanding { qgen: job.qgen, row: job.row, result })
                 }),
                 self.tx.clone(),
                 Done::Search(fail),
@@ -196,6 +217,37 @@ impl Work {
                 }),
                 self.tx.clone(),
                 Done::Grid(fail),
+            );
+        }
+    }
+
+    /// Look up one playback's skip markers.
+    pub fn skips(&self, runner: &dyn Runner, job: crate::app::playback::SkipLookup) {
+        let (gen, source) = (job.gen, job.lookup.source());
+        runner.run(
+            "skip-markers",
+            Box::new(move |off| {
+                let fetch = NetFetch::new(off, Profile::Api);
+                Done::Skips { gen, source, result: sn_stremio::skip::fetch_skips(&fetch, &job.lookup, job.dur_ms) }
+            }),
+            self.tx.clone(),
+            Done::Skips { gen, source, result: Err(refused()) },
+        );
+    }
+
+    /// Ask every subtitles addon in `sources` for playback `gen`'s subtitles, each on its own
+    /// worker (a slow addon holds only its own answer).
+    pub fn subtitles(&self, runner: &dyn Runner, gen: u32, sources: Vec<sn_stremio::subtitles::SubtitleSource>) {
+        for source in sources {
+            let addon = source.addon_name.clone();
+            runner.run(
+                "addon-subtitles",
+                Box::new(move |off| {
+                    let fetch = NetFetch::new(off, Profile::Api);
+                    run_subtitles(&fetch, gen, &source)
+                }),
+                self.tx.clone(),
+                Done::Subtitles { gen, addon, result: Err(refused()) },
             );
         }
     }
@@ -227,16 +279,122 @@ pub fn run_catalog(off: &OffFrame, job: Job) -> Landing {
 
 /// One detail job, on a worker.
 pub fn run_detail(off: &OffFrame, job: DetailJob) -> DetailLanding {
-    let fetch = NetFetch::new(off, Profile::Api);
-    run_detail_with(&fetch, job)
+    match job {
+        DetailJob::Meta { key, urls } if urls.len() > 1 => {
+            let began = std::time::Instant::now();
+            let result = race_meta(&urls);
+            sn_base::eventlog::log(&format!(
+                "addon: meta {} from {} source(s) asked at once in {} ms",
+                if result.is_ok() { "ok" } else { "failed" },
+                urls.len(),
+                began.elapsed().as_millis()
+            ));
+            DetailLanding::Meta { key, result }
+        }
+        job => run_detail_with(&NetFetch::new(off, Profile::Api), job),
+    }
+}
+
+/// Ask every meta source at once, each on its own worker, and take the first success in addon
+/// order ([`sn_stremio::meta::pick_in_order`]): a slow or failing source ahead of a good one no
+/// longer holds the page (one took 13.1 s on the TV before the next source was even asked).
+/// Sources still running when the answer is decided finish on their own; their results drop.
+fn race_meta(urls: &[String]) -> Result<sn_stremio::types::Meta, sn_stremio::FetchError> {
+    use sn_stremio::FetchError;
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut slots: Vec<Option<Result<sn_stremio::types::Meta, FetchError>>> = vec![None; urls.len()];
+    for (i, url) in urls.iter().enumerate() {
+        let (tx, url) = (tx.clone(), url.clone());
+        let started = sn_base::task::spawn_off_frame("addon-meta", move |off| {
+            let fetch = NetFetch::new(off, Profile::Api);
+            let r = sn_stremio::Fetch::get(&fetch, &url, &[]).and_then(|b| sn_stremio::meta::decode_meta(&b));
+            let _ = tx.send((i, r));
+        });
+        if !started {
+            slots[i] = Some(Err(FetchError::Transport("no worker thread".into())));
+        }
+    }
+    drop(tx);
+    // once any source succeeded, the ones ahead of it get META_GRACE_MS more
+    let mut grace_until: Option<std::time::Instant> = None;
+    loop {
+        if let Some(r) = sn_stremio::meta::pick_in_order(&slots) {
+            return r;
+        }
+        if grace_until.is_some_and(|t| std::time::Instant::now() >= t) {
+            if let Some(r) = sn_stremio::meta::pick_after_grace(&slots) {
+                return r;
+            }
+        }
+        let got = match grace_until {
+            Some(t) => match rx.recv_timeout(t.saturating_duration_since(std::time::Instant::now())) {
+                Ok(v) => Ok(v),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(()),
+            },
+            None => rx.recv().map_err(|_| ()),
+        };
+        match got {
+            Ok((i, r)) => {
+                if grace_until.is_none() && r.is_ok() {
+                    grace_until = Some(std::time::Instant::now() + std::time::Duration::from_millis(sn_stremio::meta::META_GRACE_MS));
+                }
+                slots[i] = Some(r);
+            }
+            // every worker gone without deciding: fill what never answered as failed
+            Err(_) => {
+                for s in slots.iter_mut().filter(|s| s.is_none()) {
+                    *s = Some(Err(FetchError::Transport("no answer".into())));
+                }
+            }
+        }
+    }
+}
+
+/// One subtitles addon's answer, over any transport. Logged by the addon's name and its timing,
+/// never the URL (the addon's base, and its subtitles' URLs, can carry its configuration).
+pub fn run_subtitles(fetch: &dyn Fetch, gen: u32, source: &sn_stremio::subtitles::SubtitleSource) -> Done {
+    let began = std::time::Instant::now();
+    let result = sn_stremio::subtitles::fetch(fetch, source);
+    let outcome = match &result {
+        Ok(s) => format!("{} subtitles", s.len()),
+        Err(e) => format!("failed ({})", sn_base::eventlog::scrub::scrub_local(&e.to_string())),
+    };
+    sn_base::eventlog::log(&format!("addon: subtitles from {} in {} ms: {outcome}", source.addon_name, began.elapsed().as_millis()));
+    Done::Subtitles { gen, addon: source.addon_name.clone(), result }
 }
 
 /// [`run_detail`] over any transport (the tests' fake).
 pub fn run_detail_with(fetch: &dyn Fetch, job: DetailJob) -> DetailLanding {
     match job {
-        DetailJob::Meta { key, url } => DetailLanding::Meta { key, result: get_json::<MetaResponse>(fetch, &url, &[]).map(|r| r.meta) },
+        DetailJob::Meta { key, urls } => {
+            let began = std::time::Instant::now();
+            let result = sn_stremio::meta::fetch_meta(fetch, &urls);
+            // No URL: an addon's path carries its configuration.
+            sn_base::eventlog::log(&format!(
+                "addon: meta {} from {} source(s) in {} ms",
+                if result.is_ok() { "ok" } else { "failed" },
+                urls.len(),
+                began.elapsed().as_millis()
+            ));
+            DetailLanding::Meta { key, result }
+        }
         DetailJob::Streams { key, index, mut group } => {
+            let began = std::time::Instant::now();
             group.load(fetch);
+            let outcome = match &group.state {
+                GroupState::Ready(s) => format!("{} streams", s.len()),
+                GroupState::Failed(e) => format!("failed ({})", sn_base::eventlog::scrub::scrub_local(&e.to_string())),
+                GroupState::Loading => "loading".into(),
+                GroupState::Off => "off".into(),
+            };
+            sn_base::eventlog::log(&format!(
+                "addon: streams from {} for {} {} in {} ms: {outcome}",
+                group.addon_name,
+                key.kind,
+                id_shape(&key.video_id),
+                began.elapsed().as_millis()
+            ));
             DetailLanding::Streams { key, index, state: group.state }
         }
     }
@@ -268,5 +426,30 @@ mod tests {
         }
         assert_eq!(store.addons_state(), sn_screens::stores::catalog::AddonsState::Failed);
         assert!(store.first_failure().is_some());
+    }
+}
+
+/// A video id's scheme and episode, without the title's own number: `tmdb:…:2:4`, `tt…:1:3`,
+/// `tt…` (which id scheme an addon was asked with is what an empty answer is read against).
+fn id_shape(id: &str) -> String {
+    let mut parts = id.split(':');
+    let head = parts.next().unwrap_or("");
+    let scheme = if head.starts_with("tt") && head[2..].bytes().all(|b| b.is_ascii_digit()) {
+        "tt…".to_string()
+    } else {
+        parts.next();
+        format!("{}:…", head.chars().filter(char::is_ascii_alphanumeric).take(12).collect::<String>())
+    };
+    std::iter::once(scheme).chain(parts.map(|p| p.chars().filter(char::is_ascii_digit).take(4).collect())).collect::<Vec<_>>().join(":")
+}
+
+#[cfg(test)]
+mod id_shape_tests {
+    #[test]
+    fn the_shape_keeps_the_scheme_and_episode_not_the_title() {
+        assert_eq!(super::id_shape("tt0903747:1:3"), "tt…:1:3");
+        assert_eq!(super::id_shape("tt0816692"), "tt…");
+        assert_eq!(super::id_shape("tmdb:1396:2:4"), "tmdb:…:2:4");
+        assert_eq!(super::id_shape("kitsu:7442:3"), "kitsu:…:3");
     }
 }

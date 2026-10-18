@@ -2,7 +2,7 @@
 //! addon's `.srt`/`.vtt`/`.ass`, fetched by URL).
 //!
 //! The demuxer only ever sees the streams INSIDE the container it opened, so a sidecar needs its
-//! own producer: fetch the whole file once. ASS/SSA keeps its complete script for [`ass_source`]
+//! own producer: fetch the whole file once (inflated first when it is gzipped). ASS/SSA keeps its complete script for [`ass_source`]
 //! and the native styled renderer (styles, overlapping events, drawings and embedded fonts must
 //! never pass through a text parser). SubRip and WebVTT are converted on the fetch worker to an
 //! ASS script of the viewer's synthesized style (`text_ass::script_from_srt`/`_vtt`, charset by
@@ -56,14 +56,17 @@ impl Failure {
 }
 
 /// A sidecar's identity: the id its source gave it, the URL it is fetched from (with the headers
-/// the fetch carries) and its codec. All of it is the cache key, so the same id from two sources
-/// cannot alias.
+/// the fetch carries), its codec and the language its source tagged it with. All of it is the cache
+/// key, so the same id from two sources cannot alias.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Selection {
     id: String,
     url: String,
     headers: crate::headers::RequestHeaders,
     codec: String,
+    /// The source's language tag (`hun`, `pt-BR`, empty when unknown): the hint that picks a
+    /// legacy file's code page (`sub_charset`).
+    language: String,
 }
 
 /// The largest sidecar file fetched or decoded: a feature's subtitles are tens to hundreds of KiB;
@@ -123,10 +126,11 @@ fn state() -> std::sync::MutexGuard<'static, State> {
 
 /// Select the sidecar `id`, fetching it from `url` (with `headers`' lines; a stream `User-Agent`
 /// is the media plane's and is not sent here) unless that file is already loaded. `codec` is what
-/// its source called it (`srt`, `vtt`, `ass`, ...), a hint the file's own first line can overrule.
-/// MAIN THREAD.
-pub fn select(id: String, url: String, headers: crate::headers::RequestHeaders, codec: String) {
-    select_with_fetch(id, url, headers, codec, |url, headers, _codec| {
+/// its source called it (`srt`, `vtt`, `ass`, ...), a hint the file's own first line can overrule;
+/// `language` is the source's language tag, which settles a legacy file's code page (a Hungarian
+/// cp1250 file read without it came out as cp1252, every ő an õ). MAIN THREAD.
+pub fn select(id: String, url: String, headers: crate::headers::RequestHeaders, codec: String, language: String) {
+    select_with_fetch_in(id, url, headers, codec, language, |url, headers, _codec| {
         let lines: Vec<String> = headers.lines(true).map(str::to_owned).collect();
         match sn_net::net::request(url, &lines, "GET", None, sn_net::net::BULK, true, Some(SIDECAR_MAX_BYTES), None) {
             Some(resp) if resp.ok() => Some(resp.body),
@@ -142,6 +146,7 @@ pub fn select(id: String, url: String, headers: crate::headers::RequestHeaders, 
     });
 }
 
+#[cfg(test)]
 fn select_with_fetch(
     id: String,
     url: String,
@@ -149,11 +154,22 @@ fn select_with_fetch(
     codec: String,
     fetch: impl Fn(&str, &crate::headers::RequestHeaders, &str) -> Option<Vec<u8>> + Send + 'static,
 ) {
+    select_with_fetch_in(id, url, headers, codec, String::new(), fetch)
+}
+
+fn select_with_fetch_in(
+    id: String,
+    url: String,
+    headers: crate::headers::RequestHeaders,
+    codec: String,
+    language: String,
+    fetch: impl Fn(&str, &crate::headers::RequestHeaders, &str) -> Option<Vec<u8>> + Send + 'static,
+) {
     if id.is_empty() || url.is_empty() {
         deselect();
         return;
     }
-    let selection = Selection { id, url, headers, codec: codec.to_ascii_lowercase() };
+    let selection = Selection { id, url, headers, codec: codec.to_ascii_lowercase(), language };
     {
         let mut st = state();
         st.generation = st.generation.wrapping_add(1);
@@ -185,7 +201,7 @@ fn select_with_fetch(
         let body = fetch(&selection.url, &selection.headers, &selection.codec);
         let outcome = match body {
             None => Err(Failure::Fetch),
-            Some(bytes) => decode(bytes, &selection.codec),
+            Some(bytes) => decode_in(bytes, &selection.codec, &selection.language),
         };
         let mut st = state();
         if st.generation != gen {
@@ -244,6 +260,7 @@ pub fn select_without_fetch_for_test(id: &str) {
         url: String::new(),
         headers: crate::headers::RequestHeaders::none(),
         codec: String::new(),
+        language: String::new(),
     });
     st.failed = None;
 }
@@ -397,36 +414,76 @@ fn is_webvtt(text: &str, codec: &str) -> bool {
         || text.trim_start_matches('\u{feff}').starts_with("WEBVTT")
 }
 
+/// A gzipped file (`.srt.gz`, as some subtitle addons serve it) inflated, never past
+/// [`SIDECAR_MAX_BYTES`]; anything else as it came. `None`: a gzip stream that is broken or
+/// inflates past the bound.
+fn gunzipped(bytes: Vec<u8>) -> Option<Vec<u8>> {
+    use std::io::Read;
+    if !bytes.starts_with(&[0x1f, 0x8b]) {
+        return Some(bytes);
+    }
+    let mut out = Vec::new();
+    let mut gz = flate2::read::GzDecoder::new(&bytes[..]).take(SIDECAR_MAX_BYTES as u64 + 1);
+    gz.read_to_end(&mut out).ok()?;
+    (out.len() <= SIDECAR_MAX_BYTES).then_some(out)
+}
+
+#[cfg(test)]
 fn decode(bytes: Vec<u8>, codec: &str) -> Result<Content, Failure> {
+    decode_in(bytes, codec, "")
+}
+
+/// A fetched file as the renderer takes it; `language` is the source's tag (empty: unknown).
+fn decode_in(bytes: Vec<u8>, codec: &str, language: &str) -> Result<Content, Failure> {
+    decode_styled_in(bytes, codec, crate::prefs::ass_styling(), language)
+}
+
+#[cfg(test)]
+fn decode_styled(bytes: Vec<u8>, codec: &str, ass_styling: bool) -> Result<Content, Failure> {
+    decode_styled_in(bytes, codec, ass_styling, "")
+}
+
+/// [`decode_in`] with the Style ASS subtitles switch given (`false`: an ASS script's dialogue is
+/// converted to the viewer's caption style, `text_ass::script_from_ass`).
+fn decode_styled_in(bytes: Vec<u8>, codec: &str, ass_styling: bool, language: &str) -> Result<Content, Failure> {
+    let bytes = gunzipped(bytes).ok_or(Failure::Empty)?;
     if bytes.len() > SIDECAR_MAX_BYTES { return Err(Failure::Empty); }
-    // The check's lossy copy (a whole file when it is not UTF-8) is gone before anything else is built.
-    let authored = { let text = String::from_utf8_lossy(&bytes); is_ass_script(&text) };
-    if authored {
+    // The charset step comes FIRST, for every kind of file: the BOM, UTF-16 without one, valid
+    // UTF-8, else the encoding `chardetng` guesses from the whole file, hinted by the source's
+    // language (`sub_charset`). Deciding "is this a script" on the raw bytes missed a UTF-16 one,
+    // and handed libass (which reads UTF-8) a cp1251 script's bytes as they were.
+    let charset = super::sub_charset::TrackCharset::new((!language.is_empty()).then_some(language));
+    let text = super::sub_charset::subtitle_text_whole(&bytes, &charset);
+    // A NUL is never subtitle text: padding is dropped, as the line readers always did.
+    let text = if text.contains('\0') { std::borrow::Cow::Owned(text.replace('\0', "")) } else { text };
+    let text_ref = text.trim_start_matches('\u{feff}');
+    let authored = is_ass_script(text_ref);
+    // Style ASS subtitles off: the script's dialogue is converted below like any text file
+    if authored && ass_styling {
         // Validate only the presence of events. libass owns the script grammar, including
-        // style/format declarations, overlapping dialogue and vector drawing events.
+        // style/format declarations, overlapping dialogue and vector drawing events. It is
+        // handed the script as UTF-8, whatever the file was written in.
+        let script: Arc<[u8]> = text_ref.as_bytes().into();
         return Ok(Content {
             source: Arc::new(super::ass::Source {
                 id: super::ass::next_source_id(), revision: 1, origin: super::ass::Origin::Authored,
-                content: super::ass::Content::Script { bytes: bytes.into(), fonts: Arc::from([]) },
+                content: super::ass::Content::Script { bytes: script, fonts: Arc::from([]) },
             }),
             font_generation: None,
             text: None,
         });
     }
     // A conversion or an error page must not silently turn an ASS selection into plain text.
-    if codec.eq_ignore_ascii_case("ass") || codec.eq_ignore_ascii_case("ssa") {
+    if !authored && (codec.eq_ignore_ascii_case("ass") || codec.eq_ignore_ascii_case("ssa")) {
         return Err(Failure::Empty);
     }
-    // A sidecar file is whole-file text of unknown language here: the charset step is the BOM,
-    // valid UTF-8, else the encoding `chardetng` guesses from the whole file (`sub_charset`).
-    let text = super::sub_charset::subtitle_text_whole(&bytes, &super::sub_charset::TrackCharset::unknown());
-    // A NUL is never subtitle text: padding is dropped, as the line readers always did.
-    let text = if text.contains('\0') { std::borrow::Cow::Owned(text.replace('\0', "")) } else { text };
-    let text_ref = text.trim_start_matches('\u{feff}');
-    if is_ass_script(text_ref) {
-        return Err(Failure::Empty);
-    }
-    let converted = if is_webvtt(text_ref, codec) { text_ass::script_from_vtt(text_ref) } else { text_ass::script_from_srt(text_ref) };
+    let converted = if authored {
+        text_ass::script_from_ass(text_ref)
+    } else if is_webvtt(text_ref, codec) {
+        text_ass::script_from_vtt(text_ref)
+    } else {
+        text_ass::script_from_srt(text_ref)
+    };
     // Only the converted events are needed from here: the decoded text and the file go first.
     drop(text);
     drop(bytes);
@@ -797,6 +854,21 @@ mod tests {
             "a converted response must not silently discard styling");
     }
 
+    /// Style ASS subtitles off: an ASS sidecar is its dialogue, plain, in the synthesized style
+    /// (and restyled with the viewer's picks like any converted file).
+    #[test]
+    fn an_ass_sidecar_with_styling_off_is_plain_dialogue() {
+        let script = b"[Script Info]\nScriptType: v4.00+\n[Events]\n\
+            Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n\
+            Dialogue: 0,0:00:01.00,0:00:03.00,Sign,,0,0,0,,{\\pos(300,100)}SIGN, here\n\
+            Dialogue: 1,0:00:01.00,0:00:03.00,Sign,,0,0,0,,{\\blur2}SIGN, here\n\
+            Dialogue: 0,0:00:02.00,0:00:04.00,Default,,0,0,0,,{\\k20}Dia{\\k30}logue\n";
+        let content = decode_styled(script.to_vec(), "ass", false).unwrap();
+        assert!(content.source.origin.is_text() && content.text.is_some(), "restyled like any converted file");
+        assert_eq!(texts(&content), ["SIGN, here", "Dialogue"], "the repeated layer shows once, the overlap is kept");
+        assert_eq!(decode_styled(script.to_vec(), "ass", true).unwrap().source.origin, Origin::Authored);
+    }
+
     /// #708's legacy charsets reach the script as the same UTF-8 text the embedded path gets.
     #[test]
     fn legacy_charsets_convert_to_the_expected_event_body() {
@@ -815,11 +887,64 @@ mod tests {
         }
     }
 
+    /// The addon's language tag reaches the charset step. These are the opening cues of a real
+    /// Hungarian cp1250 file from the OpenSubtitles addon: read without its tag (as the sidecar
+    /// path did), chardetng took them for cp1252 and "földműves" came out "földmûves".
+    #[test]
+    fn the_sources_language_settles_a_legacy_files_code_page() {
+        let text = "1\r\n00:00:34,717 --> 00:00:38,717\r\n\r\n\r\n2\r\n00:01:12,184 --> 00:01:19,718\r\nCSILLAGOK KÖZÖTT\r\n\r\n\
+                    3\r\n00:01:21,124 --> 00:01:23,670\r\nApám földműves volt.\r\n\r\n4\r\n00:01:24,565 --> 00:01:27,737\r\n\
+                    Ahogy akkoriban mindenki.\r\n\r\n5\r\n00:01:29,393 --> 00:01:31,592\r\nPersze nem így kezdte.\r\n";
+        let (bytes, _, bad) = encoding_rs::WINDOWS_1250.encode(text);
+        assert!(!bad);
+        let content = decode_in(bytes.into_owned(), "srt", "hun").expect("a usable file");
+        assert_eq!(texts(&content), ["CSILLAGOK KÖZÖTT", "Apám földműves volt.", "Ahogy akkoriban mindenki.", "Persze nem így kezdte."]);
+    }
+
+    /// A script is recognised after the charset step, not on its raw bytes: a UTF-16 one used to
+    /// read as no script at all, and a cp1251 one reached libass (which reads UTF-8) as cp1251.
+    #[test]
+    fn a_utf16_or_legacy_ass_script_reaches_the_renderer_as_utf8() {
+        let script = "[Script Info]\nScriptType: v4.00+\n[Events]\n\
+            Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,Привет, как дела? Всё хорошо, спасибо.\n";
+        let utf16: Vec<u8> = [0xFF, 0xFE].into_iter().chain(script.encode_utf16().flat_map(u16::to_le_bytes)).collect();
+        let (cp1251, _, _) = encoding_rs::WINDOWS_1251.encode(script);
+        for (name, bytes) in [("UTF-16LE", utf16), ("cp1251", cp1251.into_owned())] {
+            let content = decode_styled_in(bytes, "ass", true, "rus").unwrap_or_else(|why| panic!("{name}: {why:?}"));
+            assert_eq!(content.source.origin, Origin::Authored, "{name}");
+            assert_eq!(&*script_bytes(&content), script.as_bytes(), "{name}");
+        }
+    }
+
+    /// A subtitles addon's file as it often comes: Western European SubRip in Windows-1252,
+    /// sometimes gzipped. Both reach the script as the UTF-8 text the file means.
+    #[test]
+    fn a_cp1252_file_and_a_gzipped_one_convert_to_the_same_cues() {
+        use std::io::Write;
+        let text = "1\r\n00:00:01,000 --> 00:00:03,000\r\nÇa va très bien, merci. Où est la bibliothèque ?\r\n\r\n\
+                    2\r\n00:00:04,000 --> 00:00:06,000\r\nDéjà vu, naïve façade, crème brûlée — l’été dernier.\r\n";
+        let (cp1252, _, bad) = encoding_rs::WINDOWS_1252.encode(text);
+        assert!(!bad);
+        assert!(std::str::from_utf8(&cp1252).is_err(), "the fixture is not UTF-8");
+        let want = ["Ça va très bien, merci. Où est la bibliothèque ?", "Déjà vu, naïve façade, crème brûlée — l’été dernier."];
+        assert_eq!(texts(&decode(cp1252.to_vec(), "").expect("a usable file")), want);
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gz.write_all(&cp1252).unwrap();
+        let packed = gz.finish().unwrap();
+        assert_eq!(texts(&decode(packed.clone(), "srt").expect("an inflated file")), want);
+        assert!(decode(packed[..packed.len() / 2].to_vec(), "srt").is_err(), "a cut gzip stream is no file");
+        // a gzip bomb stops at the bound instead of inflating into memory
+        let mut bomb = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        bomb.write_all(&vec![b'a'; SIDECAR_MAX_BYTES + 1]).unwrap();
+        assert!(decode(bomb.finish().unwrap(), "srt").is_err());
+    }
+
     /// Another pair of picks than `current`, in both size and position.
     fn other_picks(current: TextStyle) -> TextStyle {
         TextStyle {
             size: if current.size == SubtitleSize::Large { SubtitleSize::Small } else { SubtitleSize::Large },
             position: if current.position == SubtitlePosition::High { SubtitlePosition::Low } else { SubtitlePosition::High },
+            ..current
         }
     }
 

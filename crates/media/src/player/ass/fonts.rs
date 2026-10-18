@@ -10,11 +10,14 @@
 //!   * `fonts/subs/NotoSans<Script>-Bold.ttf` - one per script, cut by `tools/cut-noto-subs.py`,
 //!     listed in `fonts/subs/manifest.json`. Each answers to "PlxSubs" and "Inter" as well as to its
 //!     own name, and carries no Latin, digit or punctuation codepoint Inter Bold has.
+//!   * `appfont-emoji.ttf` - the UI's monochrome emoji face (Noto Emoji, `tools/cut-noto-emoji.py`):
+//!     pictographs only, with the same "PlxSubs"/"Inter" aliases, and win metrics that make libass
+//!     draw its em at 0.8 of Inter Bold's (the UI's ratio), split at Inter Bold's ascent.
 //!
 //! **The order is load-bearing.** libass breaks a tie between equally good members of a family by
 //! the order they were added, and takes the first member for code 0 without a coverage check, so
 //! both Inter faces go in before every Noto face: Latin, digits and punctuation can never be drawn
-//! by a Noto face. The Noto faces follow in manifest order.
+//! by a Noto face. The Noto faces follow in manifest order, and the emoji face goes last.
 //!
 //! **Read at create.** The files are read from disk each time a renderer is created, handed to
 //! libass (`ass_add_font` copies the bytes) and dropped. Nothing here is a process-lifetime copy:
@@ -26,6 +29,8 @@ use std::path::{Path, PathBuf};
 
 /// Inter Regular, then Inter Bold.
 const INTER: [&str; 2] = ["appfont.ttf", "appfont-bold.ttf"];
+/// The emoji face, shared with the UI chain, added after every other face.
+const EMOJI: &str = "appfont-emoji.ttf";
 /// Where the Noto faces and their manifest sit, under the app directory.
 const SUBS_DIR: &str = "fonts/subs";
 const MANIFEST: &str = "manifest.json";
@@ -64,6 +69,7 @@ pub(super) fn bundled(asset_dir: &Path) -> Result<Vec<PathBuf>, Fault> {
         }
         files.push(dir.join(entry.file));
     }
+    files.push(asset_dir.join(EMOJI));
     Ok(files)
 }
 

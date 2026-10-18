@@ -11,12 +11,19 @@ use std::os::raw::{c_int, c_void};
 
 use sn_base::eventlog::log;
 
+pub mod addon_subs;
 pub mod boot;
 pub mod bridge;
+#[cfg(feature = "devtriggers")]
+pub mod devcmd;
+pub mod diagnostics;
+pub mod heap;
 pub mod input;
 pub mod playback;
+pub mod pointer;
 pub mod prefs;
 pub mod run;
+pub mod subtitles;
 
 /// The window asked for: the authored canvas, which a television's panel is.
 pub(crate) const SCR_W: c_int = sn_base::surface::LOGICAL_W as c_int;
@@ -35,12 +42,17 @@ pub struct App {
     pub backgrounded: bool,
     /// The SDL event buffer (`SDL_Event` is 56 bytes; the TV's fork writes no more).
     pub ev: [u8; 64],
+    /// The Magic Remote's pointer: hover, click, wheel, hiding when it rests.
+    pub pointer: pointer::Pointer,
+    /// Stats for nerds: the read-out's held snapshot, drawn over the tree while it is on.
+    pub diagnostics: diagnostics::Diagnostics,
 }
 
 /// Boot, run, shut down. The process exit status.
 pub fn run_application() -> c_int {
     crate::crash::install_panic_logger();
     log(&format!("StremioNative {} starting", crate::VERSION));
+    heap::tune();
     // SAFETY: `sn_run` is called once, by `main`, on the SDL main thread.
     let mt = unsafe { sn_base::task::MainThread::assume() };
     // SAFETY: the SDL/GL bring-up runs on the main thread before any frame.

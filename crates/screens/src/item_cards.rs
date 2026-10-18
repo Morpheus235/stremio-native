@@ -1,5 +1,6 @@
-//! **Library items as cards** — the `sn_ui::cards::CardSource` Home's Continue Watching row and
-//! the Library page's type shelves both draw, and what a poster tile reads of a library item.
+//! **Library items as cards** — the `sn_ui::cards::CardSource` Home's Continue Watching row, the
+//! Continue Watching page and the Library page's type shelves draw, what a poster tile reads of a
+//! library item, and where a Continue Watching press goes ([`resume_arg`]).
 //!
 //! Not a screen: the two screens share it here because neither may name the other. A card is a
 //! poster with its resume bar while the item is in progress (`LibraryItem::progress`), titled
@@ -12,7 +13,44 @@ use sn_ui::cards::{CardSource, TileLabel};
 use sn_ui::tile::{Resume, TileFacts, TileKind};
 use sn_ui::widgets::Art;
 
-use crate::registry::Bundle;
+use sn_machine::machine::Cx;
+
+use crate::registry::{AppArg, Bundle, ItemRef, VideoRef};
+use crate::stores::account::SessionState;
+
+/// The Continue Watching items: signed in, in progress, most recent first (Home's shelf and the
+/// Continue Watching page it opens).
+pub fn continue_items<'a>(cx: &Cx<'a, Bundle>) -> Vec<&'a LibraryItem> {
+    match cx.views.account.session() {
+        SessionState::SignedIn(_) => cx.views.library.continue_watching(),
+        _ => Vec::new(),
+    }
+}
+
+/// Where a Continue Watching press goes: the resume target's Streams page, with the offset (for a
+/// series the episode it stopped on), or the Resume page for an item with no recorded video.
+pub fn resume_arg(item: &LibraryItem, from: &str) -> AppArg {
+    match item.resume_target() {
+        Some(t) => AppArg::Streams(VideoRef {
+            kind: t.kind,
+            video_id: t.video_id,
+            show: item.name.clone(),
+            title: caption(item),
+            resume_ms: t.offset_ms,
+            item_id: item.id.clone(),
+            from: from.to_string(),
+        }),
+        None => AppArg::Resume(ItemRef { kind: item.kind.clone(), id: item.id.clone(), name: item.name.clone(), from: from.to_string() }),
+    }
+}
+
+/// A held OK on a Continue Watching card or row: the item's menu.
+pub fn item_menu(item: &LibraryItem, from: &str) -> crate::registry::MenuKind {
+    crate::registry::MenuKind::Item {
+        item: ItemRef { kind: item.kind.clone(), id: item.id.clone(), name: item.name.clone(), from: from.to_string() },
+        poster: item.poster.clone(),
+    }
+}
 
 /// What a poster tile reads of a library item: its poster and, in progress, its resume bar.
 pub fn tile_facts(item: &LibraryItem) -> TileFacts<'_> {
@@ -29,7 +67,7 @@ pub fn tile_facts(item: &LibraryItem) -> TileFacts<'_> {
             _ => TileKind::Other,
         },
         title: &item.name,
-        thumb: item.poster.as_deref().unwrap_or(""),
+        thumb: crate::cards::art_url(item.poster.as_deref()).unwrap_or(""),
         resume,
         watched: item.state.times_watched > 0 && !item.is_continue_watching(),
         ..Default::default()
@@ -103,16 +141,21 @@ impl CardSource<Bundle> for ItemCards<'_> {
     }
 }
 
-/// A card's sub-line: a series' episode address (`tt0903747:2:5` → "S2 · E5") while one is in
-/// progress; nothing otherwise.
+/// A card's sub-line: a series' episode address while one is in progress; nothing otherwise.
+/// The video id is the item id plus `:{season}:{episode}` (`tt0903747:2:5` → "S2, E5") or, from
+/// anime addons, plus `:{episode}` alone (`kitsu:8671:12` → "E12") — so what follows the ITEM id is
+/// read, never the last two segments (that read `kitsu:8671:12` as season 8671).
 pub fn caption(item: &LibraryItem) -> String {
-    if item.kind != "series" {
+    if !matches!(item.kind.as_str(), "series" | "anime") {
         return String::new();
     }
-    let Some(video) = item.state.video_id.as_deref() else { return String::new() };
-    let mut parts = video.rsplit(':');
-    match (parts.next().and_then(|e| e.parse::<i64>().ok()), parts.next().and_then(|s| s.parse::<i64>().ok())) {
-        (Some(e), Some(s)) => sn_platform::i18n::msg::core_episode_ordinal(s, e),
+    let Some(rest) = item.state.video_id.as_deref().and_then(|v| v.strip_prefix(item.id.as_str())?.strip_prefix(':')) else {
+        return String::new();
+    };
+    let nums: Option<Vec<i64>> = rest.split(':').map(|n| n.parse().ok()).collect();
+    match nums.as_deref() {
+        Some(&[season, episode]) => sn_ui::fmt::episode_ordinal(season, episode),
+        Some(&[episode]) => sn_ui::fmt::episode_address(0, episode),
         _ => String::new(),
     }
 }
@@ -128,7 +171,7 @@ mod tests {
                 "state":{"timeOffset":600000,"duration":2400000,"video_id":"tt1:2:5"}}"#,
         )
         .unwrap();
-        assert_eq!(caption(&item), sn_platform::i18n::msg::core_episode_ordinal(2, 5));
+        assert_eq!(caption(&item), sn_ui::fmt::episode_ordinal(2, 5));
         let facts = tile_facts(&item);
         assert_eq!(facts.thumb, "https://img.example/p.jpg");
         let r = facts.resume.expect("in progress");
@@ -139,5 +182,17 @@ mod tests {
         assert_eq!(cards.elem("tt1"), 0x10, "an item keeps its element");
         let shelf = ItemCards { items: vec![&item], cards: &cards };
         assert_eq!(CardSource::<Bundle>::progress(&shelf, 0), Some(0.25));
+    }
+
+    /// Real ids: Cinemeta's `{imdb}:{season}:{episode}` and the Kitsu addon's `kitsu:{id}:{episode}`
+    /// (no season; its meta lists every episode as season 1).
+    #[test]
+    fn captions_read_the_episode_after_the_item_id_in_english() {
+        let _en = sn_platform::i18n::language_on_this_thread_for_test(sn_platform::i18n::Preference::En);
+        let item = |id: &str, video: &str| -> LibraryItem {
+            serde_json::from_str(&format!(r#"{{"_id":"{id}","type":"series","state":{{"timeOffset":5,"video_id":"{video}"}}}}"#)).unwrap()
+        };
+        assert_eq!(caption(&item("tt0903747", "tt0903747:2:5")), "S2, E5");
+        assert_eq!(caption(&item("kitsu:8671", "kitsu:8671:12")), "E12");
     }
 }

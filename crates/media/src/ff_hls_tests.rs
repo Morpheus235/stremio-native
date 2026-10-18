@@ -58,7 +58,7 @@ fn an_hls_vod_stream_reads_through_avio_to_a_clean_eof_and_publishes_its_duratio
     o.put("/b.ts", Answer::ok(ts(2)));
     o.put("/c.ts", Answer::ok(ts(3)));
     let mut aq = crate::aq::aq_new(1 << 20);
-    let (src, size) = open_hls(&url, &crate::headers::RequestHeaders::none(), &mut *aq).ok().expect("opens");
+    let (src, size) = open_hls(&url, &crate::headers::RequestHeaders::none(), &mut *aq, &mut Vec::new()).ok().expect("opens");
     assert_eq!(size, -1, "an HLS stream has no byte size");
     assert_eq!(SHARED.duration_ns.load(Ordering::Relaxed), 12_000_000_000, "the playlist's duration");
     let mut st = state(src, &mut aq);
@@ -79,7 +79,7 @@ fn an_armed_seek_opens_a_vod_stream_at_its_segment_and_is_consumed() {
     o.put("/c.ts", Answer::ok(ts(3)));
     SHARED.seek_to_ns.store(9_000_000_000, Ordering::Release);
     let mut aq = crate::aq::aq_new(1 << 20);
-    let (src, _) = open_hls(&url, &crate::headers::RequestHeaders::none(), &mut *aq).ok().expect("opens");
+    let (src, _) = open_hls(&url, &crate::headers::RequestHeaders::none(), &mut *aq, &mut Vec::new()).ok().expect("opens");
     assert_eq!(SHARED.seek_to_ns.load(Ordering::Acquire), -1, "the unseekable AVIO must not see the target");
     let mut st = state(src, &mut aq);
     let (got, end) = drain(&mut st);
@@ -94,7 +94,7 @@ fn a_404_playlist_fails_the_open_with_its_status_published() {
     let _restore = RestoreShared;
     let o = Origin::spawn();
     let mut aq = crate::aq::aq_new(1 << 20);
-    let r = open_hls(&o.url("/nope.m3u8"), &crate::headers::RequestHeaders::none(), &mut *aq);
+    let r = open_hls(&o.url("/nope.m3u8"), &crate::headers::RequestHeaders::none(), &mut *aq, &mut Vec::new());
     assert!(matches!(r, Err(MediaOpenFail::Failed)));
     assert_eq!(SHARED.dg_http_status.load(Ordering::Relaxed), 404);
     assert_eq!(
@@ -112,7 +112,7 @@ fn a_failed_segment_crosses_avio_as_an_io_error_and_teardown_as_eof() {
     let url = vod(&o, &["a.ts", "gone.ts"]);
     o.put("/a.ts", Answer::ok(ts(1)));
     let mut aq = crate::aq::aq_new(1 << 20);
-    let (src, _) = open_hls(&url, &crate::headers::RequestHeaders::none(), &mut *aq).ok().expect("opens");
+    let (src, _) = open_hls(&url, &crate::headers::RequestHeaders::none(), &mut *aq, &mut Vec::new()).ok().expect("opens");
     let mut st = state(src, &mut aq);
     let (got, end) = drain(&mut st);
     assert_eq!(got, ts(1));
@@ -124,7 +124,7 @@ fn a_failed_segment_crosses_avio_as_an_io_error_and_teardown_as_eof() {
     // Teardown: an aborted lane reads as EOF and requests nothing more.
     let url = vod(&o, &["a.ts", "a.ts"]);
     let mut aq2 = crate::aq::aq_new(1 << 20);
-    let (src, _) = open_hls(&url, &crate::headers::RequestHeaders::none(), &mut *aq2).ok().expect("opens");
+    let (src, _) = open_hls(&url, &crate::headers::RequestHeaders::none(), &mut *aq2, &mut Vec::new()).ok().expect("opens");
     let mut st = state(src, &mut aq2);
     crate::aq::aq_abort(&mut *aq2);
     let before = o.paths().len();
@@ -133,4 +133,57 @@ fn a_failed_segment_crosses_avio_as_an_io_error_and_teardown_as_eof() {
     assert_eq!(o.paths().len(), before, "no segment is requested after teardown");
     crate::aq::aq_destroy(&mut *aq);
     crate::aq::aq_destroy(&mut *aq2);
+}
+
+/// The probe's source and the bytes it read go on to the demuxer: the open fetches nothing and
+/// the replay carries what the probe read (a live channel downloaded its first segment twice).
+#[test]
+fn a_probes_source_is_continued_not_refetched() {
+    let Some(_g) = curl_gate() else { panic!("no curl on this host") };
+    let _restore = RestoreShared;
+    let o = Origin::spawn();
+    let url = vod(&o, &["a.ts", "b.ts"]);
+    o.put("/a.ts", Answer::ok(ts(1)));
+    o.put("/b.ts", Answer::ok(ts(2)));
+    let transport = crate::hls::CurlTransport::new(crate::headers::RequestHeaders::none(), Box::new(|| false));
+    let mut h = crate::hls::CurlHls::open(transport, crate::hls::SystemClock::new(), &url, None, &sn_platform::devcaps::Caps::assumed()).expect("opens");
+    h.record();
+    let mut head = vec![0u8; 100];
+    assert_eq!(h.read(&mut head), Ok(100));
+    let tape = h.take_tape().expect("recorded");
+    assert_eq!(tape, head);
+    hls_handoff::put(&url, Box::new(h), tape);
+    let seen = o.paths().len();
+    let mut aq = crate::aq::aq_new(1 << 20);
+    let mut replay = Vec::new();
+    let before = SHARED.dg_net_rx.load(Ordering::Relaxed);
+    let (src, _) = open_hls(&url, &crate::headers::RequestHeaders::none(), &mut *aq, &mut replay).ok().expect("opens");
+    assert_eq!(o.paths().len(), seen, "nothing fetched again");
+    let mut st = state(src, &mut aq);
+    st.bounce = replay;
+    let (got, _) = drain(&mut st);
+    assert_eq!(got, [ts(1), ts(2)].concat());
+    let counted = SHARED.dg_net_rx.load(Ordering::Relaxed) - before;
+    assert!(counted >= got.len() as i64, "the replayed bytes are delivered bytes too: {counted} of {}", got.len());
+    crate::aq::aq_destroy(&mut *aq);
+}
+
+/// The read-out's Transfer and Throughput rows read `dg_net_rx`: every byte an HLS source hands
+/// the demuxer must advance it, as the socket and curl sources' bytes do.
+#[test]
+fn an_hls_fed_read_advances_the_delivered_byte_counter() {
+    let Some(_g) = curl_gate() else { return };
+    let _restore = RestoreShared;
+    let o = Origin::spawn();
+    let url = vod(&o, &["a.ts", "b.ts"]);
+    o.put("/a.ts", Answer::ok(ts(1)));
+    o.put("/b.ts", Answer::ok(ts(2)));
+    let mut aq = crate::aq::aq_new(1 << 20);
+    let (src, _) = open_hls(&url, &crate::headers::RequestHeaders::none(), &mut *aq, &mut Vec::new()).ok().expect("opens");
+    let mut st = state(src, &mut aq);
+    let before = SHARED.dg_net_rx.load(Ordering::Relaxed);
+    let (got, _) = drain(&mut st);
+    let counted = SHARED.dg_net_rx.load(Ordering::Relaxed) - before;
+    assert!(counted >= got.len() as i64, "{counted} counted for {} delivered", got.len());
+    crate::aq::aq_destroy(&mut *aq);
 }

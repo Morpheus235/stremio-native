@@ -547,7 +547,7 @@ mod tests {
         store.command(AccountCmd::SignIn { email: "a@b.c".into(), password: Secret::new("pw2") });
         store.land(AccountLanding::LoggedIn(Err(ApiError::Fetch(FetchError::Transport("timed out".into())))), 0);
         let b = build(&store, &typed("a@b.c"), &typed("pw2"), None);
-        assert_eq!(labels(&b)[0][3], msg::app_signin_offline("transport: timed out"));
+        assert_eq!(labels(&b)[0][3], msg::app_signin_offline(msg::app_reason_timeout()));
         assert!(b.index_of(RowKey(RETRY)).is_some(), "a network failure offers a retry");
     }
 

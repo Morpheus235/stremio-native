@@ -32,10 +32,47 @@ fn a_poster_with_no_row_yet_counts_a_card_skeleton() {
 }
 
 #[test]
-fn a_poster_with_an_empty_thumb_counts_a_card_skeleton() {
-    // `tex::resolve_wh_on` returns (0, ..) for an empty path before it asks the source.
-    let f = drawn(Art::Poster(Some(poster(""))));
-    assert_eq!((f.count, f.of(Reason::CardSkeleton)), (1, 1), "{f:?}");
+fn a_poster_with_an_empty_thumb_is_its_title_fallback_and_counts_nothing() {
+    // No poster at all: nothing will arrive, so the tile is the title on the absent ground.
+    let f = drawn(Art::Poster(Some(TileFacts { title: "Some Film", ..poster("") })));
+    assert_eq!(f.count, 0, "an absence, not a wait: {f:?}");
+    assert!(poster_absent(&poster("")));
+}
+
+/// Art the source has SETTLED as a miss (a 404, an undecodable body, a host failing again and
+/// again) draws the title fallback too; art merely on its way stays a skeleton.
+#[test]
+fn a_poster_whose_art_settled_as_a_miss_is_its_title_fallback() {
+    struct Failing;
+    impl crate::tex::Source for Failing {
+        fn probe(&self, _: u16, _: &str, _: i32, _: i32, _: bool) -> Option<sn_machine::machine::PosterKey> {
+            None
+        }
+        fn warm(&self, _: u16, _: &str, _: i32, _: i32, _: bool) -> crate::tex::Warm {
+            crate::tex::Warm::Known
+        }
+        fn logo(&self, _: u16, _: &str) -> Option<sn_machine::machine::PosterKey> {
+            None
+        }
+        fn logo_warm(&self, _: u16, _: &str) -> crate::tex::Warm {
+            crate::tex::Warm::Known
+        }
+        fn failed(&self, _: u16, path: &str, w: i32, h: i32, _: bool) -> bool {
+            path.ends_with("/gone.jpg") && (w, h) == POSTER_RES
+        }
+        fn unresident(&self, _: sn_machine::machine::PosterKey, _: bool) {}
+        fn idle(&self) -> bool {
+            true
+        }
+    }
+    // the source is thread-local and a libtest test owns its thread
+    crate::tex::install(Box::leak(Box::new(Failing)));
+    let gone = TileFacts { title: "Some Film", ..poster("https://img.example/gone.jpg") };
+    assert!(poster_absent(&gone));
+    assert_eq!(drawn(Art::Poster(Some(gone))).count, 0, "settled: the fallback, not a skeleton");
+    let coming = poster("https://img.example/coming.jpg");
+    assert!(!poster_absent(&coming));
+    assert_eq!(drawn(Art::Poster(Some(coming))).of(Reason::CardSkeleton), 1, "on its way: a skeleton");
 }
 
 #[test]
@@ -135,21 +172,21 @@ fn a_recording_pass_over_a_card_counts_nothing() {
 
 #[test]
 fn a_skeleton_bar_counts_where_it_is_drawn() {
-    let f = placeholder::capture_declared(|| skeleton_bar(Painter::root(), Rect::new(0.0, 0.0, 400.0, 28.0), 0.3)).1;
+    let f = placeholder::capture_declared(|| skeleton_bar(Painter::root(), Rect::new(0.0, 0.0, 400.0, 28.0))).1;
     assert_eq!((f.count, f.of(Reason::SkeletonBar)), (1, 1), "{f:?}");
 }
 
 #[test]
 fn a_skeleton_sheet_counts_where_it_is_drawn() {
-    let f = placeholder::capture_declared(|| skeleton_sheet(Painter::root(), Rect::new(0.0, 0.0, 190.0, 285.0), 8.0, 0.3)).1;
+    let f = placeholder::capture_declared(|| skeleton_sheet(Painter::root(), Rect::new(0.0, 0.0, 190.0, 285.0), 8.0)).1;
     assert_eq!((f.count, f.of(Reason::SkeletonSheet)), (1, 1), "{f:?}");
 }
 
 #[test]
 fn a_recorded_skeleton_counts_nothing() {
     let f = placeholder::capture_declared(|| {
-        skeleton_bar(Painter::recording(), Rect::new(0.0, 0.0, 400.0, 28.0), 0.3);
-        skeleton_sheet(Painter::recording(), Rect::new(0.0, 0.0, 190.0, 285.0), 8.0, 0.3);
+        skeleton_bar(Painter::recording(), Rect::new(0.0, 0.0, 400.0, 28.0));
+        skeleton_sheet(Painter::recording(), Rect::new(0.0, 0.0, 190.0, 285.0), 8.0);
     })
     .1;
     assert_eq!(f.count, 0, "{f:?}");
@@ -182,7 +219,7 @@ fn a_failed_or_empty_readout_is_an_answer_not_a_wait() {
 
 fn chip(thumb: &str) -> placeholder::Frame {
     placeholder::capture_declared(|| {
-        let data = ProfileChipRead { src: 0, thumb, initial: c"G", name: c"Guest", name_w: 60.0 };
+        let data = ProfileChipRead { src: 0, thumb, initial: c"G", name: c"Guest", name_w: 60.0, fill: crate::theme::CONTROL_IDLE_FILL, rest_open: false, current: false, bar_focused: false };
         profile_chip_with(Painter::root(), data, 0.0, None)
     })
     .1
@@ -211,4 +248,45 @@ fn the_placeholder_tokens_keep_their_default_values() {
     assert_ne!(theme::SKELETON_TOP, theme::SKELETON_BOT);
     assert_eq!(theme::CARD_PLACEHOLDER, [31.0 / 255.0, 33.0 / 255.0, 41.0 / 255.0, 1.0]);
     assert_eq!(theme::SKELETON_BOT, [20.0 / 255.0, 23.0 / 255.0, 28.0 / 255.0, 1.0]);
+}
+
+// ---- the loading shimmer and the progress ring (2026-10-17) -------------------------------------
+
+/// The shimmer's crest is a narrow bump that travels LEFT TO RIGHT: a later clock reaches the same
+/// phase further right. A skeleton still counts once, and its draw asks for NO frame — it moves on
+/// the frames something else presents and stands still when nothing does.
+#[test]
+fn the_skeleton_shimmer_sweeps_rightward_and_never_keeps_the_loop_awake() {
+    use placeholder::{shimmer_crest, shimmer_phase, SHIMMER_PERIOD_MS, SHIMMER_SPAN};
+    assert_eq!(shimmer_crest(0.0), 0.0);
+    assert!((shimmer_crest(0.5) - 1.0).abs() < 1e-6, "the crest's peak is full");
+    assert!(shimmer_crest(0.2) < 0.1, "most of the cycle is dark: a passing light, not a pulse");
+    let dt = (SHIMMER_PERIOD_MS as f32 * 200.0 / SHIMMER_SPAN) as u32;
+    assert!((shimmer_phase(300, 0.0) - shimmer_phase(300 + dt, 200.0)).abs() < 1e-2, "200 px right, the same phase later");
+    let _ = sn_machine::idle::take_local_damage();
+    let f = placeholder::capture_declared(|| {
+        placeholder::skeleton(Painter::root(), Reason::CardSkeleton, "k", frame_rect(), 8.0);
+        placeholder::ground(Painter::root(), Reason::CardGround, "k", frame_rect(), 8.0);
+    })
+    .1;
+    assert_eq!((f.of(Reason::CardSkeleton), f.of(Reason::CardGround)), (1, 1), "{f:?}");
+    assert_eq!(sn_machine::idle::take_local_damage(), 0, "the shimmer asks for no frame");
+}
+
+/// The ring lights the share done and runs a comet round it; drawn, it keeps the frames coming
+/// (a wait on screen is alive), and only while it is drawn.
+#[test]
+fn the_progress_ring_lights_its_share_and_reports_only_while_drawn() {
+    let ring = ProgressRing::new(0.0, 0.0, ProgressRing::R_PAGE).progress(Some(0.5)).phase(0);
+    let n = ProgressRing::DOTS;
+    assert!((0..n / 2).all(|i| ring.dot_alpha(i) >= 0.7), "the first half is done");
+    assert!(ring.dot_alpha(n / 2 + 3) < 0.7, "the rest is track");
+    assert_eq!(ring.dot_alpha(0), 1.0, "the comet's head");
+    let unknown = ProgressRing::new(0.0, 0.0, ProgressRing::R_PAGE).phase(ProgressRing::PERIOD_MS / 2);
+    assert_eq!(unknown.dot_alpha(n / 2), 1.0, "half a lap on, the head is opposite");
+    assert!(unknown.dot_alpha(n / 2 + 5) < 0.2, "ahead of the head: the faint track");
+    let _ = sn_machine::idle::take_local_damage();
+    assert_eq!(sn_machine::idle::take_local_damage(), 0, "nothing drawn, nothing asked");
+    let _ = placeholder::capture_declared(|| ring.draw(&Env::inert(), Painter::root()));
+    assert!(sn_machine::idle::take_local_damage() > 0, "a ring on screen asks for the next frame");
 }

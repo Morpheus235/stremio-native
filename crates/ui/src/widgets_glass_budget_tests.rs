@@ -294,6 +294,18 @@ fn the_one_pass_ground_reproduces_the_screens_atmospheric_ramp() {
     }
 }
 
+/// The detail page's veil as the one-pass ramp ([`veiled_backdrop`]): exactly the veil's alpha on
+/// every row of the panel, edges included, so one pass is the shipped veil-then-wedge composite.
+#[test]
+fn the_veil_ramp_is_the_veil_on_every_row() {
+    for a in [0.0f32, theme::BACKDROP_VEIL_A, 1.0] {
+        for y in [0.0f32, 0.5, 162.0, 421.2, 540.0, 1079.5, crate::consts::SCR_H] {
+            let one = hero_ground_ramp_a(veil_ramp(a), y);
+            assert!((one - a).abs() < 1e-6, "veil {a} at y {y}: {one}");
+        }
+    }
+}
+
 /// The whole reason one pass can stand in for three: two straight-alpha layers of ONE ink
 /// compose as `a1 + a2 - a1*a2`, and the art under them folds into the same single blend. This
 /// is `fs_hero.frag`'s algebra, executed — if it is wrong the panel shows a differently-lit

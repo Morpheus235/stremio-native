@@ -12,7 +12,12 @@
 //! * [`search`] — which catalogs a query goes to, and each addon's result state.
 //! * [`account`] — signing in and reading the user's installed addon collection.
 //! * [`library`] — the user's library and what a resume opens (the episode, not the series).
+//! * [`watched`] — which videos of a library item were watched (core's watched bitfield).
+//! * [`links`] — a meta's `links` (genres, cast, directors) as the Discover / Search they open.
+//! * [`meta`] — which addons a meta request goes to, first answer in addon order wins.
 //! * [`streams`] — per-addon stream lookup for one video.
+//! * [`subtitles`] — per-addon subtitle lookup for the file that plays.
+//! * [`skip`] — intro/recap/credits markers from introdb.app and AniSkip, validated per stream.
 //! * [`sched`] — the viewport-first request queue: what is on screen loads first, and work for
 //!   rows scrolled past is cancelled rather than drained top-down.
 //!
@@ -21,12 +26,18 @@
 pub mod account;
 pub mod catalog;
 pub mod library;
+pub mod links;
 pub mod manifest;
+pub mod meta;
 pub mod sched;
 pub mod search;
+pub mod skip;
+pub mod stream_facts;
 pub mod streams;
+pub mod subtitles;
 pub mod types;
 pub mod url;
+pub mod watched;
 
 /// One HTTP GET, as the addon layer needs it. Implemented over `sn_net` by the application and by
 /// in-memory fakes in tests.
@@ -69,7 +80,31 @@ pub fn get_json<T: serde::de::DeserializeOwned>(
     headers: &[(String, String)],
 ) -> Result<T, FetchError> {
     let body = fetch.get(url, headers)?;
-    serde_json::from_slice(&body).map_err(|e| FetchError::Decode(e.to_string()))
+    decode(&body)
+}
+
+/// Decode `body` as `T`. A body that is not JSON at all says what it looks like instead of the
+/// parser's "expected value at line 1 column 1" ([`body_kind`]): never the URL, never the text.
+pub fn decode<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, FetchError> {
+    serde_json::from_slice(body).map_err(|e| match body_kind(body) {
+        "json" => FetchError::Decode(e.to_string()),
+        kind => FetchError::Decode(format!("not JSON: {kind}, {} bytes", body.len())),
+    })
+}
+
+/// What a body looks like from its first bytes: `json`, `html` (a landing page, a proxy's or a
+/// login wall), `xml`, `gzip` (compressed bytes nobody inflated), `empty` or `text`.
+pub fn body_kind(body: &[u8]) -> &'static str {
+    let t = body.trim_ascii_start();
+    let starts = |p: &[u8]| t.len() >= p.len() && t[..p.len()].eq_ignore_ascii_case(p);
+    match t.first() {
+        None => "empty",
+        Some(b'{' | b'[') => "json",
+        Some(0x1f) if t.get(1) == Some(&0x8b) => "gzip",
+        Some(b'<') if starts(b"<?xml") => "xml",
+        Some(b'<') => "html",
+        Some(_) => "text",
+    }
 }
 
 #[cfg(test)]

@@ -97,6 +97,10 @@ pub enum TextDialect {
     Mpl2,
     /// Every other text codec: the common floor only.
     Plain,
+    /// An authored ASS/SSA event's text read as plain dialogue (Settings > Style ASS subtitles
+    /// off): override blocks keep only the whitelisted tags, a vector drawing (`\p1`…`\p0`) is
+    /// dropped, and `<` is a literal. Never a codec name: `from_codec_name` leaves ASS to libass.
+    Ass,
 }
 
 impl TextDialect {
@@ -203,7 +207,7 @@ struct Parsed {
 struct Parser {
     dialect: TextDialect,
     out: Parsed,
-    /// Inside a WebVTT `<rt>…</rt>`: ruby text is dropped.
+    /// Inside a WebVTT `<rt>…</rt>` (ruby text) or an ASS drawing: what follows is dropped.
     in_rt: bool,
     /// Nothing but a break or the start of the cue precedes the cursor on its line.
     line_start: bool,
@@ -257,7 +261,7 @@ impl Parser {
                         i += 1;
                     }
                 },
-                '<' => match chars[i + 1..].iter().position(|&x| x == '>') {
+                '<' if dialect != TextDialect::Ass => match chars[i + 1..].iter().position(|&x| x == '>') {
                     Some(k) => {
                         let inner: String = chars[i + 1..i + 1 + k].iter().collect();
                         p.tag(&inner);
@@ -323,6 +327,13 @@ impl Parser {
             }
         }
         for tag in override_tags(inner) {
+            // an ASS vector drawing is shapes, not text: drop everything until `\p0`
+            if self.dialect == TextDialect::Ass {
+                if let Some(level) = tag.strip_prefix('p').filter(|l| !l.is_empty() && l.bytes().all(|b| b.is_ascii_digit())) {
+                    self.in_rt = level.bytes().any(|b| b != b'0');
+                    continue;
+                }
+            }
             if let Some(digit) = tag.strip_prefix("an") {
                 if let [d @ b'1'..=b'9'] = digit.as_bytes() {
                     self.out.align.get_or_insert(d - b'0');
@@ -568,7 +579,8 @@ fn number(x: f64) -> String {
     s.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
-/// The synthesized header of a text-origin script for the viewer's picks (plan §2.2): PlayRes
+/// The synthesized header of a text-origin script for the viewer's picks (plan §2.2) — size,
+/// position and the look (colours, box, opacity: [`TextStyle::ass_colours`], [`TextStyle::border`]): PlayRes
 /// 1920x1080, `WrapStyle 1`, one style per numpad alignment, ending after the `[Events]` format
 /// line so events can be appended.
 pub fn header(style: &TextStyle) -> String {
@@ -582,10 +594,13 @@ pub fn header(style: &TextStyle) -> String {
          BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, \
          BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n",
     );
+    let (fill, edge, back) = style.ass_colours();
+    let (border_style, shadow) = style.border();
+    let shadow = number(shadow);
     for (align, margin_v) in style_margins(style) {
         h.push_str(&format!(
-            "Style: {name},{STYLE_FONT},{fs},&H00FFFFFF,&H00FFFFFF,&H26000000,&HFF000000,\
-             0,0,0,0,100,100,0,0,1,2,0,{align},{margin},{margin},{margin_v},-1\n",
+            "Style: {name},{STYLE_FONT},{fs},{fill},{fill},{edge},{back},\
+             0,0,0,0,100,100,0,0,{border_style},2,{shadow},{align},{margin},{margin},{margin_v},-1\n",
             name = style_name(align),
         ));
     }
@@ -801,6 +816,47 @@ fn script_from(text: &str, dialect: TextDialect) -> TextScript {
     lines.sort_by_key(|l| (l.0, l.1));
     let count = lines.len();
     TextScript { events: lines.into_iter().map(|l| l.3).collect(), cues: count }
+}
+
+/// **An authored ASS/SSA file's dialogue as plain events** of the synthesized style (Style ASS
+/// subtitles off): every `Dialogue:` line's text converted as [`TextDialect::Ass`], placed by the
+/// `[Events]` `Format:` line (the v4+ order when there is none). Events keep their own spans —
+/// two speakers or a sign over dialogue show together, as libass stacks them — and the same text
+/// over the same span (a styled script's glow and fill layers) shows once.
+pub fn script_from_ass(text: &str) -> TextScript {
+    let mut format: Vec<String> = ["layer", "start", "end", "style", "name", "marginl", "marginr", "marginv", "effect", "text"]
+        .map(String::from)
+        .to_vec();
+    let mut seen = std::collections::HashSet::new();
+    let mut lines: Vec<(i64, usize, String)> = Vec::new();
+    for raw in text.trim_start_matches('\u{feff}').lines() {
+        let line = raw.trim_start();
+        let field = |key: &str| line.get(..key.len()).filter(|p| p.eq_ignore_ascii_case(key)).map(|_| line[key.len()..].trim_start());
+        if let Some(rest) = field("Format:") {
+            format = rest.split(',').map(|f| f.trim().to_ascii_lowercase()).collect();
+            continue;
+        }
+        let Some(rest) = field("Dialogue:") else { continue };
+        let at = |name: &str| format.iter().position(|f| f == name);
+        let (Some(start_at), Some(end_at), Some(text_at)) = (at("start"), at("end"), at("text")) else { continue };
+        // the text is the last field and may hold commas
+        let fields: Vec<&str> = rest.splitn(format.len(), ',').collect();
+        let (Some(start), Some(end), Some(body)) = (fields.get(start_at), fields.get(end_at), fields.get(text_at)) else { continue };
+        let (Some(start), Some(end)) = (timestamp(start.trim()), timestamp(end.trim())) else { continue };
+        let (start_cs, end_cs) = (start / 10_000_000, end / 10_000_000);
+        if end_cs <= start_cs {
+            continue;
+        }
+        let Some(c) = convert(body, TextDialect::Ass) else { continue };
+        if !seen.insert((start_cs, end_cs, c.body.clone())) {
+            continue;
+        }
+        let event = format!("Dialogue: 0,{},{},{},,0,0,0,,{}\n", centis(start_cs), centis(end_cs), style_name(c.align), c.body);
+        lines.push((start_cs, lines.len(), event));
+    }
+    lines.sort_by_key(|l| (l.0, l.1));
+    let cues = lines.len();
+    TextScript { events: lines.into_iter().map(|l| l.2).collect(), cues }
 }
 
 /// `H:MM:SS.cc` from centiseconds.

@@ -152,16 +152,17 @@ const char *vp_create_window(void) {
  * the caller never owns it. Never NULL: an empty string IS the "no window" answer. */
 const char *vp_window_id(void) { return g_window_id; }
 
-/* Place the video: source frame size -> on-screen rect. The VP_EXPORTED counterpart of
- * acb_start's setDisplayWindow, and the pair also expresses scaling. */
-int vp_place(int src_w, int src_h, int dst_x, int dst_y, int dst_w, int dst_h) {
+/* Place the video: a part of the source frame -> on-screen rect. The VP_EXPORTED counterpart of
+ * acb_start's setDisplayWindow; the pair also expresses scaling, and a source part smaller than
+ * the frame is a crop (the aspect zooms), which keeps the window on the screen. */
+int vp_place(int src_x, int src_y, int src_w, int src_h, int dst_x, int dst_y, int dst_w, int dst_h) {
     if (vp_mode() != VP_EXPORTED || !g_window_id[0] || !sdlvp.setExportedWindow) return 0;
-    VpRect src = { 0, 0, src_w, src_h };
+    VpRect src = { src_x, src_y, src_w, src_h };
     VpRect dst = { dst_x, dst_y, dst_w, dst_h };
     int rv = sdlvp.setExportedWindow(g_window_id, &src, &dst);
     if (elogf) {
-        fprintf(elogf, "vplane: place %dx%d -> %d,%d %dx%d rv=%d\n",
-                src_w, src_h, dst_x, dst_y, dst_w, dst_h, rv);
+        fprintf(elogf, "vplane: place %d,%d %dx%d -> %d,%d %dx%d rv=%d\n",
+                src_x, src_y, src_w, src_h, dst_x, dst_y, dst_w, dst_h, rv);
         fflush(elogf);
     }
     return rv;

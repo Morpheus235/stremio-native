@@ -33,7 +33,7 @@
 use sn_machine::machine::{Canon, Cx, Effects, EntryId, FocusKey, GroupId, Host, ScreenEvent};
 use sn_machine::present::PresentEvent;
 
-use super::{CardEvent, CardSource, Grid, GridSpec, SectionFrame, Shelf};
+use super::{CardEvent, CardSource, Grid, GridSpec, SectionFrame, SeeAll, Shelf};
 use crate::card_row::{self, RowStyle};
 use crate::consts::{K_SCROLL, MARGIN_Y, SCR_H, SCR_W};
 use crate::screen::{
@@ -207,6 +207,12 @@ pub trait StackPage<H: Host> {
     fn reveal_margin(&self, _k: Self::Key) -> f32 {
         MARGIN_Y
     }
+    /// Whether plain section `k`, scrolled back into view from below, stops [`reveal_margin`](Self::reveal_margin)
+    /// under the page's top edge as a shelf does (a list row under a standing bar), rather than at
+    /// the edge itself.
+    fn reveal_under_margin(&self, _k: Self::Key) -> bool {
+        false
+    }
     /// Air the page keeps under a shelf's block, counted in the block's height (the scroll reveals
     /// it with the block): a page whose shelves are stacked with the label band's air under each.
     fn shelf_foot(&self, _k: Self::Key) -> f32 {
@@ -240,6 +246,12 @@ pub trait StackPage<H: Host> {
     fn draw_heading(&self, _k: Self::Key, _f: &mut DrawFrame<'_, '_, H>, _r: Rect, _lift: f32) {}
     /// A `Custom` / `Overlay` section drawn in `r` (screen space); `scroll` is the page's.
     fn custom_draw(&self, _k: Self::Key, _f: &mut DrawFrame<'_, '_, H>, _r: Rect, _scroll: f32) {}
+}
+
+/// Section `k`'s cards with its [`CardSource::see_all`] tile among them ([`SeeAll`]): the one way
+/// the stack reads a section's source, so the tile is a cell of the shelf to every rule here.
+fn cards<'a, H: Host, P: StackPage<H>>(p: &'a P, cx: &'a Cx<'_, H>, k: P::Key) -> Option<SeeAll<H, P::Cards<'a>>> {
+    p.cards(cx, k).map(SeeAll::new)
 }
 
 enum Body {
@@ -414,7 +426,7 @@ impl<K: Copy + Eq> Stack<K> {
         offset: usize,
     ) -> Option<super::PageEdge> {
         let i = self.index(k)?;
-        let src = p.cards(cx, k)?;
+        let src = cards(p, cx, k)?;
         match &mut self.bodies[i] {
             Body::Shelf(s) => s.page_ask(cx, &src, wanted, offset, true),
             _ => None,
@@ -430,7 +442,7 @@ impl<K: Copy + Eq> Stack<K> {
         offset: usize,
     ) -> Option<super::PageEdge> {
         let i = self.index(k)?;
-        let src = p.cards(cx, k)?;
+        let src = cards(p, cx, k)?;
         match &mut self.bodies[i] {
             Body::Shelf(s) => s.page_cancel(cx, &src, offset, true),
             _ => None,
@@ -538,7 +550,7 @@ impl<K: Copy + Eq> Stack<K> {
     }
 
     fn len_of<H: Host, P: StackPage<H, Key = K>>(&self, p: &P, cx: &Cx<'_, H>, i: usize) -> usize {
-        p.cards(cx, self.specs[i].key).map_or(0, |c| c.len())
+        cards(p, cx, self.specs[i].key).map_or(0, |c| c.len())
     }
 
     /// Does shelf `i` stand in the flow? When it has cards, and ALSO when it has none yet but its
@@ -550,7 +562,7 @@ impl<K: Copy + Eq> Stack<K> {
     /// [`more_before`]: CardSource::more_before
     /// [`Shelf::paint_pending`]: super::Shelf
     fn shelf_shown<H: Host, P: StackPage<H, Key = K>>(&self, p: &P, cx: &Cx<'_, H>, i: usize) -> bool {
-        p.cards(cx, self.specs[i].key).is_some_and(|c| c.len() > 0 || c.more_after() || c.more_before())
+        cards(p, cx, self.specs[i].key).is_some_and(|c| c.len() > 0 || c.more_after() || c.more_before())
     }
 
     /// Section `i`'s height in the flow.
@@ -609,7 +621,7 @@ impl<K: Copy + Eq> Stack<K> {
     fn shows<H: Host, P: StackPage<H, Key = K>>(&self, p: &P, cx: &Cx<'_, H>, i: usize, elem: &H::Elem) -> bool {
         let k = self.specs[i].key;
         match self.specs[i].kind {
-            Kind::Shelf { .. } | Kind::Grid { .. } => p.cards(cx, k).is_some_and(|c| c.index_of(elem).is_some()),
+            Kind::Shelf { .. } | Kind::Grid { .. } => cards(p, cx, k).is_some_and(|c| c.index_of(elem).is_some()),
             Kind::Custom { focusable, .. } | Kind::Overlay { focusable, .. } => focusable && self.plain_index(p, i, elem).is_some(),
         }
     }
@@ -619,7 +631,7 @@ impl<K: Copy + Eq> Stack<K> {
         let i = self.owner(p, cx, &key.elem)?;
         let at = match self.specs[i].kind {
             Kind::Custom { .. } | Kind::Overlay { .. } => self.plain_index(p, i, &key.elem),
-            _ => p.cards(cx, self.specs[i].key).and_then(|c| c.index_of(&key.elem)),
+            _ => cards(p, cx, self.specs[i].key).and_then(|c| c.index_of(&key.elem)),
         }
         .unwrap_or(0);
         Some((i, at))
@@ -665,7 +677,7 @@ impl<K: Copy + Eq> Stack<K> {
         let mut reported = None;
         for i in 0..self.bodies.len() {
             let k = self.specs[i].key;
-            let Some(src) = p.cards(cx, k) else { continue };
+            let Some(src) = cards(p, cx, k) else { continue };
             let got = match &mut self.bodies[i] {
                 Body::Shelf(s) => s.on(ev, cx, &src, fx),
                 Body::Grid(g) => g.on(ev, cx, &src, fx),
@@ -780,7 +792,8 @@ impl<K: Copy + Eq> Stack<K> {
         let h = |n: usize| self.settled_height(p, cx, n, i);
         let (top, height) = ((0..j).map(h).sum::<f32>(), h(j));
         let max = self.max_with_focus(p, cx, i);
-        let hi = if matches!(self.specs[j].kind, Kind::Shelf { .. }) { top - p.reveal_margin(self.specs[j].key) } else { top };
+        let margined = matches!(self.specs[j].kind, Kind::Shelf { .. }) || p.reveal_under_margin(self.specs[j].key);
+        let hi = if margined { top - p.reveal_margin(self.specs[j].key) } else { top };
         // a page that sets the target itself reveals from where it is headed, not where it is
         let from = if self.on_move { self.target } else { self.scroll.pos };
         card_row::reveal(from, top + height - (SCR_H - MARGIN_Y), hi, max)
@@ -803,6 +816,17 @@ impl<K: Copy + Eq> Stack<K> {
         Some((self.specs[i].key, self.place_in(p, cx, i, &key.elem, how)?))
     }
 
+    /// Where the focused element of a focusable plain section is, with its section (a list row the
+    /// page draws itself): what a menu opened from it hangs off. `None` on a card or off the page.
+    pub fn focused_plain<H: Host<Elem = u32>, P: StackPage<H, Key = K>>(&self, p: &P, cx: &Cx<'_, H>) -> Option<(K, Rect)> {
+        let key = cx.focus.current.filter(|k| k.entry == self.entry)?;
+        let i = self.owner(p, cx, &key.elem)?;
+        if !matches!(self.bodies[i], Body::Plain) {
+            return None;
+        }
+        Some((self.specs[i].key, self.place_in(p, cx, i, &key.elem, At::Drawn)?.rect))
+    }
+
     /// The hold hint's two screen-specific answers for a `Stack` page (`hold_hint`, "Adopting it"):
     /// the CARD focus rests on (a `Plain` section's control, another page's focus, a menu or modal
     /// over the page — then focus is not this entry's — all answer `None`), and whether nothing
@@ -823,8 +847,8 @@ impl<K: Copy + Eq> Stack<K> {
     fn place_in<H: Host, P: StackPage<H, Key = K>>(&self, p: &P, cx: &Cx<'_, H>, i: usize, elem: &H::Elem, how: At) -> Option<Placed> {
         let k = self.specs[i].key;
         match &self.bodies[i] {
-            Body::Shelf(s) => s.place(cx, &p.cards(cx, k)?, elem, self.frame(p, cx, i), how),
-            Body::Grid(g) => g.place(cx, &p.cards(cx, k)?, elem, how),
+            Body::Shelf(s) => s.place(cx, &cards(p, cx, k)?, elem, self.frame(p, cx, i), how),
+            Body::Grid(g) => g.place(cx, &cards(p, cx, k)?, elem, how),
             Body::Plain => {
                 let n = self.plain_index(p, i, elem)?;
                 let rect = p.element_rect(cx, k, n, self.rect(p, cx, i));
@@ -857,8 +881,8 @@ impl<K: Copy + Eq, P> StackView<'_, K, P> {
         for i in 0..s.specs.len() {
             let k = s.specs[i].key;
             match (&s.specs[i].kind, &s.bodies[i]) {
-                (Kind::Shelf { .. }, Body::Shelf(sh)) => if let Some(src) = self.page.cards(f.cx, k) { sh.record_stops(f, f.painter, &src, s.frame(self.page, f.cx, i)) },
-                (Kind::Grid { .. }, Body::Grid(g)) => if let Some(src) = self.page.cards(f.cx, k) { g.record_stops(f, f.painter, &src) },
+                (Kind::Shelf { .. }, Body::Shelf(sh)) => if let Some(src) = cards(self.page, f.cx, k) { sh.record_stops(f, f.painter, &src, s.frame(self.page, f.cx, i)) },
+                (Kind::Grid { .. }, Body::Grid(g)) => if let Some(src) = cards(self.page, f.cx, k) { g.record_stops(f, f.painter, &src) },
                 (Kind::Custom { focusable, .. } | Kind::Overlay { focusable, .. }, _) => self.plain_stop(f, i, *focusable),
                 _ => {}
             }
@@ -906,7 +930,7 @@ impl<K: Copy + Eq, P> StackView<'_, K, P> {
         let (s, page) = (self.stack, self.page);
         let Some(key) = focus.filter(|k| k.entry == s.entry) else { return };
         let Some(i) = s.owner(page, f.cx, &key.elem) else { return };
-        let Some(src) = page.cards(f.cx, s.specs[i].key) else { return };
+        let Some(src) = cards(page, f.cx, s.specs[i].key) else { return };
         let p = f.painter.alpha(f.page_alpha);
         match &s.bodies[i] {
             Body::Shelf(sh) => sh.redraw_focused(f, p, &src, s.frame(page, f.cx, i), focus),
@@ -922,7 +946,7 @@ impl<K: Copy + Eq, P> StackView<'_, K, P> {
     {
         let (s, page) = (self.stack, self.page);
         let i = s.owner(page, cx, elem)?;
-        let src = page.cards(cx, s.specs[i].key)?;
+        let src = cards(page, cx, s.specs[i].key)?;
         match &s.bodies[i] {
             Body::Shelf(sh) => sh.scale_of(cx, &src, elem),
             Body::Grid(g) => g.scale_of(cx, &src, elem),
@@ -944,12 +968,12 @@ impl<K: Copy + Eq, P> StackView<'_, K, P> {
                     if r.h <= 0.0 || r.y >= SCR_H || r.y + r.h <= 0.0 {
                         continue;
                     }
-                    let Some(src) = page.cards(f.cx, k) else { continue };
+                    let Some(src) = cards(page, f.cx, k) else { continue };
                     page.draw_heading(k, f, r, sh.heading_lift());
                     sh.draw(f, p, &src, s.frame(page, f.cx, i));
                 }
                 (Kind::Grid { .. }, Body::Grid(g)) => {
-                    if let Some(src) = page.cards(f.cx, k) {
+                    if let Some(src) = cards(page, f.cx, k) {
                         g.draw(f, p, &src);
                     }
                 }
@@ -981,7 +1005,7 @@ impl<K: Copy + Eq, P> StackView<'_, K, P> {
         let k = s.specs[i].key;
         match s.specs[i].kind {
             Kind::Shelf { .. } | Kind::Grid { .. } => {
-                let c = p.cards(cx, k)?;
+                let c = cards(p, cx, k)?;
                 Some(c.elem(super::clamp_slot(n, c.len())?))
             }
             Kind::Custom { focusable, .. } | Kind::Overlay { focusable, .. } => {
@@ -1014,7 +1038,7 @@ impl<K: Copy + Eq, H: Host<Elem = u32>, P: StackPage<H, Key = K>> Focusable<H> f
             let (k, id) = (s.specs[i].key, s.specs[i].group);
             match (&s.specs[i].kind, &s.bodies[i]) {
                 (Kind::Shelf { .. }, Body::Shelf(sh)) => {
-                    let Some(src) = p.cards(cx, k).filter(|c| c.len() > 0) else { continue };
+                    let Some(src) = cards(p, cx, k).filter(|c| c.len() > 0) else { continue };
                     let h = sh.head(s.frame(p, cx, i));
                     let extent = if p.wide_extent(k) { Rect::new(h.x, h.y, SCR_W - 2.0 * h.x, h.h) } else { h };
                     let mut g = sh.group_spec(id, src.len(), extent);
@@ -1022,7 +1046,7 @@ impl<K: Copy + Eq, H: Host<Elem = u32>, P: StackPage<H, Key = K>> Focusable<H> f
                     out.push(g);
                 }
                 (Kind::Grid { .. }, Body::Grid(g)) => {
-                    if let Some(src) = p.cards(cx, k).filter(|c| c.len() > 0) {
+                    if let Some(src) = cards(p, cx, k).filter(|c| c.len() > 0) {
                         let mut spec = g.group_spec(id, src.len());
                         s.specs[i].apply(&mut spec);
                         out.push(spec);
@@ -1047,7 +1071,7 @@ impl<K: Copy + Eq, H: Host<Elem = u32>, P: StackPage<H, Key = K>> Focusable<H> f
     fn neighbour(&self, key: FocusKey<H::Elem>, dir: Dir, cx: &Cx<'_, H>) -> Step<H::Elem> {
         let (s, p) = (self.stack, self.page);
         let Some(i) = s.owner(p, cx, &key.elem) else { return Step::Edge };
-        let src = p.cards(cx, s.specs[i].key);
+        let src = cards(p, cx, s.specs[i].key);
         match (&s.bodies[i], src) {
             (Body::Shelf(sh), Some(src)) => sh.neighbour(&src, key, dir),
             (Body::Grid(g), Some(src)) => g.neighbour(&src, key, dir),
@@ -1100,8 +1124,8 @@ impl<K: Copy + Eq, H: Host<Elem = u32>, P: StackPage<H, Key = K>> Focusable<H> f
                 return Some(at(elem));
             }
             match &s.bodies[i] {
-                Body::Shelf(sh) => p.cards(cx, k).and_then(|c| sh.seat(&c, from)),
-                Body::Grid(gr) => p.cards(cx, k).and_then(|c| gr.seat(&c, from)),
+                Body::Shelf(sh) => cards(p, cx, k).and_then(|c| sh.seat(&c, from)),
+                Body::Grid(gr) => cards(p, cx, k).and_then(|c| gr.seat(&c, from)),
                 Body::Plain => p.plain_elem(k, 0).map(at),
             }
         });

@@ -15,11 +15,11 @@ use sn_ui::fixture::{key, key_up, FixtureMeasure};
 use sn_ui::frame::Budget;
 
 use crate::chrome::ChromeBar;
-use crate::registry::{AppArg, AppFx, AppMounter, AppMsg, Bundle, GridCmd, PlaybackView, SearchCmd, SessionView, SettingsCmd, Views};
+use crate::registry::{AddonsCmd, AppArg, AppFx, AppMounter, AppMsg, Bundle, GridCmd, PlaybackView, SearchCmd, SessionView, SettingsCmd, Views};
 use crate::stores::catalog::CatalogStore;
 use crate::stores::account::AccountStore;
 use crate::stores::addons::AddonsStore;
-use crate::stores::detail::DetailStore;
+use crate::stores::detail::{DetailJob, DetailStore};
 use crate::stores::library::LibraryStore;
 use crate::stores::grid::{GridJob, GridStore};
 use crate::stores::search::{SearchJob, SearchStore};
@@ -44,6 +44,8 @@ pub struct TestRig {
     /// The jobs the applied search and grid commands handed out (a test lands them by hand).
     pub search_jobs: Vec<SearchJob>,
     pub grid_jobs: Vec<GridJob>,
+    /// The stream requests an addon switched back on handed out.
+    pub detail_jobs: Vec<DetailJob>,
     pub log: Vec<String>,
     pub back_at_root: u32,
     /// The keyboard requests the dispatcher passed on (`Rig::system_keyboard`): every raise
@@ -71,6 +73,7 @@ impl TestRig {
             effects: Vec::new(),
             search_jobs: Vec::new(),
             grid_jobs: Vec::new(),
+            detail_jobs: Vec::new(),
             log: Vec::new(),
             back_at_root: 0,
             keyboard: Vec::new(),
@@ -122,8 +125,20 @@ impl TestRig {
                 };
                 self.grid_jobs.extend(jobs);
             }
+            // as the bridge applies it: the switch is the addons store's, the lists follow it
+            AppFx::Addons(AddonsCmd::ToggleStreams(id)) => {
+                self.addons.toggle_streams(id);
+                let jobs = self.detail.set_addon(id, self.addons.stream_filter().allows(id));
+                self.detail_jobs.extend(jobs);
+            }
             AppFx::Settings(SettingsCmd::Set(p, r)) => {
                 self.settings.set(*p, *r);
+            }
+            AppFx::Settings(SettingsCmd::List(page, on)) => {
+                self.settings.set_list(*page, *on);
+            }
+            AppFx::Settings(SettingsCmd::Languages(l, op)) => {
+                self.settings.edit(*l, *op);
             }
             _ => {}
         }
@@ -188,8 +203,43 @@ pub struct TestApp {
     told: [Option<u32>; 4],
 }
 
+/// **A GL context for this test thread, on macOS.** A screen's draw reaches the GL through
+/// `sn_gfx`; Linux's libGL answers a call with no current context as a no-op, macOS's dereferences
+/// the missing context and the test dies of SIGSEGV. An offscreen context with no drawable makes
+/// every call legal (each draw lands nowhere), so the rig runs the same on both. Leaked: one per
+/// test thread, for the thread's life. A no-op elsewhere.
+pub fn headless_gl() {
+    #[cfg(target_os = "macos")]
+    headless_cgl();
+}
+
+#[cfg(target_os = "macos")]
+fn headless_cgl() {
+    use std::os::raw::{c_int, c_void};
+    #[link(name = "OpenGL", kind = "framework")]
+    extern "C" {
+        fn CGLChoosePixelFormat(attribs: *const c_int, pix: *mut *mut c_void, npix: *mut c_int) -> c_int;
+        fn CGLCreateContext(pix: *mut c_void, share: *mut c_void, ctx: *mut *mut c_void) -> c_int;
+        fn CGLSetCurrentContext(ctx: *mut c_void) -> c_int;
+        fn CGLGetCurrentContext() -> *mut c_void;
+    }
+    // kCGLPFAOpenGLProfile = kCGLOGLPVersion_GL4_Core (the simulator's), kCGLPFAAllowOfflineRenderers
+    const ATTRS: [c_int; 4] = [99, 0x4100, 96, 0];
+    // SAFETY: plain CGL calls on this thread with valid out-pointers; the context is never freed.
+    unsafe {
+        if !CGLGetCurrentContext().is_null() {
+            return;
+        }
+        let (mut pix, mut n, mut ctx) = (std::ptr::null_mut(), 0, std::ptr::null_mut());
+        if CGLChoosePixelFormat(ATTRS.as_ptr(), &mut pix, &mut n) == 0 && !pix.is_null() && CGLCreateContext(pix, std::ptr::null_mut(), &mut ctx) == 0 {
+            CGLSetCurrentContext(ctx);
+        }
+    }
+}
+
 impl TestApp {
     pub fn boot(catalog: CatalogStore) -> Self {
+        headless_gl();
         let mut app = TestApp { d: Dispatcher::new(), rig: TestRig::new(catalog), ms: 0, told: [None; 4] };
         app.d.request(MachineId::Nav, NavOp::Root(AppArg::Home));
         app.frame();
@@ -218,7 +268,7 @@ impl TestApp {
         let jobs = self.rig.search.tick(t.ms, &addons, self.rig.addons.filter());
         self.rig.search_jobs.extend(jobs);
         self.notify_stores();
-        self.rig.chrome.capture(&mut self.d, &self.rig.measure);
+        self.rig.chrome.capture(&mut self.d, &self.rig.account, &self.rig.measure);
         let report = self.d.frame_with(&mut self.rig, t, inputs, Vec::new(), &mut NoTap, false);
         self.rig.chrome.update(&mut self.d, None, 1.0 / 60.0);
         // every frame draws, as a presenting frame does: the stops a screen registers are the
@@ -255,6 +305,14 @@ impl TestApp {
         }
     }
 
+    /// A key pressed and released, and nothing after: the caller walks the frames that follow.
+    pub fn tap(&mut self, k: Key) {
+        let t = self.peek();
+        self.run(vec![key(k, t)]);
+        let t = self.peek();
+        self.run(vec![key_up(k, t)]);
+    }
+
     /// A key pressed and released, then frames enough for a press to commit.
     pub fn press(&mut self, k: Key) {
         let t = self.peek();
@@ -262,6 +320,14 @@ impl TestApp {
         let t = self.peek();
         self.run(vec![key_up(k, t)]);
         self.frames(40);
+    }
+
+    /// Every text run one more draw of the whole tree paints, in paint order (pages, the menu, then
+    /// the opener lift above it): the draw walked as a recording, so it rasterises nothing.
+    pub fn drawn_text(&mut self) -> Vec<String> {
+        sn_gfx::text::capture_text_runs_for_test(|| sn_ui::record_walk(|| {
+            self.d.draw(&mut self.rig, true);
+        }))
     }
 
     /// OK held past the hold threshold, then released.
@@ -293,6 +359,12 @@ impl TestApp {
         }
         self.frames(40);
         route
+    }
+
+    /// One input of any kind (a pointer move, click or drag), then a frame.
+    pub fn send(&mut self, kind: InputKind<u32>) {
+        let t = self.peek();
+        self.run(vec![InputEvent { at: t, source: Source::Script, kind }]);
     }
 
     /// The television keyboard committing `text`, as `app::run` delivers an `SDL_TEXTINPUT`.

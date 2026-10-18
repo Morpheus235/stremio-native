@@ -387,11 +387,13 @@ pub fn shipped(name: &str) -> &'static Result<Coverage, String> {
     static REG: OnceLock<Result<Coverage, String>> = OnceLock::new();
     static BOLD: OnceLock<Result<Coverage, String>> = OnceLock::new();
     static CJK: OnceLock<Result<Coverage, String>> = OnceLock::new();
+    static EMOJI: OnceLock<Result<Coverage, String>> = OnceLock::new();
     let slot = match name {
         "appfont.ttf" => &REG,
         "appfont-bold.ttf" => &BOLD,
         "appfont-cjk.ttf" => &CJK,
-        other => panic!("no shipped-font slot for {other:?} — add one beside the other three"),
+        "appfont-emoji.ttf" => &EMOJI,
+        other => panic!("no shipped-font slot for {other:?} — add one beside the others"),
     };
     slot.get_or_init(|| {
         // The fonts are repository payload, not crate data — `pkg/` sits beside `rust-modules/`.
@@ -519,6 +521,123 @@ pub mod advances {
     /// the trait and this type), and the share of a column a line may fill under it is
     /// `ui::fit::HEADROOM`, which the callers name.
     pub struct ShippedMeasure;
+}
+
+// --- emoji, as a renderer without a shaper can draw them --------------------------------------
+
+/// Codepoints that only ever make up an EMOJI: `Extended_Pictographic` (Unicode 16
+/// `emoji-data.txt`, coalesced), regional indicators, the skin-tone modifiers, the variation
+/// selectors U+FE0E/U+FE0F, ZWJ, the keycap mark U+20E3 and the tag characters. Sorted, disjoint.
+/// `tools/cut-noto-emoji.py` reads this table to cut `pkg/appfont-emoji.ttf`: keep the two equal.
+const EMOJI_PARTS: &[(u32, u32)] = &[
+    (0xA9, 0xA9), (0xAE, 0xAE), (0x200D, 0x200D), (0x203C, 0x203C), (0x2049, 0x2049),
+    (0x20E3, 0x20E3), (0x2122, 0x2122), (0x2139, 0x2139), (0x2194, 0x2199), (0x21A9, 0x21AA),
+    (0x231A, 0x231B), (0x2328, 0x2328), (0x2388, 0x2388), (0x23CF, 0x23CF), (0x23E9, 0x23F3),
+    (0x23F8, 0x23FA), (0x24C2, 0x24C2), (0x25AA, 0x25AB), (0x25B6, 0x25B6), (0x25C0, 0x25C0),
+    (0x25FB, 0x25FE), (0x2600, 0x2605), (0x2607, 0x2612), (0x2614, 0x2685), (0x2690, 0x2705),
+    (0x2708, 0x2712), (0x2714, 0x2714), (0x2716, 0x2716), (0x271D, 0x271D), (0x2721, 0x2721),
+    (0x2728, 0x2728), (0x2733, 0x2734), (0x2744, 0x2744), (0x2747, 0x2747), (0x274C, 0x274C),
+    (0x274E, 0x274E), (0x2753, 0x2755), (0x2757, 0x2757), (0x2763, 0x2767), (0x2795, 0x2797),
+    (0x27A1, 0x27A1), (0x27B0, 0x27B0), (0x27BF, 0x27BF), (0x2934, 0x2935), (0x2B05, 0x2B07),
+    (0x2B1B, 0x2B1C), (0x2B50, 0x2B50), (0x2B55, 0x2B55), (0x3030, 0x3030), (0x303D, 0x303D),
+    (0x3297, 0x3297), (0x3299, 0x3299), (0xFE0E, 0xFE0F), (0x1F000, 0x1F0FF), (0x1F10D, 0x1F10F),
+    (0x1F12F, 0x1F12F), (0x1F16C, 0x1F171), (0x1F17E, 0x1F17F), (0x1F18E, 0x1F18E),
+    (0x1F191, 0x1F19A), (0x1F1AD, 0x1F1FF), (0x1F201, 0x1F20F), (0x1F21A, 0x1F21A),
+    (0x1F22F, 0x1F22F), (0x1F232, 0x1F23A), (0x1F23C, 0x1F23F), (0x1F249, 0x1F53D),
+    (0x1F546, 0x1F64F), (0x1F680, 0x1F6FF), (0x1F774, 0x1F77F), (0x1F7D5, 0x1F7FF),
+    (0x1F80C, 0x1F80F), (0x1F848, 0x1F84F), (0x1F85A, 0x1F85F), (0x1F888, 0x1F88F),
+    (0x1F8AE, 0x1F8FF), (0x1F90C, 0x1F93A), (0x1F93C, 0x1F945), (0x1F947, 0x1FAFF),
+    (0x1FC00, 0x1FFFD), (0xE0020, 0xE007F),
+];
+
+/// Is `cp` part of an emoji (see [`EMOJI_PARTS`])?
+pub fn is_emoji_part(cp: u32) -> bool {
+    let k = EMOJI_PARTS.partition_point(|&(lo, _)| lo <= cp);
+    k > 0 && EMOJI_PARTS[k - 1].1 >= cp
+}
+
+/// The sequence marks: ZWJ, VS15/VS16, the keycap mark, regional indicators, skin-tone modifiers
+/// and tags. They only mean something to a shaper (GSUB ligatures), and neither SDL2_ttf 2.0.x nor
+/// the emoji face has one, so the text path never draws them.
+fn is_emoji_mark(cp: u32) -> bool {
+    matches!(cp, 0x200D | 0xFE0E | 0xFE0F | 0x20E3 | 0x1F1E6..=0x1F1FF | 0x1F3FB..=0x1F3FF | 0xE0020..=0xE007F)
+}
+
+/// **`s` with its emoji spelled the way a renderer without a shaper can draw them**, or `None` when
+/// it is drawn as spelled (the common case, and every ASCII string, which returns before a lookup).
+///
+/// The faces draw single pictographs (`pkg/appfont-emoji.ttf`); everything an emoji font builds
+/// with GSUB ligatures is rewritten first:
+///
+/// - a **flag** (a regional-indicator pair) becomes its two-letter region code, "🇩🇪" -> "DE";
+/// - a **ZWJ sequence** draws its FIRST pictograph ("👨‍👩‍👧" -> "👨"): the components side by side
+///   read as three separate emoji, and are three times as wide, where the first one is the subject;
+/// - a **keycap** ("1️⃣") draws its digit: VS16 and U+20E3 go;
+/// - skin-tone modifiers, VS15/VS16 and tag characters go (a subdivision flag keeps its 🏴).
+///
+/// Then emoji parts `covers` (the caller's face chain) says no face has are dropped rather than
+/// boxed, and the whitespace that separated them collapses: a gap becomes one space, and a gap at
+/// either end of the string or a line goes. Anything that is not an emoji part (Hebrew, say) keeps
+/// its honest tofu box (see this module's header for why a box is the right answer for text).
+pub fn simplify_emoji(s: &str, covers: impl Fn(u32) -> bool) -> Option<String> {
+    if s.is_ascii() || !s.chars().any(|c| is_emoji_part(c as u32)) {
+        return None;
+    }
+    let ri = |c: char| (0x1F1E6..=0x1F1FF).contains(&(c as u32));
+    let pictograph = |c: char| is_emoji_part(c as u32) && !is_emoji_mark(c as u32);
+    // Pass 1: flags to letters, a ZWJ sequence to its first pictograph.
+    let mut spelled: Vec<char> = Vec::with_capacity(s.len());
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        match it.peek().copied() {
+            Some(n) if ri(c) && ri(n) => {
+                it.next();
+                for r in [c, n] {
+                    spelled.push(char::from(b'A' + (r as u32 - 0x1F1E6) as u8));
+                }
+            }
+            // U+200D joins emoji only between pictographs (the previous one may carry marks);
+            // between letters (Devanagari, Malayalam) it is a shaping control and is left alone.
+            Some(n) if c == '\u{200D}' && pictograph(n)
+                && spelled.iter().rev().find(|&&p| !is_emoji_mark(p as u32)).is_some_and(|&p| pictograph(p)) =>
+            {
+                it.next();
+            }
+            _ => spelled.push(c),
+        }
+    }
+    // Pass 2: drop marks and uncovered pictographs, collapsing the gap they leave. `gap`: the
+    // whitespace since the last kept non-space; `cut`: an emoji was dropped in it. A line break is
+    // an edge, like either end of the string, so multi-line text (a subtitle cue) keeps its lines.
+    // A ZWJ left after pass 1 is not joining emoji, so it goes only when no face has it.
+    let gone = |c: char| {
+        let cp = c as u32;
+        is_emoji_part(cp) && ((is_emoji_mark(cp) && c != '\u{200D}') || !covers(cp))
+    };
+    let line_break = |c: char| c == '\n' || c == '\r';
+    let mut out = String::with_capacity(s.len());
+    let (mut gap, mut cut) = (String::new(), false);
+    for c in spelled {
+        if gone(c) {
+            cut = true;
+        } else if c.is_whitespace() && !line_break(c) {
+            gap.push(c);
+        } else {
+            let edge = line_break(c) || out.is_empty() || out.ends_with(line_break);
+            match (cut, gap.chars().next()) {
+                (false, _) => out.push_str(&gap),
+                (true, Some(sp)) if !edge => out.push(sp),
+                _ => {}
+            }
+            gap.clear();
+            cut = false;
+            out.push(c);
+        }
+    }
+    if !cut {
+        out.push_str(&gap);
+    }
+    (out != s).then_some(out)
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -743,7 +862,7 @@ mod tests {
     /// No host FreeType here is that old, so the bound is checked on the bytes.
     #[test]
     fn shipped_faces_open_under_old_freetype() {
-        for name in ["appfont.ttf", "appfont-bold.ttf", "appfont-cjk.ttf"] {
+        for name in ["appfont.ttf", "appfont-bold.ttf", "appfont-cjk.ttf", "appfont-emoji.ttf"] {
             let p = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../pkg")).join(name);
             let mut f = File::open(&p).unwrap();
             let (maxp, _) = table_span(&mut f, b"maxp");
@@ -811,6 +930,74 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The emoji table against characters whose class is not in doubt, and the whitespace rule.
+    #[test]
+    fn emoji_parts_are_classified_and_dropped_with_their_gap() {
+        for c in ['\u{1F525}', '\u{1F1E9}', '\u{1F3FD}', '\u{FE0F}', '\u{200D}', '\u{20E3}', '\u{E007F}', '\u{26A1}', '\u{2B50}'] {
+            assert!(is_emoji_part(c as u32), "U+{:04X}", c as u32);
+        }
+        for c in ['a', '1', ' ', '\u{2026}', '\u{00E9}', '\u{05D0}', '\u{4E00}', '\u{2606}', '\u{1F3FA}' as char] {
+            assert_eq!(is_emoji_part(c as u32), c == '\u{1F3FA}', "U+{:04X}", c as u32);
+        }
+        let none = |_| false;
+        assert_eq!(simplify_emoji("plain ascii", none), None);
+        assert_eq!(simplify_emoji("Amélie", none), None, "nothing to drop is not a copy");
+        assert_eq!(simplify_emoji("\u{1F525}  Top  10 \u{1F525} ", none).as_deref(), Some("Top  10"));
+        assert_eq!(simplify_emoji("A \u{1F525}\u{FE0F} B", none).as_deref(), Some("A B"));
+        assert_eq!(simplify_emoji("A\u{1F525}B", none).as_deref(), Some("AB"));
+        assert_eq!(
+            simplify_emoji("\u{1F3B5} la la \u{1F3B5}\r\n\u{1F3B5} la\nend \u{1F3B5}", none).as_deref(),
+            Some("la la\r\nla\nend"),
+            "a line break is an edge: lines are kept, the gaps beside the emoji go"
+        );
+        // a covered emoji-class character is kept, spaces and all
+        let star = |cp| cp == 0x2605;
+        assert_eq!(simplify_emoji("\u{2605} 8 \u{1F525}", star).as_deref(), Some("\u{2605} 8"));
+    }
+
+    /// The sequences only a shaper can ligate, rewritten into what single glyphs can say. `covers`
+    /// here says yes to every pictograph, so only the rewriting is under test.
+    #[test]
+    fn emoji_sequences_are_spelled_for_a_renderer_without_a_shaper() {
+        let all = |cp| !is_emoji_mark(cp);
+        let s = |t: &str| simplify_emoji(t, all).unwrap_or_else(|| t.to_owned());
+        assert_eq!(s("\u{1F1E9}\u{1F1EA} Deutsch"), "DE Deutsch", "a flag is its region code");
+        assert_eq!(s("\u{1F1EC}\u{1F1E7}\u{1F1FA}\u{1F1F8}"), "GBUS", "pairs pair left to right");
+        assert_eq!(s("x \u{1F1E9} y"), "x y", "a lone regional indicator is nothing");
+        assert_eq!(s("Kids \u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467} Mix"), "Kids \u{1F468} Mix", "ZWJ: the first pictograph");
+        assert_eq!(s("\u{1F3F3}\u{FE0F}\u{200D}\u{1F308}"), "\u{1F3F3}", "VS16 before the joiner");
+        assert_eq!(s("\u{1F44B}\u{1F3FD}\u{200D}\u{2642}\u{FE0F}!"), "\u{1F44B}!", "a skin tone before the joiner");
+        assert_eq!(s("Season 1\u{FE0F}\u{20E3}"), "Season 1", "a keycap is its digit");
+        assert_eq!(s("#\u{FE0F}\u{20E3}1"), "#1");
+        assert_eq!(s("\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F} Scotland"), "\u{1F3F4} Scotland");
+        assert_eq!(s("[\u{1F6F0}\u{FE0F}] SKY 1"), "[\u{1F6F0}] SKY 1");
+        assert_eq!(simplify_emoji("[\u{1F3E0}] SKY 1", all), None, "a bare pictograph is drawn as spelled");
+        // ZWJ between letters is a shaping control, not an emoji joiner
+        assert_eq!(simplify_emoji("\u{0915}\u{094D}\u{200D}\u{0937} \u{1F525}", |_| true), None);
+    }
+
+    /// LINK 3 — `appfont-emoji.ttf` (Noto Emoji Regular, cut by tools/cut-noto-emoji.py). The
+    /// pictographs addon and stream text carry, and NOTHING an earlier link or the text itself owns:
+    /// no ASCII (Noto Emoji maps digits, '#' and '*' for keycaps), no Latin-1, nothing Inter has, no
+    /// sequence mark. A digit drawn from the emoji face would be a different typeface mid-number.
+    #[test]
+    fn the_emoji_face_draws_addon_pictographs_and_nothing_text_owns() {
+        let (e, inter) = (cov("appfont-emoji.ttf"), cov("appfont-bold.ttf"));
+        for ch in "\u{1F6F0}\u{1F3E0}\u{26A1}\u{23F3}\u{1F3AC}\u{1F4E6}\u{1F3A7}\u{1F50A}\u{1F30E}\u{1F4DD}\u{1F4C1}\u{1F525}\u{1F9F2}\u{1F9E9}\u{2705}\u{1F44D}\u{1F468}".chars() {
+            assert!(e.contains(ch as u32), "pkg/appfont-emoji.ttf lacks U+{:04X} {ch}", ch as u32);
+        }
+        for cp in 0..=0xFFu32 {
+            assert!(!e.contains(cp), "the emoji face covers U+{cp:04X}");
+        }
+        for cp in (0..=0xFFFFu32).chain(0x1F000..=0x1FFFF).chain(0xE0000..=0xE007F) {
+            if e.contains(cp) {
+                assert!(is_emoji_part(cp) && !is_emoji_mark(cp), "U+{cp:04X} is not a pictograph");
+                assert!(!inter.contains(cp), "U+{cp:04X} is Inter's");
+            }
+        }
+        assert_eq!(e.len(), 1380, "the pinned cut (tools/cut-noto-emoji.py) covers 1380 pictographs");
     }
 
     // --- decoder unit tests, on synthetic sfnts -------------------------------------------------

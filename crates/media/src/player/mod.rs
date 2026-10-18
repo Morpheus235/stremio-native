@@ -55,6 +55,7 @@ use sn_base::task::MainThread;
 /// one rect of an image-subtitle display set — the demuxer builds them, the HUD draws them
 pub use shared::SubRect;
 pub use shared::TrackNames;
+pub use shared::Chapter;
 use shared::{
     PauseCompletion, PlayCompletion, UserPause, UserResume, Shared, SubBitmap,
     Transport,
@@ -127,7 +128,7 @@ pub fn seed_dev_track_names() {
         audio.len(),
         subs.len()
     ));
-    *SHARED.track_names.lock().unwrap() = TrackNames { audio, subs };
+    *SHARED.track_names.lock().unwrap() = TrackNames { audio, subs, ..TrackNames::new() };
 }
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int, c_long, c_uint};
@@ -144,6 +145,40 @@ static ACB_OK: AtomicBool = AtomicBool::new(false); // was the g_acb availabilit
 /// `app`; `app::diagnostics` owns the panel and is the only writer (`toggle`/`open`/`close`).
 /// Off at boot, and never persisted.
 pub static DIAG_READOUT_ON: AtomicBool = AtomicBool::new(false);
+
+/// The viewer's aspect mode ([`video_geometry::AspectMode`]'s index), per playback: every
+/// [`begin_playback`] puts it back to Auto. The pump re-places the exported window when it moves.
+static ASPECT_MODE: AtomicU8 = AtomicU8::new(0);
+
+/// Set the aspect mode; the pump applies it on its next tick.
+pub fn set_aspect_mode(mode: video_geometry::AspectMode) {
+    ASPECT_MODE.store(mode.index(), Relaxed);
+}
+
+/// The aspect mode the viewer chose for this playback.
+pub fn aspect_mode() -> video_geometry::AspectMode {
+    video_geometry::AspectMode::from_index(ASPECT_MODE.load(Relaxed))
+}
+
+/// The mode the picture is actually placed in: only the exported window (webOS 5+) follows the
+/// viewer's choice; the ACB plane is placed once at bind.
+fn applied_aspect_mode() -> video_geometry::AspectMode {
+    if sink().window_mode() == VP_EXPORTED {
+        aspect_mode()
+    } else {
+        video_geometry::AspectMode::Auto
+    }
+}
+
+/// The picture's aspect as best known: the pipeline's sourceInfo (pixel aspect included), else
+/// the coded raster, else `fallback`.
+pub fn picture_aspect(fallback: (i32, i32)) -> video_geometry::Aspect {
+    let (w, h) = SHARED.video_raster();
+    video_geometry::Aspect::unpack(SHARED.video_aspect.load(std::sync::atomic::Ordering::Acquire))
+        .or_else(|| video_geometry::Aspect::from_raster(w, h))
+        .or_else(|| video_geometry::Aspect::from_raster(fallback.0, fallback.1))
+        .unwrap_or_else(|| video_geometry::Aspect::from_raster(16, 9).expect("a positive raster"))
+}
 
 /// How a direct-play seek re-anchors the pipeline for THIS session (issue #568).
 ///
@@ -525,13 +560,10 @@ pub fn video_raster() -> (i32, i32) {
     SHARED.video_raster()
 }
 
-/// The picture inside the full-screen video window, including non-square pixels.
+/// The picture on the screen, including non-square pixels and the aspect mode (clipped to the
+/// screen: a Fill picture's subtitles stay on it).
 pub fn video_viewport(width: i32, height: i32) -> video_geometry::Viewport {
-    let (w, h) = SHARED.video_raster();
-    video_geometry::Aspect::unpack(SHARED.video_aspect.load(std::sync::atomic::Ordering::Acquire))
-        .or_else(|| video_geometry::Aspect::from_raster(w, h))
-        .unwrap_or_else(|| video_geometry::Aspect::from_raster(width, height).unwrap())
-        .fit(width, height)
+    applied_aspect_mode().place(picture_aspect((width, height)), width, height).clip(width, height)
 }
 
 pub fn playpos_ns() -> i64 {
@@ -558,6 +590,39 @@ pub fn seek_pending() -> i64 {
 pub fn ended() -> bool {
     SHARED.ended.load(Relaxed)
 }
+
+/// Whether this playback is a debrid service's "still downloading" placeholder: AIOStreams answers
+/// a torrent its debrid service has not cached yet with a redirect to its `/static/downloading.mp4`
+/// (its other `/static/` clips name failures, which play as they are).
+pub fn debrid_placeholder() -> bool {
+    SHARED.debrid_placeholder.load(Relaxed)
+}
+
+/// Note the path a media open or redirect landed on; see [`debrid_placeholder`].
+pub fn note_media_path(path: &str) {
+    if is_debrid_downloading_path(path) && !SHARED.debrid_placeholder.swap(true, Relaxed) {
+        log("stream: debrid placeholder (/static/downloading.mp4): the torrent is not cached yet");
+    }
+}
+
+fn is_debrid_downloading_path(path: &str) -> bool {
+    path.split(['?', '#']).next().unwrap_or_default().ends_with("/static/downloading.mp4")
+}
+
+#[cfg(test)]
+#[test]
+fn only_the_downloading_clip_reads_as_the_debrid_placeholder() {
+    assert!(is_debrid_downloading_path("/static/downloading.mp4"));
+    assert!(is_debrid_downloading_path("/aio/static/downloading.mp4?x=1"));
+    assert!(!is_debrid_downloading_path("/static/download_failed.mp4"));
+    assert!(!is_debrid_downloading_path("/movies/downloading.mp4"));
+}
+/// Make the next seek land on the first keyframe AT or after its target instead of the one before
+/// (a skip must not land back inside the segment it skipped). One-shot: the demuxer clears it.
+pub fn seek_forward_once() {
+    crate::ff::SEEK_FORWARD.store(true, Relaxed);
+}
+
 pub fn request_seek(ns: i64) {
     SHARED.ended.store(false, Relaxed); // seeking back from the end un-ends the stream
     SHARED.seeking.store(true, Relaxed); // HUD: spinner + freeze the playhead until it lands
@@ -671,8 +736,9 @@ pub enum FailureKind {
     /// refused before any Load.
     DolbyVision,
     /// The selected audio track needs a software decoder this build does not have
-    /// ([`crate::stream::AudioFeed::NeedsSoftwareDecode`]: TrueHD, FLAC, Opus, ..., or DTS where
-    /// the DTS -> AC-3 path is unavailable) — refused before any Load, so the player never sits in
+    /// ([`crate::stream::AudioFeed::NeedsSoftwareDecode`]: a codec nothing here decodes, TrueHD,
+    /// FLAC, Opus, ... when libsnadec.so did not load, or DTS where the DTS -> AC-3 path is
+    /// unavailable) — refused before any Load, so the player never sits in
     /// a start whose audio clock cannot run.
     AudioUnsupported,
     /// The producer never opened a usable media stream or produced a video access unit.
@@ -688,6 +754,10 @@ pub enum FailureKind {
     /// Issue #74 D.1.4's `NATIVE_LOAD_BUDGET` fired — the native `Load` never returned, or it
     /// returned and `loadCompleted` never arrived. A HANG, distinct from [`TvPipeline`](Self::TvPipeline).
     LoadTimeout,
+    /// The link answered an image, an archive or a document instead of a video — the addon
+    /// picked the wrong file in a torrent ([`crate::stream::ProbeFailure::NotVideo`]). The same
+    /// link answers the same file, so another stream is the only way on.
+    NotVideo,
     /// Everything else. Honest rather than tidy.
     Unspecified,
 }
@@ -706,6 +776,7 @@ impl FailureKind {
             FailureKind::TvPipeline => "tv_pipeline",
             FailureKind::JailMissingRtkmem => "jail_missing_rtkmem",
             FailureKind::LoadTimeout => "load_timeout",
+            FailureKind::NotVideo => "not_video",
             FailureKind::Unspecified => "unspecified",
         }
     }
@@ -844,6 +915,15 @@ fn refusal_shape(refusal: &crate::session::StartRefusal) -> ErrorShape {
     use sn_platform::i18n::msg;
     let b = std::borrow::Cow::Borrowed;
     match refusal {
+        // A codec the buffer feed has no caps for at all (`LoadVideo::of_stream` is that table):
+        // the TV may well decode it in its own file player, so "no decoder" would be untrue.
+        R::VideoUnsupported(c) if engine::LoadVideo::of_stream(c.split(' ').next().unwrap_or("")).is_none() => ErrorShape {
+            kind: FailureKind::VideoUnsupported,
+            caption: msg::widgets_failure_video_not_streamable_c(),
+            panel: msg::widgets_panel_video_not_streamable(),
+            readout: msg::widgets_reason_video_not_streamable(),
+            detail: b(""),
+        },
         R::VideoUnsupported(_) => ErrorShape {
             kind: FailureKind::VideoUnsupported,
             caption: msg::widgets_failure_video_unsupported_c(),
@@ -868,8 +948,25 @@ fn refusal_shape(refusal: &crate::session::StartRefusal) -> ErrorShape {
         // A probe that found no video track says so, exactly like a demuxer that found none;
         // every other probe failure is the stream not opening, which may be transient (Try again).
         R::Probe(crate::stream::ProbeFailure::NoVideo) => error_shape(true, RuntimeFailure::Unknown),
+        R::Probe(crate::stream::ProbeFailure::NotVideo(kind)) => not_video_shape(*kind),
         R::Probe(_) => error_shape(false, RuntimeFailure::MediaSource),
     }
+}
+
+/// The read-out for a link that answered something other than a video. A page may still turn
+/// into the file (a debrid link being prepared), so it keeps *Try again*; the rest are the wrong
+/// file and offer another stream.
+fn not_video_shape(kind: crate::stream::NotVideo) -> ErrorShape {
+    use crate::stream::NotVideo as N;
+    use sn_platform::i18n::msg;
+    let b = std::borrow::Cow::Borrowed;
+    let (kind, caption, panel, readout) = match kind {
+        N::Image => (FailureKind::NotVideo, msg::widgets_failure_not_video_image_c(), msg::widgets_panel_not_video_image(), msg::widgets_reason_wrong_file()),
+        N::Archive => (FailureKind::NotVideo, msg::widgets_failure_not_video_archive_c(), msg::widgets_panel_not_video_archive(), msg::widgets_reason_wrong_file()),
+        N::Document => (FailureKind::NotVideo, msg::widgets_failure_not_video_document_c(), msg::widgets_panel_not_video_document(), msg::widgets_reason_wrong_file()),
+        N::WebPage => (FailureKind::MediaSource, msg::widgets_failure_web_page_c(), msg::widgets_panel_web_page(), msg::widgets_reason_web_page()),
+    };
+    ErrorShape { kind, caption, panel, readout, detail: b("") }
 }
 
 /// PURE: the read-out for a playback that started and then failed.
@@ -951,7 +1048,8 @@ pub fn error_now(ps: &crate::session::PlaybackSession) -> ErrorShape {
 
 /// dev: `/tmp/stremionative-failtest=<arm>` — force one variant of the failure read-out, which is
 /// otherwise the one screen that cannot be reached on purpose. Arms: `novideo`, `stream`,
-/// `connection`, `tv`, `load_timeout`, `jail`, `audio`, `video`, `dv`, and anything else for
+/// `connection`, `tv`, `load_timeout`, `jail`, `audio`, `video`, `dv`, `probe`, `image`, `archive`,
+/// `document`, `webpage`, and anything else for
 /// "no cause was reported". It feeds the real resolvers, so what is photographed is real.
 fn failtest_arm() -> Option<ErrorShape> {
     use crate::session::StartRefusal as R;
@@ -967,6 +1065,10 @@ fn failtest_arm() -> Option<ErrorShape> {
         "video" => refusal_shape(&R::VideoUnsupported("mpeg2video".into())),
         "dv" => refusal_shape(&R::DolbyVision("dual-layer")),
         "probe" => refusal_shape(&R::Probe(crate::stream::ProbeFailure::Timeout)),
+        "image" => not_video_shape(crate::stream::NotVideo::Image),
+        "archive" => not_video_shape(crate::stream::NotVideo::Archive),
+        "document" => not_video_shape(crate::stream::NotVideo::Document),
+        "webpage" => not_video_shape(crate::stream::NotVideo::WebPage),
         _ => error_shape(false, RuntimeFailure::Unknown),
     })
 }
@@ -1013,7 +1115,7 @@ pub use sn_platform::tv::sink::{VP_ACB, VP_EXPORTED, VP_NONE};
 /// The simulator's clock-sink stop; the television's pipeline has no such control.
 pub use ffi_host::stop_clock_at as stop_sim_clock_at;
 
-/// The video codec a `dg_load_v` code names (video 1 = H264, 2 = H265, 3 = AV1, 4 = VP9; 0 = not built).
+/// The video codec a `dg_load_v` code names (0 = not built).
 /// The codes are written from `engine::LoadVideo::diag_code`, the names from its `payload_name`.
 pub fn load_v_name(code: u8) -> &'static str {
     match code {
@@ -1021,6 +1123,7 @@ pub fn load_v_name(code: u8) -> &'static str {
         2 => "H265",
         3 => "AV1",
         4 => "VP9",
+        5 => "VP8",
         _ => "—",
     }
 }
@@ -1079,6 +1182,51 @@ pub struct Diag {
     pub dur_ns: i64,
 }
 
+/// The playback's accounted buffers, in bytes: what a memory read-out (`app::devcmd`) names
+/// beside the process totals. Takes each queue's mutex: not for a per-frame caller.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Memory {
+    pub video_queue: usize,
+    pub audio_queue: usize,
+    pub sub_bitmaps: usize,
+}
+
+pub fn memory(adapter: &mut adapter::PlayerAdapter) -> Memory {
+    let bytes = |q: Option<&Box<crate::aq::AuQueue>>| {
+        q.map_or(0, |q| crate::aq::aq_bytes(&**q as *const _ as *mut _).max(0) as usize)
+    };
+    let (video_queue, audio_queue) =
+        adapter.engine().map_or((0, 0), |e| (bytes(e.aq_video.as_ref()), bytes(e.aq_audio.as_ref())));
+    let sub_bitmaps = SHARED.sub_bitmaps.lock().unwrap().iter().map(SubBitmap::bytes).sum();
+    Memory { video_queue, audio_queue, sub_bitmaps }
+}
+
+/// **How full the start buffer is**, 0..=100: the playable reserve ([`Diag::playable_buffer_ms`]'s
+/// one definition) against the prime depth the clock waits for before it starts
+/// (`engine::PRIME_NS`). `None` until a lane has published a tail. Atomics only — cheap enough for
+/// the player's working read-out to ask every frame.
+pub fn prime_fill_pct() -> Option<u8> {
+    Some(prime_pct(buffer_ahead_ms()?))
+}
+
+/// **How far past the playhead the pipeline holds media**, in ms — the transport's buffered range
+/// ([`playable_buffer_ms`]'s one definition). `None` until a lane has published a tail. Atomics
+/// only: cheap enough to read every frame.
+pub fn buffer_ahead_ms() -> Option<i64> {
+    playable_buffer_ms(
+        SHARED.video_tail_ns.load(Relaxed),
+        SHARED.audio_tail_ns.load(Relaxed),
+        SHARED.dg_load_a.load(Relaxed) != 0,
+        SHARED.disp_base.load(Relaxed),
+        SHARED.playpos_ns.load(Relaxed),
+    )
+}
+
+/// A reserve of `buffer_ms` as a share of the prime depth, clamped to 0..=100.
+pub fn prime_pct(buffer_ms: i64) -> u8 {
+    (buffer_ms.max(0) * 100 / (engine::PRIME_NS / 1_000_000)).min(100) as u8
+}
+
 /// One physical reserve definition for every delivery mode. Direct-file tails already use movie
 /// time and have `display_base_ns == 0`; a zero-based source started at an offset publishes a
 /// zero-based tail and carries the movie offset in `display_base_ns`. Adding that base universally
@@ -1131,7 +1279,10 @@ impl Diag {
             2 => "AC3 PLUS",
             3 => "AAC",
             4 => "DTS",
-            5 => "AC3 (from DTS)",
+            5 => "AC3 (software transcode)",
+            6 => "PCM (software decode)",
+            7 => "MP3",
+            8 => "AC4",
             _ => "NONE (needAudio:false)",
         }
     }
@@ -1256,6 +1407,32 @@ pub fn request_audio_track(
     Ok(())
 }
 
+/// [`request_audio_track`] by the track's position alone, reading its codec, channel count and
+/// Atmos flag off the probe — what a track menu over a probed (Stremio) stream has. `Err` for a
+/// track the television cannot decode (the playing track is kept) or that the probe did not see.
+pub fn request_probed_audio_track(
+    ps: &mut crate::session::PlaybackSession,
+    track: i32,
+) -> Result<(), crate::session::StartRefusal> {
+    ps.select_probed_audio(track)?;
+    SHARED.desired_audio_idx.store(track, Relaxed);
+    TX.audio_reload.store(true, Relaxed);
+    note_audio_pick();
+    Ok(())
+}
+
+/// The container's track names and languages, as the demuxer published them (file order).
+pub fn track_names() -> TrackNames {
+    let t = SHARED.track_names_lenient();
+    TrackNames { audio: t.audio.clone(), subs: t.subs.clone(), audio_langs: t.audio_langs.clone(), sub_langs: t.sub_langs.clone() }
+}
+
+/// The open file's chapters, sorted by start (empty without any, or before a demuxer has opened).
+/// A copy; read it as often as the frame needs. Titles are file text: never log them.
+pub fn chapters() -> Vec<Chapter> {
+    SHARED.chapters.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
 /// **Start a playback — the one entry the application calls.** Stops whatever plays, installs
 /// `start` on the session (freezing its video, Dolby Vision and audio decisions against this
 /// television's codec table), selects its audio and subtitle tracks, arms its start offset and
@@ -1285,6 +1462,8 @@ pub fn begin_playback(
     pa.cancel_probe();
     reset_audio_track();
     reset_subtitle();
+    // the aspect mode is the viewer's for one playback
+    set_aspect_mode(video_geometry::AspectMode::Auto);
     let (audio, subtitle, at_ns) = (start.audio_track, start.subtitle_track, start.start_ns);
     ps.begin(start)?;
     if let Some(track) = audio {
@@ -1313,13 +1492,25 @@ pub(crate) fn finish_probe(
         return;
     }
     let resolved = match result {
-        Ok(probed) => ps.resolve(probed),
+        Ok(probed) => {
+            let rebase = crate::stream::needs_fresh_rebase(probed.start_ns);
+            if rebase {
+                log(&format!("probe: timeline starts at {} ms; the first keyframe is rebased to 0", probed.start_ns / 1_000_000));
+            }
+            engine::FRESH_REBASE.store(rebase, Relaxed);
+            ps.resolve(probed)
+        }
         Err(f) => Err(ps.refuse_probe(f)),
     };
     match resolved {
         Ok(track) => {
             if let Some(t) = track {
                 set_audio_track(t);
+            }
+            // the start's (or its language preferences') subtitle, before the first packet; a
+            // later menu pick replaces it and nothing re-applies this one
+            if ps.subtitle_track() >= 0 {
+                request_subtitle(ps.subtitle_track());
             }
             let outcome = engine::start_bufferfeed_tracked(ps, pa);
             log(&format!("probe: resolved; native start {outcome:?}"));
@@ -1375,6 +1566,36 @@ pub fn subtitle_tone() -> crate::prefs::SubtitleTone {
 pub fn set_subtitle_tone(tone: crate::prefs::SubtitleTone) {
     crate::prefs::SUBTITLE_TONE.set(tone);
     sn_machine::idle::invalidate();
+}
+
+/// **The viewer's audio sync offset**, in milliseconds: positive plays the sound LATER against the
+/// picture, negative earlier (a live proxy whose sound trails its picture by a constant second or
+/// two). It shifts the PTS of every AU the audio lane feeds (`engine::feed_audio_lane`), the
+/// same clock its hold-ahead and stale checks read, so nothing reloads: what is already queued in
+/// the sink plays out at the old offset (at most the lane's lead, `MAX_FEED_AHEAD_NS` plus its
+/// slack) and the change is heard after it. The application sets it per stream source when a
+/// playback starts and remembers what the viewer chose.
+static AUDIO_OFFSET_MS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// How far the audio sync goes either way.
+pub const AUDIO_OFFSET_RANGE_MS: i64 = 3_000;
+
+/// The offset clamped to [`AUDIO_OFFSET_RANGE_MS`].
+pub fn clamp_audio_offset_ms(offset_ms: i64) -> i64 {
+    offset_ms.clamp(-AUDIO_OFFSET_RANGE_MS, AUDIO_OFFSET_RANGE_MS)
+}
+
+/// Set the audio sync offset (ms), clamped.
+pub fn set_audio_offset(offset_ms: i64) {
+    AUDIO_OFFSET_MS.store(clamp_audio_offset_ms(offset_ms) as i32, Relaxed);
+}
+
+pub fn audio_offset_ms() -> i64 {
+    i64::from(AUDIO_OFFSET_MS.load(Relaxed))
+}
+
+pub(crate) fn audio_offset_ns() -> i64 {
+    audio_offset_ms() * 1_000_000
 }
 
 /// The viewer's subtitle timing offset in MILLISECONDS — positive draws every client-rendered cue
@@ -1459,7 +1680,7 @@ pub const SUBTITLE_OFFSET_FAST_STEP_MS: i64 = 500;
 ///
 /// A sidecar gets -60..=+60 s. An EMBEDDED track (text or image) gets 0..=+60 s, a delay only:
 /// an advance needs cues the demuxer has not read yet, and an embedded track's packets ride the
-/// same byte-bounded A/V queues as the picture (`engine::AQ_VIDEO_BYTES`, 10 MiB — about 2 s of
+/// same byte-bounded A/V queues as the picture (`engine::AQ_VIDEO_BYTES`, 48 MiB — about 10 s of
 /// a 40 Mbit/s remux), so an advance would find nothing to draw. Off counts as embedded; the
 /// offset is 0 there anyway (a track change resets it).
 pub fn subtitle_offset_range_ms() -> (i64, i64) {
@@ -1505,17 +1726,19 @@ pub fn reclamp_subtitle_offset() {
 /// `SUBTITLE_OFFSET_LATEST_MS`, + 2 s behind the playhead, retained at EVERY offset so a raised
 /// delay finds its sets) to the demuxer's read position.
 ///
-/// - Read-ahead: the demuxer is bounded by the 10 MiB video queue (`engine::AQ_VIDEO_BYTES`) —
-///   about 2 s of a 40 Mbit/s remux, 10.5 s of an 8 Mbit/s 1080p encode. Take 12 s: the window
-///   is at most 60 + 12 + 2 = 74 s.
+/// - Read-ahead: the demuxer is bounded by the 48 MiB video queue (`engine::AQ_VIDEO_BYTES`) —
+///   about 10 s of a 40 Mbit/s remux (a 4K PGS track rides on one of those), 50 s of an
+///   8 Mbit/s 1080p encode. The window is at most 60 + 10 + 2 = 72 s on a 4K canvas and
+///   60 + 50 + 2 = 112 s at 1080p.
 /// - Sets in it: a dense dialogue scene publishes about one display set with pixels per 2 s
-///   (the CLEAR between two is `close_subtitle_bitmap`, which stores nothing), so 37 sets.
+///   (the CLEAR between two is `close_subtitle_bitmap`, which stores nothing), so 36 sets on a
+///   4K canvas and 56 at 1080p.
 /// - One set: a PGS object is its text's bounding box. Two lines of large text are ~1400x150 px
 ///   on a 1920x1080 canvas and ~2800x300 px on a 3840x2160 one.
-/// - Held as RGBA (4 B/px, how this store kept them first): 37 x 0.84 MB = 31.1 MB at 1080p,
-///   and 37 x 3.36 MB = 124.3 MB for a 4K canvas — well over this budget.
-/// - Held indexed ([`SubRect`], 1 B/px + a 1 KiB palette): 37 x 0.21 MB = 7.8 MB at 1080p and
-///   37 x 0.84 MB = 31.1 MB for a 4K canvas, inside 40 MiB with room for other tracks' sets.
+/// - Held as RGBA (4 B/px, how this store kept them first): 56 x 0.84 MB = 47 MB at 1080p,
+///   and 36 x 3.36 MB = 121 MB for a 4K canvas — well over this budget.
+/// - Held indexed ([`SubRect`], 1 B/px + a 1 KiB palette): 56 x 0.21 MB = 11.8 MB at 1080p and
+///   36 x 0.84 MB = 30.2 MB for a 4K canvas, inside 40 MiB with room for other tracks' sets.
 ///
 /// 40 MiB is 25% of the 160 MB `requiredMemory` the app declares — raised from the 24 MiB this
 /// store held at the old 30 s ceiling, which no longer covers a 4K PGS track's indexed worst case
@@ -1945,7 +2168,7 @@ pub extern "C" fn acb_on_event(ev: c_long, reply: *const c_char) {
 pub fn every_failure_row() -> Vec<(FailureKind, FailureContext, Vec<FailureAction>)> {
     use FailureKind as K;
     let kinds = [K::NoVideoTrack, K::VideoUnsupported, K::DolbyVision, K::AudioUnsupported, K::MediaSource,
-        K::PlaybackInterrupted, K::TvPipeline, K::LoadTimeout, K::JailMissingRtkmem, K::Unspecified];
+        K::PlaybackInterrupted, K::TvPipeline, K::LoadTimeout, K::JailMissingRtkmem, K::NotVideo, K::Unspecified];
     let mut out = Vec::new();
     for kind in kinds {
         for can_retry in [false, true] {
@@ -1967,6 +2190,53 @@ mod tests {
     // `native_failure_regressions::jail_refusal_enters_error_without_engine_and_retires_on_exit`
     // below, against the real `ps.jail_load_blocked`-based gate in `engine.rs` — see that test.
 
+    /// Xvid (MPEG-4 Part 2) and the other codecs the buffer feed has no caps for are not "a codec
+    /// this TV has no decoder for" — the C1 lists decoders for most of them — so their read-out
+    /// says what is true: the TV's streaming player cannot take that format. A codec the feed does
+    /// take but this set's table refuses (or a raster past its row) keeps the decoder wording.
+    /// A link that answered an image (the field case: a torrent's HDR10+ test chart), an archive
+    /// or a document says so and offers another stream, not *Try again*; a page keeps *Try
+    /// again*, since a debrid link being prepared can answer one for a moment.
+    #[test]
+    fn a_link_that_is_not_a_video_says_what_it_answered() {
+        use crate::session::StartRefusal as R;
+        use crate::stream::{NotVideo as N, ProbeFailure as P};
+        use sn_platform::i18n::msg;
+        let cx = FailureContext { can_retry: true, repair_idle: true };
+        let image = refusal_shape(&R::Probe(P::NotVideo(N::Image)));
+        assert_eq!(image.caption, msg::widgets_failure_not_video_image_c());
+        assert_eq!(image.readout, msg::widgets_reason_wrong_file());
+        assert_eq!(image.kind, FailureKind::NotVideo);
+        assert_eq!(failure_actions(image.kind, cx), [FailureAction::OtherStream, FailureAction::Back]);
+        let archive = refusal_shape(&R::Probe(P::NotVideo(N::Archive)));
+        assert_eq!(archive.caption, msg::widgets_failure_not_video_archive_c());
+        assert_eq!(archive.readout, msg::widgets_reason_wrong_file());
+        let document = refusal_shape(&R::Probe(P::NotVideo(N::Document)));
+        assert_eq!(document.caption, msg::widgets_failure_not_video_document_c());
+        let page = refusal_shape(&R::Probe(P::NotVideo(N::WebPage)));
+        assert_eq!(page.caption, msg::widgets_failure_web_page_c());
+        assert_eq!(page.readout, msg::widgets_reason_web_page());
+        assert_eq!(failure_actions(page.kind, cx), [FailureAction::TryAgain, FailureAction::OtherStream, FailureAction::Back]);
+        // the plain open failure keeps its own copy
+        assert_eq!(refusal_shape(&R::Probe(P::Open)).caption, msg::widgets_failure_open_c());
+    }
+
+    #[test]
+    fn a_codec_the_feed_never_takes_says_so_rather_than_no_decoder() {
+        use crate::session::StartRefusal as R;
+        use sn_platform::i18n::msg;
+        for codec in ["mpeg4", "mpeg2video", "h263", "vc1", "wmv3", "rv40"] {
+            let shape = refusal_shape(&R::VideoUnsupported(codec.into()));
+            assert_eq!(shape.readout, msg::widgets_reason_video_not_streamable(), "{codec}");
+            assert_eq!(shape.caption, msg::widgets_failure_video_not_streamable_c(), "{codec}");
+            assert_eq!(shape.kind, FailureKind::VideoUnsupported);
+        }
+        for refused in ["av1", "vp8", "h264 10-bit", "hevc 7680x4320"] {
+            let shape = refusal_shape(&R::VideoUnsupported(refused.into()));
+            assert_eq!(shape.readout, msg::widgets_reason_video_unsupported(), "{refused}");
+        }
+    }
+
     #[test]
     fn every_failure_kind_has_its_own_stable_wire_code() {
         use FailureKind as K;
@@ -1980,6 +2250,7 @@ mod tests {
             (K::TvPipeline, "tv_pipeline"),
             (K::JailMissingRtkmem, "jail_missing_rtkmem"),
             (K::LoadTimeout, "load_timeout"),
+            (K::NotVideo, "not_video"),
             (K::Unspecified, "unspecified"),
         ];
         for (kind, code) in table {
@@ -2118,11 +2389,62 @@ mod tests {
         restore_state_for_test(saved);
     }
 
+    /// **The language preferences' subtitle reaches the demuxer before the first packet, and a
+    /// menu pick afterwards wins for the playback**: nothing re-applies the preference (a stale
+    /// probe answer is dropped).
+    #[test]
+    fn the_preferred_subtitle_is_selected_and_a_menu_pick_is_not_overridden() {
+        let _serial = sn_base::testlock::serial();
+        let saved = swap_state_for_test(shared::PlaybackState::Idle);
+        let url = "https://cdn.example/film.mkv";
+        let mut pa = adapter::PlayerAdapter::new(unsafe { sn_base::task::MainThread::assume() });
+        let mut ps = crate::session::PlaybackSession::IDLE;
+        let mut start = crate::session::PlaybackStart::new(url);
+        start.tracks = Some(sn_base::tracks::TrackPrefs {
+            audio: vec!["DE".into()],
+            subtitles: vec!["DE".into()],
+            mode: sn_base::tracks::SubsMode::Auto,
+            native: "DE".into(),
+            forced_fallback: false,
+        });
+        reset_subtitle();
+        ps.begin(start).unwrap();
+        let probed = crate::stream::ProbedStreams {
+            video: Some(crate::stream::ProbedVideo { codec: "h264".into(), width: 1920, height: 1080, fps: 24.0, profile: 100, ..Default::default() }),
+            audio: vec![crate::stream::ProbedAudio { codec: "aac".into(), channels: 2, language: "eng".into(), ..Default::default() }],
+            subs: vec![
+                crate::stream::ProbedSub { language: "eng".into(), ..Default::default() },
+                crate::stream::ProbedSub { language: "ger".into(), ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        finish_probe(&mut ps, &mut pa, url, Ok(probed.clone()));
+        assert_eq!(desired_sub_idx(), 1, "Auto over English audio with a German preference: German subtitles");
+        request_subtitle(-1); // the viewer's menu pick: Off
+        finish_probe(&mut ps, &mut pa, url, Ok(probed));
+        assert_eq!(desired_sub_idx(), -1, "the menu pick stands");
+        if pa.is_live() {
+            stop_bufferfeed(&mut ps, &mut pa);
+        }
+        pa.cancel_probe();
+        ps.clear();
+        reset_subtitle();
+        restore_state_for_test(saved);
+    }
+
     #[test]
     fn acb_pause_resume_cannot_overtake_the_bind_transaction() {
         assert!(!acb_playstate_ready(shared::Stage::Playing));
         assert!(!acb_playstate_ready(shared::Stage::Bound));
         assert!(acb_playstate_ready(shared::Stage::Streaming));
+    }
+
+    #[test]
+    fn the_start_buffer_reads_as_a_share_of_the_prime_depth() {
+        assert_eq!(prime_pct(0), 0);
+        assert_eq!(prime_pct(-40), 0, "a reserve behind the playhead is empty, never negative");
+        assert_eq!(prime_pct(350), 50);
+        assert_eq!(prime_pct(9_500), 100, "past the prime depth it is full");
     }
 
     #[test]

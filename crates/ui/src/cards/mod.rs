@@ -89,7 +89,7 @@ pub use crate::poster_grid::{
     STYLE as GRID_STYLE,
 };
 pub use grid::{Grid, GridSpec, ScrollMode};
-pub use shelf::{PageEdge, Shelf, PAGE_EDGE_CARDS};
+pub use shelf::{PageEdge, SeeAll, Shelf, PAGE_EDGE_CARDS};
 pub use stack::{Kind, SectionSpec, Stack, StackEvent, StackMemory, StackPage, StackView};
 
 #[cfg(any(test, feature = "test-support"))]
@@ -215,6 +215,28 @@ pub trait CardSource<H: Host> {
     /// Whether the list goes on before the FIRST card (the window slid off its start): the
     /// leading edge's counterpart of [`more_after`](Self::more_after).
     fn more_before(&self) -> bool {
+        false
+    }
+    /// The element of the row's trailing **See all** tile, for a source that opts in (default:
+    /// none). A [`Stack`] shelf then shows one more cell after the last loaded card — the card's
+    /// absent ground, ring and pop, *See all* centred, no artwork (`card_row::draw_see_all`) — that
+    /// RIGHT from the last card reaches and that is never held, captioned or asked for. Its press
+    /// is reported as [`CardEvent::Activate`] of this element; the screen opens the whole row. A
+    /// row with no card yet shows no tile, and a row still paging draws its skeleton cells after
+    /// the tile, so the tile is reachable while the next page is on its way and the page that
+    /// lands is put in before it. The element must name no card of any section of the page.
+    fn see_all(&self) -> Option<H::Elem> {
+        None
+    }
+    /// Whether the [`see_all`](Self::see_all) tile is a *Couldn't load more · Try again* tile
+    /// instead (`card_row::draw_retry_tile`): the row's next page failed, and its press asks it
+    /// again. The screen hands a retry element from `see_all` while this holds. Default: never.
+    fn see_all_retry(&self) -> bool {
+        false
+    }
+    /// Whether card `i` is the [`see_all`](Self::see_all) tile. The shelf's own adapter answers it
+    /// (`shelf::SeeAll`, which the `Stack` wraps every section's source in); a source never does.
+    fn see_all_at(&self, _i: usize) -> bool {
         false
     }
 }

@@ -39,9 +39,10 @@
 //! sentinel. A hero logo that SETTLED as a miss is reported in [`Frame::absent`]
 //! ([`Reason::HeroLogoAbsent`], [`note_absent`]) so a storyboard that needs the logo can fail fast on
 //! it; the count only moves while the logo is still on its way. A key of `""` never resolves at all
-//! (`Art::Thumb { key: "" }`, an empty `still_key`, an empty `thumb` on a non-collection poster): it
-//! IS counted, because it is a card with no picture, and it will never clear — a driver must fail
-//! fast on an entry whose key is empty instead of holding for it.
+//! (`Art::Thumb { key: "" }`, an empty `still_key`): it IS counted, because it is a card with no
+//! picture, and it will never clear — a driver must fail fast on an entry whose key is empty
+//! instead of holding for it. A POSTER with no `thumb`, or whose art settled as a miss, is the
+//! exception: it draws its title on the absent ground (`collection_tile::draw_title`), uncounted.
 //!
 //! **A held page image.** During a `PageDip` route push the destination is drawn live ONCE into a
 //! snapshot and then painted as that image — nothing walks the page — on every frame until it is
@@ -99,7 +100,17 @@
 //! count and a branch, before any thread-local access; [`note`] and [`renote`] are `#[inline]` and
 //! keep the recording half out of line. [`painter`], [`sentinel_fill`] and [`stale_cover`] compile
 //! to nothing outside the sentinel build, and [`ink`], [`skeleton`], [`ground`], [`flat`] and
-//! [`face`] draw the very same primitive with the very same arguments.
+//! [`face`] draw the very same primitive (ONE quad); [`skeleton`] and [`ground`] tint theirs with
+//! the [`shimmer`] crest.
+//!
+//! **The shimmer** (owner feedback, 2026-10-17: "more dynamical / animated loading styles for
+//! empty cards"). A skeleton or ground's two colours are lifted toward [`theme::SKELETON_CREST`] by
+//! a slow wave that travels left to right across the SCREEN (its phase is the quad's screen x), the
+//! top colour a little ahead of the bottom one, so a row of empty cards reads as one sweep passing
+//! over it. It costs nothing: the same one quad, two colours computed from the frame clock
+//! (`sn_machine::idle::now_ms`, or the held phase clock). It deliberately does NOT keep the loop
+//! awake: it moves on the frames something else asks for (a landing, a spinner, focus motion) and
+//! stands still when nothing does, so a page that is only waiting still idles.
 //!
 //! **What the sentinel cannot see**, so the counter owns it alone: a hub or detail BACKDROP that
 //! has not arrived (the bare ambient wash under a translucent scrim ramp cannot be an exact
@@ -489,9 +500,47 @@ const _: () = assert!(sentinel_alpha_is_one());
 pub fn skeleton(p: Painter, reason: Reason, key: &str, r: Rect, rad: f32) {
     note(p, reason, key);
     #[cfg(not(feature = "placeholder-sentinel"))]
-    p.rect_sheened(r, rad, theme::SKELETON_TOP, theme::SKELETON_BOT);
+    {
+        let (top, bot) = shimmer(p, r, theme::SKELETON_TOP, theme::SKELETON_BOT);
+        p.rect_sheened(r, rad, top, bot);
+    }
     #[cfg(feature = "placeholder-sentinel")]
     painter(p).rect(r, rad, theme::SKELETON_TOP, theme::SKELETON_BOT, 0.0);
+}
+
+/// One shimmer cycle: how long the crest takes to cross one [`SHIMMER_SPAN`].
+pub const SHIMMER_PERIOD_MS: u32 = 1800;
+/// The shimmer's wavelength in screen pixels: two cards' crests are this far apart in phase, so a
+/// row of them reads as one sweep rather than as cards blinking together.
+pub const SHIMMER_SPAN: f32 = 1400.0;
+/// How far the bottom colour lags the top one, as a fraction of a cycle (the crest leans).
+const SHIMMER_LEAN: f32 = 0.06;
+
+/// **The crest's weight (0..1) at phase `u`**: a narrow raised-cosine bump, 0 for most of the
+/// cycle, so the sweep is a passing light rather than a pulse.
+pub fn shimmer_crest(u: f32) -> f32 {
+    let c = 0.5 - 0.5 * (std::f32::consts::TAU * u.rem_euclid(1.0)).cos();
+    c * c * c
+}
+
+/// The shimmer's phase for a quad whose left edge is at screen x `x`, at clock `ms`: 0..1, moving
+/// left to right with time.
+pub fn shimmer_phase(ms: u32, x: f32) -> f32 {
+    ((ms % SHIMMER_PERIOD_MS) as f32 / SHIMMER_PERIOD_MS as f32 - x / SHIMMER_SPAN).rem_euclid(1.0)
+}
+
+/// `top` and `bot` lifted by the shimmer crest passing over `r` now (see the module doc).
+// ponytail: the colours move, so a skeleton under a live-backdrop glass re-blurs on frames that
+// present anyway; nothing glass sits over a skeleton today.
+pub(crate) fn shimmer(p: Painter, r: Rect, top: [f32; 4], bot: [f32; 4]) -> ([f32; 4], [f32; 4]) {
+    let ms = sn_machine::motion::held_clock_ms().unwrap_or_else(sn_machine::idle::now_ms);
+    let u = shimmer_phase(ms, r.x + p.dx());
+    let lift = |c: [f32; 4], u: f32| {
+        let k = shimmer_crest(u);
+        let m = theme::mix(c, theme::SKELETON_CREST, k);
+        [m[0], m[1], m[2], c[3]]
+    };
+    (lift(top, u), lift(bot, u - SHIMMER_LEAN))
 }
 
 /// **A sheened face with `top`→`bot` fills**, counted: a placeholder that is not a skeleton token
@@ -512,7 +561,10 @@ pub fn face(p: Painter, reason: Reason, key: &str, r: Rect, rad: f32, top: [f32;
 pub fn ground(p: Painter, reason: Reason, key: &str, r: Rect, rad: f32) {
     note(p, reason, key);
     #[cfg(not(feature = "placeholder-sentinel"))]
-    p.rrect_sheened(r, rad, theme::CARD_PLACEHOLDER);
+    {
+        let (top, bot) = shimmer(p, r, theme::CARD_PLACEHOLDER, theme::CARD_PLACEHOLDER);
+        p.rect_sheened(r, rad, top, bot);
+    }
     #[cfg(feature = "placeholder-sentinel")]
     painter(p).rrect(r, rad, rad, theme::CARD_PLACEHOLDER);
 }

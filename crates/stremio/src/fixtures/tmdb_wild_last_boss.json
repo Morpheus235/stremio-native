@@ -1,0 +1,58 @@
+{
+ "meta": {
+  "id": "tmdb:280042",
+  "type": "series",
+  "name": "A Wild Last Boss Appeared!",
+  "imdb_id": "tt33258199",
+  "videos": [
+   {
+    "id": "tt33258199:1:1",
+    "name": "A Wild Last Boss Appears!",
+    "season": 1,
+    "number": 1,
+    "episode": 1,
+    "released": "2025-10-04T00:00:00.001Z"
+   },
+   {
+    "id": "tt33258199:1:12",
+    "name": "There Was Something Incredible in My Homeland!",
+    "season": 1,
+    "number": 12,
+    "episode": 12,
+    "released": "2025-12-20T00:00:00.001Z"
+   },
+   {
+    "id": "tt33258199:1:13",
+    "name": "Mobile Capital Blutgang Has Appeared!",
+    "season": 1,
+    "number": 13,
+    "episode": 13,
+    "released": "2026-10-03T00:00:00.001Z"
+   },
+   {
+    "id": "tt33258199:1:15",
+    "name": "A Flying, Handsome Man Appeared!",
+    "season": 1,
+    "number": 15,
+    "episode": 15,
+    "released": "2026-10-17T00:00:00.001Z"
+   },
+   {
+    "id": "tt33258199:1:16",
+    "name": "Episode 16",
+    "season": 1,
+    "number": 16,
+    "episode": 16,
+    "released": "2026-10-24T00:00:00.001Z"
+   },
+   {
+    "id": "tt33258199:1:24",
+    "name": "Episode 24",
+    "season": 1,
+    "number": 24,
+    "episode": 24,
+    "released": "2026-12-19T00:00:00.001Z"
+   }
+  ]
+ }
+}

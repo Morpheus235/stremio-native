@@ -8,9 +8,9 @@
 //! `tools/design-tokens.py diff <tokens.json>` reports any token that has drifted from this file, so a palette
 //! decision is one edit here and one re-sync there.
 //!
-//! Two roles may resolve to the SAME primitive and still stay two roles — [`ACCENT`] and
+//! Two roles may resolve to the SAME primitive and still stay two roles — [`TILE_MARK_INK`] and
 //! [`TEXT_PRIMARY`] are both `COOL_0`, [`TEXT_TERTIARY`] and [`RATING_MUTED`] both `COOL_400` —
-//! because sharing a value is not sharing a job: retuning the focus fill must not restyle every
+//! because sharing a value is not sharing a job: retuning the watched tick must not restyle every
 //! title on the screen. They are values on one stop for that reason, not `pub use` aliases of each
 //! other.
 //!
@@ -42,14 +42,18 @@ const COOL_150: [f32; 4] = rgb8(0xdb, 0xe0, 0xeb);
 const COOL_200: [f32; 4] = rgb8(0xcd, 0xd3, 0xdd);
 const COOL_300: [f32; 4] = rgb8(0xb8, 0xbf, 0xcc);
 const COOL_400: [f32; 4] = rgb8(0x94, 0x99, 0xa3);
+const COOL_700: [f32; 4] = rgb8(0x2e, 0x32, 0x3d);
 const COOL_850: [f32; 4] = rgb8(0x1f, 0x21, 0x29);
 const COOL_900: [f32; 4] = rgb8(0x14, 0x17, 0x1c);
 
-// Neutral — achromatic: the shelf, panels, control plates, inks.
-const NEUTRAL_650: [f32; 4] = rgb8(0x22, 0x22, 0x24);
-const NEUTRAL_750: [f32; 4] = rgb8(0x1b, 0x1b, 0x1d);
+// Neutral — the shelf, panels, control plates, inks. The two panel stops carry Stremio's own
+// purple-navy surfaces (stremio-web `src/App/styles.less`): `NEUTRAL_650` is
+// `--modal-background-color: rgba(15, 13, 32, 1)` and `NEUTRAL_750` is
+// `--primary-background-color: rgba(12, 11, 17, 1)`, both darker than the ground (`NEUTRAL_500`,
+// `--secondary-background-color`), as the old greys were. Names kept: a stop's job did not move.
+const NEUTRAL_650: [f32; 4] = rgb8(0x0f, 0x0d, 0x20);
+const NEUTRAL_750: [f32; 4] = rgb8(0x0c, 0x0b, 0x11);
 const NEUTRAL_850: [f32; 4] = rgb8(0x14, 0x14, 0x16);
-const NEUTRAL_950: [f32; 4] = rgb8(0x08, 0x08, 0x0a);
 const WHITE: [f32; 4] = rgb8(0xff, 0xff, 0xff);
 const BLACK: [f32; 4] = rgb8(0x00, 0x00, 0x00);
 
@@ -69,10 +73,18 @@ const CAPTION_28: [f32; 4] = rgb8(0x47, 0x47, 0x47);
 // Sand — one warm off-white, and it has exactly one job: the ambient wash's resting cast.
 const SAND_100: [f32; 4] = rgb8(0xe9, 0xe6, 0xe0);
 
-// Atmosphere — deliberately dark, warm light for a pre-content route. These are not state colours
+// Violet — Stremio's one accent, stremio-web `src/App/styles.less`
+// `--primary-accent-color: rgb(123, 91, 245)`. The focus fill and nothing decorative.
+const VIOLET_500: [f32; 4] = rgb8(0x7b, 0x5b, 0xf5);
+/// One step deeper than the brand violet: the list focus pill's fill (white clears 5.3:1 on it).
+const VIOLET_550: [f32; 4] = rgb8(0x6e, 0x4e, 0xe8);
+
+// Atmosphere — deliberately dark light for a pre-content route. These are not state colours
 // and never ink a control; together they stand in for an artwork UltraBlur envelope before the
-// catalog has supplied one. The range stays on StremioNative's graphite/amber axis so first-run does
-// not invent a rainbow identity before any actual artwork exists.
+// catalog has supplied one. The range stays on ONE axis so first-run does not invent a rainbow
+// identity before any actual artwork exists: Stremio's own `41deg` page gradient (`--primary-background-color` #0c0b11 bottom-left →
+// `--secondary-background-color` #1a173e top-right, stremio-web `src/App/styles.less`), each end
+// pushed a step past the flat ground so the corners still clear the tests below.
 //
 // **Corrected 2026-09-02.** The first cut of these four stops sat within ~15 8-bit codes of
 // `SURFACE_APP` (0x2c,0x2c,0x2e) in BOTH hue and luminance — three of the four were, to the eye,
@@ -89,10 +101,10 @@ const SAND_100: [f32; 4] = rgb8(0xe9, 0xe6, 0xe0);
 // an authored key light would use — bright near one corner, dark at its opposite — while every
 // corner still clears 3:1 against `TEXT_TERTIARY` and 7:1 against `TEXT_PRIMARY`, the same floors
 // `AmbientWash::keyed` holds a real hero to.
-const ATMOS_CHARCOAL: [f32; 4] = rgb8(0x18, 0x18, 0x1a);
-const ATMOS_WARM_GREY: [f32; 4] = rgb8(0x4a, 0x46, 0x40);
-const ATMOS_UMBER: [f32; 4] = rgb8(0x5e, 0x3e, 0x24);
-const ATMOS_ASH: [f32; 4] = rgb8(0x42, 0x42, 0x4a);
+const ATMOS_NIGHT: [f32; 4] = rgb8(0x0c, 0x0b, 0x11);
+const ATMOS_DUSK: [f32; 4] = rgb8(0x26, 0x20, 0x5e);
+const ATMOS_VIOLET: [f32; 4] = rgb8(0x2e, 0x28, 0x73);
+const ATMOS_INDIGO: [f32; 4] = rgb8(0x0f, 0x0d, 0x20);
 
 // Semantic — amber / red / green: state and verdict, never decoration.
 const AMBER_300: [f32; 4] = rgb8(0xfa, 0xb8, 0x2e);
@@ -177,6 +189,21 @@ pub mod space {
     pub const XL: f32 = 64.0;
 }
 
+/// **Corner radii by role** — one value per kind of surface, so two panels of one family never
+/// round differently (four screens each carried their own `PANEL_RAD = 20`).
+pub mod radius {
+    /// A poster or still card's resting corner.
+    pub const CARD: f32 = super::CARD_RING_RAD;
+    /// A list's focus pill (`TableView`'s sliding pill, a list row's face).
+    pub const PILL: f32 = 18.0;
+    /// A popover panel: the item menu, the player's menus and panels.
+    pub const PANEL: f32 = 20.0;
+    /// A decision alert's card ([`super::ALERT_PANEL_RAD`]).
+    pub const ALERT: f32 = super::ALERT_PANEL_RAD;
+    /// A small chip or badge.
+    pub const CHIP: f32 = 8.0;
+}
+
 /// **Panel geometry tokens** — widths a whole class of popover shares, so no panel carries a width
 /// literal of its own.
 pub mod layout {
@@ -187,6 +214,18 @@ pub mod layout {
     pub const PLAYER_MENU_MIN_W: f32 = 440.0;
     /// Bottom edge of an in-player popover: ~28px above the transport buttons, at 1080p.
     pub const PLAYER_MENU_BOTTOM: f32 = crate::consts::SCR_H - 316.0;
+    /// The player's subtitle menu, two columns in one panel: the groups (Off, Embedded, the
+    /// languages, the delay) on the left at this width…
+    pub const SUBTITLE_MENU_GROUPS_W: f32 = 440.0;
+    /// …and the chosen group's subtitles (an addon's name over its release, its marks) on the
+    /// right at this one. Fixed, so the panel does not resize as the left column walks.
+    pub const SUBTITLE_MENU_VARIANTS_W: f32 = 620.0;
+    /// The player's Episodes panel: the season dropdown over the episode rows (a still, the
+    /// title, the address and date, the overview), right-aligned above the control row.
+    pub const PLAYER_EPISODES_W: f32 = 1040.0;
+    /// The player's show info panel: the art column beside the show's text, the technical line
+    /// under both.
+    pub const PLAYER_INFO_W: f32 = 1100.0;
 }
 
 /// The **logo presence ladder** — how big a clearLogo is DRAWN. The third size axis of the design
@@ -242,9 +281,13 @@ pub mod logo {
 }
 
 // ── Accent / control ─────────────────────────────────────────────────────────
-/// **The focus fill — and the only fill a control can light up with.** `COOL_0`: the same near-white
-/// [`TEXT_PRIMARY`] is, and the same the tab bar inks a selected label in, because a control lights
-/// up for exactly one reason — the remote is on it. Nothing is filled by RANK, so there is no
+/// **The focus fill — and the only fill a control can light up with.** Stremio's violet
+/// (`VIOLET_500`, stremio-web `--primary-accent-color: rgb(123, 91, 245)`): what Stremio lights a
+/// selected nav tab, a toggle or a primary action with, and the one hue the app's identity rests
+/// on. It was `COOL_0`, the near-white [`TEXT_PRIMARY`] is, until the Stremio palette sync; a
+/// focused poster still lights WHITE (the tile's lit-glass edge, `gfx::tokens::CARD_GLOW_*`), which
+/// is Stremio's own poster focus (`MetaItem` `box-shadow: 0 0 0 .2rem` primary foreground). A
+/// control lights up for exactly one reason — the remote is on it. Nothing is filled by RANK, so there is no
 /// always-filled primary CTA: the hero Play pill sits idle like everything else until focus reaches
 /// it.
 ///
@@ -254,23 +297,39 @@ pub mod logo {
 /// pair collapsed onto this one. Both survivors of that collapse are elsewhere and neither is a
 /// control: the warm off-white is [`WASH_WARM`], a page ground; the cool plate is
 /// [`SURFACE_QR_PLATE`], a scan surface.
-pub const ACCENT: [f32; 4] = COOL_0;
-/// Near-black ink/glyphs drawn over [`ACCENT`].
-pub const ACCENT_INK: [f32; 4] = NEUTRAL_950;
+pub const ACCENT: [f32; 4] = VIOLET_500;
+/// Ink/glyphs drawn over [`ACCENT`] — pure `WHITE`, the one ink that clears 4.5:1 on Stremio's
+/// violet (4.51:1; even `TEXT_PRIMARY`'s `#f7fafc` lands at 4.30). Pinned by
+/// `widgets_control_face_tests::focus_ink_clears_4_5_on_every_focus_fill`. It was the near-black `NEUTRAL_950` over
+/// the old near-white fill.
+pub const ACCENT_INK: [f32; 4] = WHITE;
+/// **The account avatar's face** (the top bar's account pill): one of these, picked by a stable
+/// hash of the account id, so one account always wears the same colour and two accounts on one
+/// television usually differ. All on the accent's one hue — the violet and three darker steps
+/// toward the atmosphere's night — so the initial inks in [`ACCENT_INK`] on every one of them.
+pub const AVATAR_FILLS: [[f32; 4]; 4] =
+    [VIOLET_500, mix(VIOLET_500, ATMOS_VIOLET, 0.5), ATMOS_VIOLET, ATMOS_DUSK];
 /// Alias for [`ACCENT_INK`] read from the "ink over accent" intent. The one legitimate alias in this
 /// file: it is the same ROLE under a second name, not a second role that happens to share a stop.
 pub const INK_ON_ACCENT: [f32; 4] = ACCENT_INK;
-/// Fixed OKLCH lightness of a keyed focused control's lit top. The rendered ground contributes hue
-/// and a measured fraction of chroma only; it may never make the focus face darker.
-pub const CONTROL_FOCUS_FACE_L: f32 = 0.972;
-/// Fraction of the ambient key's OKLCH chroma carried by a focused face. Above roughly .45 the
-/// control reads as a coloured button instead of white material catching the page's light.
-pub const CONTROL_FOCUS_AMBIENT_C: f32 = 0.36;
-/// Pure OKLCH-lightness step from the focused face's lit top to its body. Both stops keep the same
-/// hue and chroma, so the gradient reads as glare rather than grey laid over the tint.
+/// **A list's focus pill** (`TableView`'s sliding pill, a list row's focused face): the accent a
+/// step deeper, so a row's white title clears 5:1 and its secondary ink 3:1 on it (on the brand
+/// violet itself white sits at 4.51 and the old dark sub-ink well under 3). Still Stremio's purple.
+pub const FOCUS_FILL: [f32; 4] = VIOLET_550;
+/// The SECONDARY ink over the accent (a focused row's source column, sub-line): white at the
+/// weight that clears 3:1 on [`FOCUS_FILL`].
+pub const INK_ON_ACCENT_SECONDARY: [f32; 4] = with_a(WHITE, 0.78);
+// (`CONTROL_FOCUS_FACE_L` .972 / `CONTROL_FOCUS_AMBIENT_C` .36 stood here: a keyed focused face
+// was near-white material carrying the page's hue. Since the Stremio palette sync focus is the
+// fixed [`ACCENT`] violet on every ground, so the page's key reaches only the IDLE face.)
+/// Pure OKLCH-lightness step from the focused face's lit top ([`ACCENT`]) to its body. Both stops
+/// keep the same hue and chroma, so the gradient reads as glare rather than grey laid over the
+/// tint — and the darker body only raises [`ACCENT_INK`]'s contrast.
 pub const CONTROL_FOCUS_BODY_STEP: f32 = 0.06;
-/// Fixed OKLCH lightness of an idle control face on a keyed page.
-pub const CONTROL_IDLE_FACE_L: f32 = 0.215;
+/// Fixed OKLCH lightness of an idle control face on a keyed page. .155 is Stremio's
+/// `--primary-background-color` (#0c0b11, L .154): one step under the purple-navy ground (L .233),
+/// the same relationship the old .215 plate had to the old grey ground (L .294).
+pub const CONTROL_IDLE_FACE_L: f32 = 0.155;
 /// Fraction of the ambient key's OKLCH chroma carried by an idle keyed face.
 pub const CONTROL_IDLE_AMBIENT_C: f32 = 0.45;
 /// Opacity of an idle keyed face. Named separately because its RGB is derived from the local key.
@@ -284,7 +343,7 @@ pub const CONTROL_SPENT_FOCUS_W: f32 = 0.76;
 /// focus state changing. Deliberately close enough to `ACCENT` that [`ACCENT_INK`] stays legible on
 /// BOTH sides — the first version flipped the ink at the sweep line and cut the label in half
 /// mid-word.
-pub const CONTROL_SPENT_FILL: [f32; 4] = mix(COOL_0, NEUTRAL_500, 1.0 - CONTROL_SPENT_FOCUS_W);
+pub const CONTROL_SPENT_FILL: [f32; 4] = mix(VIOLET_500, NEUTRAL_500, 1.0 - CONTROL_SPENT_FOCUS_W);
 
 /// The Search query field's **editing** ink — the bright endpoint of the `hot` cross-fade in
 /// `search::field::draw` (idle end: `TEXT_SECONDARY`) while the television's keyboard is up. Its own
@@ -309,6 +368,32 @@ pub const FIELD_EDITING_INK: [f32; 4] = TEXT_PRIMARY;
 /// `ink_target` is the one place that picks between this and [`FIELD_EDITING_INK`], on `editing`
 /// alone — never a second spring.
 pub const FIELD_WAITING_INK: [f32; 4] = WHITE;
+
+// **The Search field as a FIELD (owner feedback, 2026-10-17)**: "Search Input is badly visible
+// during highlight and might be easily missed". The ink rules above stay for the ink; the field now
+// also has a ground at rest and an accent rim + glow on focus. The ground is a WHITE FILM over the
+// page (never a white plate: the 2026-09-04 verdict stands), so the typed ink keeps its contrast on
+// the dark page and over art alike.
+/// The Search field's resting ground: a faint white film, so the box reads as an input before focus.
+pub const SEARCH_FIELD_FILL: [f32; 4] = with_a(WHITE, 0.08);
+/// The Search field's ground while focused: one film step brighter than at rest.
+pub const SEARCH_FIELD_FILL_FOCUS: [f32; 4] = with_a(WHITE, 0.13);
+/// The Search field's resting outline.
+pub const SEARCH_FIELD_RIM: [f32; 4] = with_a(WHITE, 0.26);
+/// The Search field's focused outline: the accent, the app's one "the remote is here" colour.
+pub const SEARCH_FIELD_RIM_FOCUS: [f32; 4] = ACCENT;
+/// The halo the focused Search field casts (the accent, translucent).
+pub const SEARCH_FIELD_GLOW: [f32; 4] = with_a(ACCENT, 0.55);
+/// The Search field's placeholder ink: a step brighter than tertiary fine print, so the empty field
+/// still says what it is for from the couch.
+pub const SEARCH_PLACEHOLDER_INK: [f32; 4] = TEXT_SECONDARY;
+
+/// **The Detail page's stream panel** (stremio-web's `MetaDetails` streams column): the right-hand
+/// column of a Detail page stands on this dark ground, full height, so the stream list reads as a
+/// panel of its own over the full-bleed backdrop.
+pub const DETAIL_STREAM_PANEL: [f32; 4] = with_a(NEUTRAL_750, 0.86);
+/// The stream panel's top-left corner radius.
+pub const DETAIL_STREAM_PANEL_RAD: f32 = 32.0;
 
 /// Idle (unfocused) control disc/pill fill — solid dark, faintly translucent.
 pub const CONTROL_IDLE_FILL: [f32; 4] = with_a(NEUTRAL_650, 0.92);
@@ -390,9 +475,10 @@ pub const CONTROL_RIM_FOCUS_UNKEYED_GLOW: [f32; 4] = [5.0, 1.0, 2.5, 0.55];
 pub const CONTROL_CAST_FOCUS: [(f32, f32, f32); 2] = [(5.0, 32.0, 0.34), (1.0, 6.0, 0.20)];
 
 // ── Surfaces / backgrounds ───────────────────────────────────────────────────
-/// Flat shelf/app base (both gradient stops) — Apple TV's shelf gray **#2C2C2E (44,44,46)**. A
-/// MEDIUM gray, deliberately not near-black: the focused-card drop-shadow only reads against a base
-/// this light (on the old near-black 25,25,29 a black shadow had almost nothing to darken).
+/// Flat shelf/app base (both gradient stops) — Stremio's purple-navy **#1A173E (26,23,62)**,
+/// stremio-web's `--secondary-background-color`. The LIGHTER end of Stremio's page gradient, not its
+/// near-black #0c0b11 end, so the focused-card drop-shadow still has a ground to darken. (Was Apple
+/// TV's shelf gray #2c2c2e until the Stremio palette sync.)
 pub const SURFACE_APP: [f32; 4] = NEUTRAL_500;
 /// Opaque sheet drawn over the hardware video plane when a detail page scrolls the hero away.
 /// Same stop as [`SURFACE_APP`] so the rising page and the cover are one surface. Different role:
@@ -403,6 +489,11 @@ pub const PLANE_COVER: [f32; 4] = SURFACE_APP;
 pub use sn_gfx::gfx::tokens::CLEAR_RGB;
 /// Opaque menu panel / fade mask / badge knockout interior.
 pub const SURFACE_PANEL: [f32; 4] = NEUTRAL_650;
+/// A grouped table's section card (`TableView::grouped`): Settings' regions and the Detail page's
+/// stream and episode lists, which sit on a full-bleed backdrop and must read over bright art.
+/// [`SURFACE_PANEL`]'s stop, near-opaque, so a chip's [`SURFACE_PANEL`] knockout is one material
+/// with the card under it.
+pub const SURFACE_GROUP: [f32; 4] = with_a(NEUTRAL_650, 0.94);
 /// Near-opaque sheet/card gradient — top stop. [`SURFACE_PANEL`]'s own stop at .985, so the sheet
 /// and its opaque twin are one material rather than two greys a hair apart.
 pub const PANEL_TOP: [f32; 4] = with_a(NEUTRAL_650, 0.985);
@@ -625,6 +716,11 @@ pub const SKELETON_TOP: [f32; 4] = PLACEHOLDER_SENTINEL;
 pub const SKELETON_BOT: [f32; 4] = COOL_900;
 #[cfg(feature = "placeholder-sentinel")]
 pub const SKELETON_BOT: [f32; 4] = PLACEHOLDER_SENTINEL;
+/// The loading **shimmer's crest** (`placeholder::shimmer`): the shade a skeleton or a loading
+/// ground lifts toward as the sweep passes over it. One cool stop above the skeleton's own, so the
+/// light that passes reads as sheen on the same material, not as a flash. (The sentinel build paints
+/// no shimmer at all.)
+pub const SKELETON_CREST: [f32; 4] = COOL_700;
 
 // ── Scrims (near-black; alpha supplied per call) ─────────────────────────────
 // Hero/scroll scrim ink; use via [`scrim`]. Defined in `gfx::tokens` (the renderer paints with it).
@@ -649,6 +745,12 @@ pub const SCRIM_BLACK_INK: [f32; 3] = [BLACK[0], BLACK[1], BLACK[2]];
 /// the decision. **This is the one knob** if the treatment reads heavy — 0.60 still clears 3:1
 /// everywhere.
 pub const SCRIM_TEXT_A: f32 = 0.72;
+
+/// The **page-wide veil** over a full-bleed backdrop that a whole route's text sits on (the
+/// detail page: its narrative column AND its episode/stream list). Uniform rather than a corner
+/// wedge because the list covers the right half of the frame; [`SCRIM_TEXT_A`]'s own note says
+/// 0.60 still clears 3:1 everywhere, and the hero wedge adds its weight under the left column.
+pub const BACKDROP_VEIL_A: f32 = 0.60;
 
 /// **White overlay at alpha `a`** — the ramp every overlay on this palette rides.
 ///
@@ -773,6 +875,15 @@ pub const RAIL_TRACK: [f32; 4] = with_a(WHITE, 0.20);
 pub const RAIL_BUFFERED: [f32; 4] = with_a(WHITE, 0.28);
 /// Played/filled portion of a rail.
 pub const RAIL_FILL: [f32; 4] = with_a(WHITE, 0.95);
+/// **The player scrubber** (`widgets::Scrubber`): the played part in the brand accent, a soft
+/// accent glow under it, the playhead knob, its shadow, the time bubble's ground, and the cut a
+/// chapter boundary makes in the rail (the rail's own ground showing through, never a mark).
+pub const SCRUB_PLAYED: [f32; 4] = ACCENT;
+pub const SCRUB_GLOW: [f32; 4] = with_a(ACCENT, 0.55);
+pub const SCRUB_KNOB: [f32; 4] = WHITE;
+pub const SCRUB_KNOB_SHADOW: [f32; 4] = with_a(BLACK, 0.45);
+pub const SCRUB_BUBBLE: [f32; 4] = with_a(BLACK, 0.78);
+pub const SCRUB_CHAPTER_CUT: [f32; 4] = with_a(BLACK, 0.55);
 /// An intro/credits SEGMENT on the player scrubber — a band lit a step above the track, drawn
 /// between the track and the fill so the played part of a segment reads as played. Stays inside the
 /// rail's monochrome language on purpose: a hue here would compete with the amber resume fill for
@@ -787,12 +898,12 @@ pub const RAIL_FILL: [f32; 4] = with_a(WHITE, 0.95);
 /// so retuning a focus colour can never silently restyle a page background.
 pub const WASH_WARM: [f32; 4] = SAND_100;
 /// Frozen ambient envelope for a route that intentionally appears before Home has fetched any
-/// artwork (Shared Sources).  It is a DESIGN-SYSTEM fallback, not a screen colour: the graphite
-/// and amber stops create the low-frequency wallpaper light of an UltraBlur envelope without
+/// artwork (Shared Sources).  It is a DESIGN-SYSTEM fallback, not a screen colour: the night-to-
+/// violet stops (Stremio's page gradient, corners top-left, top-right, bottom-right, bottom-left) create the low-frequency wallpaper light of an UltraBlur envelope without
 /// pretending there is a poster behind a pre-Home screen.  Once real artwork exists,
 /// [`crate::route_screen::RouteGround`] uses that instead.
 pub const ROUTE_GROUND_FALLBACK: [[f32; 4]; 4] =
-    [ATMOS_WARM_GREY, ATMOS_CHARCOAL, ATMOS_UMBER, ATMOS_ASH];
+    [ATMOS_DUSK, ATMOS_VIOLET, ATMOS_INDIGO, ATMOS_NIGHT];
 /// Warm amber Continue-Watching progress fill (Plex-specific; no player equivalent). `#fab82e`.
 pub const RESUME_FILL: [f32; 4] = with_a(AMBER_300, 0.95);
 /// Plex's own "Plex Pass" gold, `#e5a00d` — a BRAND REFERENCE, not a palette member
@@ -826,16 +937,15 @@ pub const INK_ON_RESUME: [f32; 4] = NEUTRAL_850;
 
 // ── A list row's trailing VALUE read-out ─────────────────────────────────────
 /// The word at a row's trailing edge that says what it is SET to (`On`/`Off`, "English"), over the
-/// FOCUSED row's near-white pill. One step behind the label so the label is what you read and the
-/// value is what you check — and an ALPHA of the pill's own ink rather than a grey, because a grey
-/// over near-white goes muddy where black at a weight stays clean. Unfocused rows use
+/// FOCUSED row's [`ACCENT`] pill. It was black at .60 over the old near-white pill, one step behind
+/// the label; over Stremio's violet nothing below pure white clears 4.5:1, so the value now takes
+/// the label's own [`ACCENT_INK`] and the hierarchy is carried by position and size alone. Unfocused rows use
 /// [`TEXT_SECONDARY`] (and [`TEXT_TERTIARY`] when quietened), which need no token of their own,
 /// and [`ROW_VALUE_INK_DIM`] on a dim row.
-pub const ROW_VALUE_INK_ON: [f32; 4] = with_a(BLACK, 0.60);
-/// The same read-out a further step back — see [`ROW_VALUE_INK_ON`]. Derived from [`ACCENT_INK`]
-/// rather than black: at .38 the ink is thin enough that its HUE starts to show, and the pill's own
-/// near-black is the one this must not look tinted against.
-pub const ROW_VALUE_INK_ON_DIM: [f32; 4] = with_a(ACCENT_INK, 0.38);
+pub const ROW_VALUE_INK_ON: [f32; 4] = ACCENT_INK;
+/// The same read-out on a focused DIM row (an unavailable step) — [`ACCENT_INK`] quietened, as the
+/// row itself is: a disabled value is exempt from the 4.5:1 floor and must read as unavailable.
+pub const ROW_VALUE_INK_ON_DIM: [f32; 4] = with_a(ACCENT_INK, 0.62);
 /// An unfocused **dim** row's read-out (`table::Row::dim` — an unavailable step, a limit reached).
 /// The dim row's label is already [`TEXT_TERTIARY`], and the value keeps its one step behind the
 /// label; a read-out at the live row's ink made the row look half-available. That same ink
@@ -894,13 +1004,17 @@ pub const CONTROL_DANGER_IDLE_INK: [f32; 4] = DANGER;
 /// so motion is visible instead of red/green frames blending into yellow at panel refresh rate.
 pub const DIAG_FLIP_A: [f32; 4] = GREEN_400;
 pub const DIAG_FLIP_B: [f32; 4] = RED_400;
-/// Stats-for-Nerds delivery budget that covers the current media demand. This is not a generic
-/// success colour: the diagnostic plot uses it only for the literal `budget >= demand` state.
-pub const DIAG_LINK_SUSTAINS: [f32; 4] = GREEN_400;
-/// The same plot when its conservative delivery budget is below current media demand.
-pub const DIAG_LINK_DEFICIT: [f32; 4] = RED_400;
-/// Bytes delivered during one diagnostics sampling cell. Kept independent of the budget colour:
-/// activity can be high while the probabilistic budget still does not cover demand.
+/// Stats-for-Nerds buffer lane: a reserve at or above the low-water mark. Not a generic success
+/// colour; the plot uses it only for "enough is buffered ahead".
+pub const DIAG_BUFFER_OK: [f32; 4] = GREEN_400;
+/// The same lane below the low-water mark (or empty). The value beside it also says `LOW`/`EMPTY`
+/// in words, because a phone camera chroma-subsamples the hue away.
+pub const DIAG_BUFFER_LOW: [f32; 4] = RED_400;
+/// The low-water band painted under the buffer lane's bars: where a bar dipping in means trouble.
+pub const DIAG_BUFFER_LOW_BAND: [f32; 4] = with_a(RED_400, 0.22);
+/// The queue-fill lanes: quiet, because they explain the buffer lane rather than headline it.
+pub const DIAG_QUEUE_FILL: [f32; 4] = COOL_400;
+/// Bytes delivered during one diagnostics sampling cell.
 pub const DIAG_NETWORK_ACTIVITY: [f32; 4] = COOL_150;
 /// Arithmetic mean across the diagnostics plot's visible network-activity window. Amber separates
 /// the statistic from the cool instantaneous bars; the adjacent `mean` label prevents it being
@@ -1149,8 +1263,16 @@ pub const TAB_PLATE_SELECTED: [f32; 4] = with_a(WHITE, 0.20);
 /// the plate is painted under or over the capsule.
 ///
 /// The top tab row needs no such value: its pills sit bare inside the tab-bar track (which already
-/// is their ground) and its selection capsule uses [`OVERLAY_FOCUS_PILL`] unchanged.
+/// is their ground) and its selection capsule is [`TAB_CURRENT`] / [`TAB_CURRENT_UNDER_FOCUS`].
 pub const TAB_PLATE_SELECTED_OVER: [f32; 4] = with_a(WHITE, 0.13);
+/// **The top bar's current-page plate while the bar does not hold focus**: the accent, so the page
+/// you are on reads purple from across the room (owner, 2026-10-17: "purple highlighted ideally on
+/// page change"). Its label inks in [`ACCENT_INK`], the one ink that clears 4.5:1 on it.
+pub const TAB_CURRENT: [f32; 4] = ACCENT;
+/// The same plate while focus is in the bar: the focus capsule is then the ONE purple thing on the
+/// row, and the current page steps back to the faint wash. `TabStrip::draw` blends the two by the
+/// focus capsule's alpha, so the hand-over animates.
+pub const TAB_CURRENT_UNDER_FOCUS: [f32; 4] = OVERLAY_FOCUS_PILL;
 /// An unselected plated segment — present, but only just: it says "this is a control" and nothing more.
 pub const TAB_PLATE_IDLE: [f32; 4] = with_a(WHITE, 0.08);
 /// Softer selection panel — the lightest weight on the overlay ramp, and deliberately NOT
@@ -1160,6 +1282,9 @@ pub const TAB_PLATE_IDLE: [f32; 4] = with_a(WHITE, 0.08);
 pub const OVERLAY_FOCUS_SOFT: [f32; 4] = with_a(WHITE, 0.07);
 /// Outlined-badge / meta-badge border.
 pub const OVERLAY_BORDER: [f32; 4] = with_a(WHITE, 0.55);
+/// A QUIET badge's border (`table::Chip::quiet`, a stream row's "Not cached" caveat): a step under
+/// [`OVERLAY_BORDER`], so the caveat reads as a note on the row rather than one of its features.
+pub const OVERLAY_BORDER_QUIET: [f32; 4] = with_a(WHITE, 0.28);
 /// The keyline PILL's stroke — a secondary action outlined over scrimmed video (the post-play
 /// card's "Watch credits"; `Plex Pass Awareness.dc.html` deliverable D: stroke 1.5, white .38).
 /// Deliberately a step quieter than [`OVERLAY_BORDER`]: that value is tuned for a 2px chip border
@@ -1214,7 +1339,8 @@ pub const RATING_MUTED: [f32; 4] = COOL_400;
 // is tunable). The hero-grid card's wide glow pad is `consts::GLOW_PAD` (shared with off-screen
 // culling, so it has one home there).
 /// Card corner radius (tiles/shelves — `CardRow`'s rounded rect + its baked focus glow follow it).
-pub const CARD_RING_RAD: f32 = 14.0;
+/// 12: Stremio's poster corner, stremio-web `--border-radius: 0.75rem` at the 16px root (was 14).
+pub const CARD_RING_RAD: f32 = 12.0;
 
 // ── Episode filmstrip focus treatment ───────────────────────────────────────────────────────────
 // The episode filmstrip's labels sit BELOW the tile, so a focus change has to read from the text as
@@ -1256,7 +1382,7 @@ pub const EP_META_INK: [f32; 4] = TEXT_TERTIARY;
 /// > leaves it. 32 stays inside that vocabulary while still reading as softer than a card, and
 /// > clears the 28px glass bevel so the chamfer runs inside the arc."
 ///
-/// The tile's 14 is [`CARD_RING_RAD`] and the row pill's 18 is `table::PILL_RAD`, so that sentence
+/// The tile's corner is [`CARD_RING_RAD`] (14 when the design was written, 12 since the Stremio sync) and the row pill's 18 is `table::PILL_RAD`, so that sentence
 /// is checkable against this tree rather than only against the mock. Two consequences are
 /// load-bearing rather than decorative. The **bevel clause**: below the 28px glass bevel the
 /// chamfer would run OUTSIDE the corner arc and the rim would break at each corner. And the

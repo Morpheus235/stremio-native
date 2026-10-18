@@ -550,3 +550,30 @@ fn gap_segments_are_not_fetched() {
     assert_eq!(read_all(&mut src).unwrap(), [ts(0), ts(2)].concat());
     assert_eq!(s.seen.count(&url("/seg1.ts")), 0);
 }
+
+/// The probe reads a stream's head, then hands its source and those bytes to the demuxer: probe
+/// bytes replayed plus the rest read from the same source must be the whole stream, with every
+/// segment fetched once (a live channel used to fetch its first segment twice, ~2.6 s).
+#[test]
+fn a_recorded_head_plus_the_rest_is_the_whole_stream_fetched_once() {
+    let s = Server::new();
+    s.put("/v.m3u8", vod_playlist(0, 3, ""));
+    for n in 0..3 {
+        s.put(&format!("/seg{n}.ts"), ts(n));
+    }
+    let mut src = s.open("/v.m3u8", None).unwrap();
+    src.record();
+    let mut head = vec![0u8; 2000]; // past the first segment's end
+    let mut got = 0;
+    while got < head.len() {
+        got += src.read(&mut head[got..]).unwrap();
+    }
+    let tape = src.take_tape().expect("recorded");
+    assert_eq!(tape, head);
+    let rest = read_all(&mut src).unwrap();
+    assert_eq!([tape, rest].concat(), [ts(0), ts(1), ts(2)].concat());
+    for n in 0..3 {
+        assert_eq!(s.seen.count(&url(&format!("/seg{n}.ts"))), 1);
+    }
+    assert_eq!(src.take_tape(), None, "recording stops at the take");
+}

@@ -26,8 +26,9 @@
 //! `(string bytes, size, bold)` — run splitting is a pure function of the string, so the key still
 //! determines the texture — and the `ink_t`/`ink_b` cap-band machinery still measures one texture.
 //!
-//! **The chain, in order:** Inter (`appfont.ttf`) → the **bundled** `appfont-cjk.ttf` → the
-//! television's own `/usr/share/fonts/DroidSansFallback.ttf`. The bundled face is the guarantee,
+//! **The chain, in order:** Inter (`appfont.ttf`) → the **bundled** `appfont-cjk.ttf` → the bundled
+//! monochrome emoji face `appfont-emoji.ttf` → the television's own
+//! `/usr/share/fonts/DroidSansFallback.ttf`. The bundled face is the guarantee,
 //! because a submission is graded on whatever firmware the reviewer happens to have; the system
 //! face behind it is free insurance, measured present on webOS 4.10.0 (2026-08-23: 11172/11172
 //! Hangul, 20902 Han, Kana, and — see below — no Hebrew and no Arabic).
@@ -59,6 +60,26 @@
 //! **every** size in the ladder, 22 through 40. A weight mismatch beside bold Latin is a
 //! typographic compromise; an illegible ideograph is a defect, so bold runs use the regular
 //! fallback face.
+//!
+//! **Emoji draw from a monochrome face, in the text colour.** Addon text is full of them (stream
+//! names "[🛰️] SKY 1", AIOStreams' "⚡ 📦 🎬", catalog titles, addon names). Every television ships
+//! SDL2_ttf 2.0.10 or 2.0.14 (webOS 6.4: 2.0.14 on FreeType 2.10), which renders outlines as 8-bit
+//! coverage and has no colour-glyph path at all, so the face is Noto Emoji Regular, cut to the
+//! pictographs (`tools/cut-noto-emoji.py`): no ASCII, no digit and nothing Inter has, and the link
+//! answers only for emoji parts ([`link_covers`]), so it never takes over text. It sits after the
+//! CJK face, so a symbol either text face draws (★, ♪) stays text.
+//!
+//! The face has no shaper, so everything an emoji font builds with GSUB is respelled before a
+//! string is split, measured or rendered ([`simplified_emoji`], `fontcov::simplify_emoji`): a
+//! flag becomes its region code ("🇩🇪" -> "DE", in the base face), a ZWJ sequence its first
+//! pictograph, a keycap its digit; VS15/VS16, skin tones and tags go, and an emoji no face has is
+//! dropped with the space around it rather than boxed. Measuring and drawing both start there, so
+//! widths, elision, the marquee and both caches agree.
+//!
+//! **Size and baseline.** Noto Emoji's ink is a full em (-0.17..0.85 em) against Inter's 0.73 em
+//! caps, so the face is opened at [`EMOJI_SCALE`] of the size and raised ([`run_raise`]) until its
+//! ink is centred on Inter's cap band: the ink then spans just under the baseline to just over the
+//! cap height, and its box stays inside the base face's at every size, so the line does not grow.
 //!
 //! **RTL is out of scope.** No link of the chain has Hebrew or Arabic, and that is deliberate
 //! twice over: coverage is not support. Arabic needs joining and contextual shaping, Hebrew needs
@@ -787,6 +808,10 @@ enum Link {
     /// codepoints: all of Hangul, Kana, Han and CJK punctuation. Shipped rather than borrowed
     /// because a submission is graded on whichever firmware the reviewer has.
     Cjk = 1,
+    /// The bundled monochrome emoji face `appfont-emoji.ttf` (Noto Emoji Regular, cut to 1380
+    /// pictographs by `tools/cut-noto-emoji.py`). Answers only for emoji parts (see
+    /// [`link_covers`]); opened at [`EMOJI_SCALE`] of the size and raised by [`run_raise`].
+    Emoji = 2,
     /// The television's own `DroidSansFallback.ttf`. Free insurance behind the bundled face —
     /// measured on webOS 4.10.0 as covering the same Hangul/Han/Kana ground — and it costs
     /// nothing when it is absent, as it is on the desktop simulator and the macOS app.
@@ -795,9 +820,9 @@ enum Link {
     /// grades symbols, not filesystems, so it has nothing to say about a font PATH on the other 13
     /// releases; we have no images for them. This is precisely why link 2 is bundled rather than
     /// borrowed — this link is a bonus that may or may not exist, and the code treats it as such.
-    Sys = 2,
+    Sys = 3,
 }
-const CHAIN: [Link; 3] = [Link::Base, Link::Cjk, Link::Sys];
+const CHAIN: [Link; 4] = [Link::Base, Link::Cjk, Link::Emoji, Link::Sys];
 
 /// The bundled fallback face, cut by `tools/cut-noto-cjk.py` and staged beside the binary.
 const CJK_FONT: &str = "appfont-cjk.ttf";
@@ -807,10 +832,43 @@ const DROIDSANS_FALLBACK: &str = "/usr/share/fonts/DroidSansFallback.ttf";
 
 static mut FONTS_CJK: [*mut TtfFont; FONT_SLOTS] = [std::ptr::null_mut(); FONT_SLOTS];
 static mut FONTS_SYS: [*mut TtfFont; FONT_SLOTS] = [std::ptr::null_mut(); FONT_SLOTS];
+static mut FONTS_EMOJI: [*mut TtfFont; FONT_SLOTS] = [std::ptr::null_mut(); FONT_SLOTS];
+
+/// The bundled emoji face (`tools/cut-noto-emoji.py`), staged beside the binary.
+const EMOJI_FONT: &str = "appfont-emoji.ttf";
+/// The emoji em against the base face's. 0.8 makes Noto Emoji's ink (1.016 em) 1.12x Inter's cap
+/// height, a little taller than the capitals beside it, as emoji read in running text.
+/// `tools/cut-noto-emoji.py` gives libass the same ratio through the face's win metrics.
+const EMOJI_SCALE: f32 = 0.8;
+/// Half of Inter's cap height (1490 of 2048 units) and the middle of Noto Emoji's ink (-340..1740
+/// of 2048 for nearly every glyph), in em: what [`run_raise`] aligns.
+const INTER_CAP_MID: f32 = 745.0 / 2048.0;
+const EMOJI_INK_MID: f32 = 700.0 / 2048.0;
+
+/// The point size `link`'s face opens at for a run of size `sz`.
+fn run_pt(link: Link, sz: c_int) -> c_int {
+    let sz = sz.clamp(8, FONT_SLOTS as c_int - 1);
+    if link == Link::Emoji {
+        ((sz as f32 * EMOJI_SCALE).round() as c_int).max(8)
+    } else {
+        sz
+    }
+}
+
+/// Rows a run of `link` is lifted above the shared baseline: the emoji face's ink is centred on
+/// the base face's cap band; every other face sits on the baseline. The compositor and the measure
+/// both apply it, so the drawn box and the measured one are the same.
+fn run_raise(link: Link, sz: c_int) -> c_int {
+    if link != Link::Emoji {
+        return 0;
+    }
+    let sz = sz.clamp(8, FONT_SLOTS as c_int - 1);
+    (sz as f32 * INTER_CAP_MID - run_pt(link, sz) as f32 * EMOJI_INK_MID).round() as c_int
+}
 /// Per-link coverage, read from the file's cmap on FIRST NEED and never again. `None` after
 /// `COV_TRIED` means the file is absent or unreadable, i.e. the link is empty.
-static mut COV: [Option<sn_base::fontcov::Coverage>; 3] = [None, None, None];
-static mut COV_TRIED: [bool; 3] = [false; 3];
+static mut COV: [Option<sn_base::fontcov::Coverage>; 4] = [None, None, None, None];
+static mut COV_TRIED: [bool; 4] = [false; 4];
 
 /// The ONE place a link's file is named — both the coverage read and the `TTF_OpenFont` go
 /// through it, so the two can never disagree about which file a link is.
@@ -821,6 +879,7 @@ fn link_file(link: Link) -> std::path::PathBuf {
         // `make check` — the gate is not decoration here, it is what makes one read enough.
         Link::Base => sn_base::paths::in_app_dir("appfont.ttf"),
         Link::Cjk => sn_base::paths::in_app_dir(CJK_FONT),
+        Link::Emoji => sn_base::paths::in_app_dir(EMOJI_FONT),
         Link::Sys => std::path::PathBuf::from(DROIDSANS_FALLBACK),
     }
 }
@@ -859,7 +918,8 @@ unsafe fn link_covers(link: Link, cp: u32) -> bool {
         }
     }
     match &(*addr_of!(COV))[i] {
-        Some(c) => c.contains(cp),
+        // The emoji link is for pictographs only, whatever a re-cut of its file maps.
+        Some(c) => c.contains(cp) && (link != Link::Emoji || sn_base::fontcov::is_emoji_part(cp)),
         None => link == Link::Base,
     }
 }
@@ -879,9 +939,11 @@ unsafe fn link_font(link: Link, sz: c_int, bold: c_int) -> *mut TtfFont {
     if link == Link::Base {
         return font_at(sz, bold);
     }
+    let pt = run_pt(link, sz);
     let sz = sz.clamp(8, FONT_SLOTS as c_int - 1) as usize;
     let arr = match link {
         Link::Cjk => &mut *addr_of_mut!(FONTS_CJK),
+        Link::Emoji => &mut *addr_of_mut!(FONTS_EMOJI),
         _ => &mut *addr_of_mut!(FONTS_SYS),
     };
     if arr[sz].is_null() {
@@ -889,7 +951,7 @@ unsafe fn link_font(link: Link, sz: c_int, bold: c_int) -> *mut TtfFont {
         let Ok(c) = CString::new(file.into_os_string().into_encoded_bytes()) else {
             return std::ptr::null_mut();
         };
-        arr[sz] = TTF_OpenFont(c.as_ptr(), sz as c_int);
+        arr[sz] = TTF_OpenFont(c.as_ptr(), pt);
         if !arr[sz].is_null() {
             // The same light-hinting contract the base face is opened under (see `font_at`).
             TTF_SetFontHinting(arr[sz], TTF_HINTING_LIGHT);
@@ -966,6 +1028,23 @@ fn split_runs_with(s: &str, covers: impl Fn(Link, u32) -> bool) -> Option<Runs> 
     Some(runs)
 }
 
+/// `s` with its emoji respelled for the chain (`fontcov::simplify_emoji`: flags to region codes,
+/// ZWJ sequences to their first pictograph, marks gone, emoji no link covers dropped), or `None`
+/// when it is drawn as spelled. The ONE place both [`text_tex_miss`] (drawing) and
+/// [`measure_native_bounds`] (measuring) take the string from, so a width and the texture drawn
+/// in it always describe the same characters — and so does every path built on them: `elide`,
+/// the fitted-line memo, the marquee, the table columns.
+unsafe fn simplified_emoji(s: &[u8]) -> Option<CString> {
+    simplified_emoji_with(s, |link, cp| link_covers(link, cp))
+}
+
+/// [`simplified_emoji`] with the coverage oracle passed in, as [`split_runs_with`] is.
+fn simplified_emoji_with(s: &[u8], covers: impl Fn(Link, u32) -> bool) -> Option<CString> {
+    let st = std::str::from_utf8(s).ok()?;
+    let clean = sn_base::fontcov::simplify_emoji(st, |cp| CHAIN.iter().any(|&l| covers(l, cp)))?;
+    CString::new(clean).ok()
+}
+
 /// vertical ink bounds of a packed RGBA buffer — the same scan [`surface_ink_v`] does, over a
 /// buffer we own rather than an SDL surface.
 fn buf_ink_v(px: &[u8], w: c_int, h: c_int) -> (c_int, c_int) {
@@ -1010,7 +1089,7 @@ unsafe fn render_runs(
         b: 255,
         a: 255,
     };
-    // (surface, x, ascent) per run. Surfaces are freed on every exit path below.
+    // (surface, x, ascent + raise) per run. Surfaces are freed on every exit path below.
     let mut parts: Vec<(*mut SdlSurface, c_int, c_int)> = Vec::with_capacity(runs.n);
     let free_all = |parts: &Vec<(*mut SdlSurface, c_int, c_int)>| {
         for &(s, _, _) in parts {
@@ -1032,7 +1111,8 @@ unsafe fn render_runs(
             free_all(&parts);
             return None;
         }
-        let asc = TTF_FontAscent(f);
+        // A raised run sits higher on the baseline: its ascent grows and its descent shrinks.
+        let asc = TTF_FontAscent(f) + if f == base { 0 } else { run_raise(link, sz) };
         below = below.max((*surf).h - asc);
         parts.push((surf, w, asc));
         w += (*surf).w;
@@ -1201,12 +1281,21 @@ unsafe fn text_tex(
 
 /// [`text_tex`]'s miss: render, upload and store one string.
 unsafe fn text_tex_miss(
-    s_bytes: &[u8],
+    key: &[u8],
     s_c: *const c_char,
     sz: c_int,
     bold: c_int,
     hash: u64,
 ) -> (c_uint, c_int, c_int, c_int, c_int) {
+    // Rendered with its emoji respelled for the chain; cached under the string as the caller spelled it.
+    let clean = simplified_emoji(key);
+    let (s_bytes, s_c) = match &clean {
+        Some(c) => (c.to_bytes(), c.as_ptr()),
+        None => (key, s_c),
+    };
+    if s_bytes.is_empty() {
+        return (0, 0, 0, 0, 0); // nothing drawable is left (a label that was only emoji)
+    }
     // A string the base face cannot draw on its own goes through the run compositor; everything
     // else — every ASCII string, and every string Inter fully covers — takes the single
     // `TTF_RenderUTF8_Blended` it always did, byte for byte. A compositor FAILURE also falls
@@ -1219,7 +1308,7 @@ unsafe fn text_tex_miss(
     if let Some((px, w, h)) = composed {
         let (ink_t, ink_b) = buf_ink_v(&px, w, h);
         let tex = crate::gfx::upload_rgba(0, w, h, px.as_ptr());
-        return cache_store(s_bytes, hash, sz, bold, tex, w, h, ink_t, ink_b);
+        return cache_store(key, hash, sz, bold, tex, w, h, ink_t, ink_b);
     }
 
     let f = font_at(sz, bold);
@@ -1265,7 +1354,7 @@ unsafe fn text_tex_miss(
         crate::gfx::upload_rgba(0, sw, sh, packed.as_ptr())
     };
     SDL_FreeSurface(surf);
-    cache_store(s_bytes, hash, sz, bold, tex, sw, sh, ink_t, ink_b)
+    cache_store(key, hash, sz, bold, tex, sw, sh, ink_t, ink_b)
 }
 
 /// **Which slot a new entry takes**, and the whole of the eviction policy — pure, over the array,
@@ -1415,6 +1504,12 @@ pub fn text_bounds(s: *const c_char, sz: c_int, bold: c_int) -> (f32,f32) {
 /// The second result says every run was measured successfully, including mixed-script labels.
 fn measure_native_bounds(s: &CStr, sz: c_int, bold: c_int) -> ((f32, f32), bool) {
     unsafe {
+        // Measured exactly as `text_tex_miss` draws it: with its emoji respelled for the chain.
+        let clean = simplified_emoji(s.to_bytes());
+        let s = clean.as_deref().unwrap_or(s);
+        if s.is_empty() {
+            return ((0.0, 0.0), true);
+        }
         let bytes = s.to_bytes();
         if let Some((st, runs)) = std::str::from_utf8(bytes)
             .ok()
@@ -1426,8 +1521,10 @@ fn measure_native_bounds(s: &CStr, sz: c_int, bold: c_int) -> ((f32, f32), bool)
             let mut below=if base.is_null() {0} else {TTF_FontHeight(base)-ascent};
             let mut complete = !base.is_null();
             for &(link, from, to) in &runs.at[..runs.n] {
-                let f = link_font(link, sz, bold);
-                let f = if f.is_null() { font_at(sz, bold) } else { f };
+                let lf = link_font(link, sz, bold);
+                // the same raise `render_runs` applies, and none when the link's face fell back
+                let raise = if lf.is_null() { 0 } else { run_raise(link, sz) };
+                let f = if lf.is_null() { font_at(sz, bold) } else { lf };
                 let Ok(c) = CString::new(&st[from..to]) else {
                     complete = false;
                     continue;
@@ -1435,7 +1532,7 @@ fn measure_native_bounds(s: &CStr, sz: c_int, bold: c_int) -> ((f32, f32), bool)
                 let (mut w, mut h): (c_int, c_int) = (0, 0);
                 if !f.is_null() && TTF_SizeUTF8(f, c.as_ptr(), &mut w, &mut h) == 0 {
                     total += w as f32;
-                    below = below.max(h - TTF_FontAscent(f));
+                    below = below.max(h - TTF_FontAscent(f) - raise);
                 } else {
                     complete = false;
                 }
@@ -2105,19 +2202,23 @@ mod tests {
     /// The real shipped cmaps, parsed once for the whole test binary (see `fontcov::shipped`).
     /// `Link::Sys` is `None` on purpose: the television's DroidSansFallback does not exist on a
     /// build host, so this is also the "the chain is SHORT" configuration under test.
-    fn chain() -> [Option<&'static fontcov::Coverage>; 3] {
+    fn chain() -> [Option<&'static fontcov::Coverage>; 4] {
         [
             fontcov::shipped("appfont.ttf").as_ref().ok(),
             fontcov::shipped("appfont-cjk.ttf").as_ref().ok(),
+            fontcov::shipped("appfont-emoji.ttf").as_ref().ok(),
             None,
         ]
     }
 
+    /// `link_covers` over the shipped cmaps, the emoji link's pictographs-only rule included.
+    fn covers(link: Link, cp: u32) -> bool {
+        chain()[link as usize].is_some_and(|c| c.contains(cp))
+            && (link != Link::Emoji || fontcov::is_emoji_part(cp))
+    }
+
     fn split(s: &str) -> Option<Runs> {
-        let cov = chain();
-        split_runs_with(s, |link, cp| {
-            cov[link as usize].is_some_and(|c| c.contains(cp))
-        })
+        split_runs_with(s, covers)
     }
 
     /// Every run, as (face, the text it draws).
@@ -2215,6 +2316,117 @@ mod tests {
             runs_of("A한B"),
             vec![(Link::Base, "A"), (Link::Cjk, "한"), (Link::Base, "B")]
         );
+    }
+
+    /// What the chain draws for `s`: the string both `text_tex_miss` and `measure_native_bounds`
+    /// take (`simplified_emoji`), against the real shipped cmaps.
+    fn drawn(s: &str) -> String {
+        simplified_emoji_with(s.as_bytes(), covers).map_or_else(|| s.to_owned(), |c| c.into_string().unwrap())
+    }
+
+    /// Addon emoji are DRAWN, from the emoji face, and what a shaper would ligate is respelled; what
+    /// is left is drawable end to end by the chain (no tofu). One label per surface with addon text.
+    #[test]
+    fn addon_emoji_are_drawn_and_sequences_respelled_on_every_surface() {
+        let cases = [
+            // TvVoo: proxy vs direct, the only difference between two rows
+            ("[\u{1F6F0}\u{FE0F}] SKY 1", "[\u{1F6F0}] SKY 1"),
+            ("[\u{1F3E0}] SKY 1", "[\u{1F3E0}] SKY 1"),
+            // stream list: AIOStreams' name column and chips
+            ("[TB\u{26A1}] Comet 1080p", "[TB\u{26A1}] Comet 1080p"),
+            ("\u{1F3AC} Interstellar \u{1F4E6} 12.3 GB \u{23F3}\u{1F3A7}\u{1F50A} \u{1F30E}\u{1F4DD}\u{1F4C1}", "\u{1F3AC} Interstellar \u{1F4E6} 12.3 GB \u{23F3}\u{1F3A7}\u{1F50A} \u{1F30E}\u{1F4DD}\u{1F4C1}"),
+            ("\u{26A1}\u{FE0F} Cached", "\u{26A1} Cached"),
+            // player audio / subtitle menus: a flag is its region code
+            ("\u{1F1E9}\u{1F1EA} Deutsch", "DE Deutsch"),
+            ("English \u{1F1EC}\u{1F1E7} \u{1F50A} 5.1", "English GB \u{1F50A} 5.1"),
+            // ZWJ family: its first pictograph; a skin tone goes
+            ("Kids \u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467} Mix", "Kids \u{1F468} Mix"),
+            ("Wave \u{1F44B}\u{1F3FD}", "Wave \u{1F44B}"),
+            // keycap: the digit
+            ("Season 1\u{FE0F}\u{20E3}", "Season 1"),
+            ("\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F} Scotland", "\u{1F3F4} Scotland"),
+            ("Torrentio \u{1F9F2}", "Torrentio \u{1F9F2}"),
+            // a pictograph the face lacks is still dropped with its gap, never boxed
+            ("Best \u{1FAEE} of 2024", "Best of 2024"),
+        ];
+        let cov = chain();
+        for (label, want) in cases {
+            let got = drawn(label);
+            assert_eq!(got, want, "{label:?}");
+            let tofu: Vec<char> = got
+                .chars()
+                .filter(|&c| !cov.iter().flatten().any(|f| f.contains(c as u32)))
+                .collect();
+            assert!(tofu.is_empty(), "{label:?} still draws {tofu:?} as boxes");
+        }
+    }
+
+    /// The emoji face draws only pictographs; digits, '#', ASCII and the symbols the text faces
+    /// carry stay in Inter or the CJK face, so "[🛰️] SKY 1" is three runs and "1" is Inter's.
+    #[test]
+    fn the_emoji_link_draws_pictographs_and_never_text() {
+        assert_eq!(
+            runs_of(&drawn("[\u{1F6F0}\u{FE0F}] SKY 1")),
+            vec![(Link::Base, "["), (Link::Emoji, "\u{1F6F0}"), (Link::Base, "] SKY 1")]
+        );
+        assert_eq!(runs_of(&drawn("\u{1F1E9}\u{1F1EA} Deutsch")), vec![(Link::Base, "DE Deutsch")]);
+        assert_eq!(runs_of(&drawn("Season 1\u{FE0F}\u{20E3}")), vec![(Link::Base, "Season 1")]);
+        for cp in (0x20..=0x7Eu32).chain(0xA0..=0xFF) {
+            assert!(!covers(Link::Emoji, cp), "the emoji link answers for U+{cp:04X}");
+        }
+        // symbols a text face carries stay text: the emoji link is after both
+        for (ch, want) in [('\u{2605}', Link::Base), ('\u{266A}', Link::Base), ('\u{2764}', Link::Base), ('\u{260E}', Link::Cjk), ('\u{1F6F0}', Link::Emoji)] {
+            assert_eq!(CHAIN.into_iter().find(|&l| covers(l, ch as u32)), Some(want), "U+{:04X}", ch as u32);
+        }
+    }
+
+    /// Strings with nothing to respell are untouched, not copied; a non-emoji character no face has
+    /// keeps its honest box (Hebrew, see below).
+    #[test]
+    fn covered_symbols_stay_and_other_uncovered_text_keeps_its_box() {
+        for s in ["\u{266A} It seems today \u{266B}", "\u{2605} 8.1", "\u{00A9} 2024 \u{00AE}", "Amélie \u{00B7} Ирония", "東京物語", "\u{1F525} Hot"] {
+            assert!(simplified_emoji_with(s.as_bytes(), covers).is_none(), "{s:?} was respelled");
+        }
+        assert_eq!(drawn("\u{05D0}\u{05D1} \u{1F525}"), "\u{05D0}\u{05D1} \u{1F525}");
+    }
+
+    /// (ascent, descent) in pixels as SDL2_ttf 2.0.14 computes them for a scalable face at `pt`:
+    /// `FT_CEIL(FT_MulFix(hhea, y_scale))`, i.e. the ceiling of the scaled design value.
+    fn sdl_metrics(file: &str, pt: c_int) -> (c_int, c_int) {
+        let b = std::fs::read(std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../pkg")).join(file)).unwrap();
+        let be16 = |at: usize| u16::from_be_bytes([b[at], b[at + 1]]);
+        let table = |tag: &[u8; 4]| {
+            (0..be16(4) as usize)
+                .find(|i| &b[12 + 16 * i..16 + 16 * i] == tag)
+                .map(|i| u32::from_be_bytes(b[20 + 16 * i..24 + 16 * i].try_into().unwrap()) as usize)
+                .unwrap()
+        };
+        let (head, hhea) = (table(b"head"), table(b"hhea"));
+        let upem = be16(head + 18) as f32;
+        let (asc, desc) = (be16(hhea + 4) as i16 as f32, be16(hhea + 6) as i16 as f32);
+        ((asc * pt as f32 / upem).ceil() as c_int, (desc * pt as f32 / upem).ceil() as c_int)
+    }
+
+    /// An emoji run must not grow the line: at every theme size the raised emoji box sits inside
+    /// the base face's (its top below the base ascent, its bottom above the base descent), and its
+    /// ink straddles the cap band — bottom within a few px of the baseline, top within a few px of
+    /// the cap height. The compositor and the measure share `run_raise`, so this holds for both.
+    #[test]
+    fn an_emoji_run_sits_on_the_cap_band_and_never_grows_the_line() {
+        for &sz in WARM_SIZES.iter() {
+            let (b_asc, b_desc) = sdl_metrics("appfont.ttf", sz);
+            let pt = run_pt(Link::Emoji, sz);
+            let (e_asc, e_desc) = sdl_metrics(EMOJI_FONT, pt);
+            let raise = run_raise(Link::Emoji, sz);
+            assert!(e_asc + raise <= b_asc, "size {sz}: the emoji box rises {} px over the base ascent", e_asc + raise - b_asc);
+            assert!(-e_desc - raise <= -b_desc, "size {sz}: the emoji box grows the line by {} px", b_desc - e_desc - raise);
+            let cap = 1490.0 / 2048.0 * sz as f32;
+            let (ink_lo, ink_hi) = (-340.0 / 2048.0 * pt as f32 + raise as f32, 1740.0 / 2048.0 * pt as f32 + raise as f32);
+            // centred on the cap band to the pixel, overhanging it by under 6 % of the size each side
+            let over = 0.06 * sz as f32;
+            assert!(((ink_lo + ink_hi) / 2.0 - cap / 2.0).abs() <= 1.0, "size {sz}: emoji ink {ink_lo}..{ink_hi} is off centre on caps 0..{cap}");
+            assert!(ink_lo >= -over && ink_hi <= cap + over, "size {sz}: emoji ink {ink_lo}..{ink_hi} against caps 0..{cap}");
+        }
     }
 
     /// A codepoint no link covers stays on the base face and stays INSIDE the run structure, so it

@@ -58,13 +58,15 @@ fn a_ground_never_outshines_the_fine_print_that_sits_on_it() {
 }
 
 /// The other end: a ground keyed to near-black key art must not sink below the value a card's
-/// drop shadow needs to read against. `SURFACE_APP`'s own doc rejects the old near-black
-/// (25,25,29)/255 for exactly that reason; `GROUND_W ≤ 0.26` is what keeps the floor above it,
-/// with no floor constant anywhere.
+/// drop shadow needs to read against. Since the Stremio palette sync that floor is Stremio's own
+/// darkest ground, `--primary-background-color` #0c0b11 (stremio-web `src/App/styles.less`), the
+/// bottom of its page gradient: the grey era's rejected (25,25,29) is lighter than the whole
+/// purple-navy palette. `GROUND_W ≤ 0.26` is what keeps the floor above it, with no floor constant
+/// anywhere.
 #[test]
 fn a_ground_stays_light_enough_for_a_card_shadow() {
     let floor = AmbientWash::keyed([[0.0; 3]; 4], [AmbientWash::GROUND_W; 4]);
-    let rejected = [25.0 / 255.0, 25.0 / 255.0, 29.0 / 255.0, 1.0];
+    let rejected = [12.0 / 255.0, 11.0 / 255.0, 17.0 / 255.0, 1.0];
     for corner in floor {
         for ch in 0..3 {
             let want = theme::SURFACE_APP[ch] * (1.0 - AmbientWash::GROUND_W);

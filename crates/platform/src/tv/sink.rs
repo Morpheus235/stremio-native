@@ -102,7 +102,9 @@ pub trait VideoSink: Sync {
     /// `destroy_window`.
     unsafe fn create_window(&self, mt: &MainThread) -> *const c_char;
     #[allow(clippy::too_many_arguments)]
-    unsafe fn place_window(&self, mt: &MainThread, src_w: c_int, src_h: c_int, dst_x: c_int,
+    /// Show the source frame's part (`src_x`,`src_y`,`src_w`×`src_h`; the whole frame unless the
+    /// aspect mode crops) in the on-screen rect.
+    unsafe fn place_window(&self, mt: &MainThread, src_x: c_int, src_y: c_int, src_w: c_int, src_h: c_int, dst_x: c_int,
         dst_y: c_int, dst_w: c_int, dst_h: c_int) -> c_int;
     unsafe fn destroy_window(&self, mt: &MainThread);
     unsafe fn plane_create(&self, mt: &MainThread, app_id: *const c_char, player_type: c_int) -> c_long;
@@ -149,7 +151,7 @@ impl VideoSink for NoSink {
     fn window_id(&self) -> &'static CStr { c"" }
     unsafe fn create_window(&self, _mt: &MainThread) -> *const c_char { std::ptr::null() }
     #[allow(clippy::too_many_arguments)]
-    unsafe fn place_window(&self, _mt: &MainThread, _src_w: c_int, _src_h: c_int, _dst_x: c_int,
+    unsafe fn place_window(&self, _mt: &MainThread, _src_x: c_int, _src_y: c_int, _src_w: c_int, _src_h: c_int, _dst_x: c_int,
         _dst_y: c_int, _dst_w: c_int, _dst_h: c_int) -> c_int { 0 }
     unsafe fn destroy_window(&self, _mt: &MainThread) {}
     unsafe fn plane_create(&self, _mt: &MainThread, _app_id: *const c_char, _player_type: c_int) -> c_long { 0 }

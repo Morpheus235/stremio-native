@@ -1,0 +1,10 @@
+{
+  "app.avatar.confirm_sign_out": {
+    "value": "Sign out on this TV?",
+    "description": "Account menu (the top bar's account pill): the sign-out confirmation's question, over Cancel and Sign out."
+  },
+  "app.avatar.cancel": {
+    "value": "Cancel",
+    "description": "Account menu: the sign-out confirmation's answer that keeps the account signed in."
+  }
+}

@@ -46,6 +46,10 @@ impl PendingProbe {
         // Detached: a cancelled probe finishes (or fails) on its own and frees its transports
         // itself, so a cancel never waits on a connect.
         let started = sn_base::task::spawn("probe", move || {
+            // Where the television's audio goes decides what a multichannel track decoded here
+            // becomes (`prefs::multichannel`): read off the frame thread, before the result the
+            // decision is made from.
+            crate::prefs::refresh_sound_route();
             let _ = tx.send(crate::ff::probe::probe(&thread_url, &headers, &thread_io));
         })
         .is_some();

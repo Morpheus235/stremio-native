@@ -17,24 +17,25 @@
 //!   BACK, which hands the screen to the television's Home and keeps the app running (PlxNative's
 //!   exit behaviour; the remote's EXIT key is what ends the process).
 //!
-//! **Hotkeys** ([`hotkey`], [`route_hotkey`]): the colour keys and the channel rocker switch tabs
-//! from anywhere except while text is being entered, a menu is open, or the player is up. The
-//! codes and their provenance are `docs/remote-keys.md`.
+//! **Hotkeys** ([`hotkey`], [`route_hotkey`]): RED, GREEN, BLUE and the channel rocker switch tabs
+//! from anywhere except while text is being entered, a menu is open, or the player is up. YELLOW is
+//! no hotkey: it goes on to the page, where a row of cards takes it as *See all* (Home) and every
+//! other page ignores it. The codes and their provenance are `docs/remote-keys.md`.
 
 use sn_machine::machine::{Cx, Edge, Effects, EntryId, FocusKey, Fx, GroupId, Handled, MachineId, NavOp};
 use sn_ui::containers::tabs::STRIP;
 use sn_ui::dispatch::{Dispatcher, STRIP_BASE};
 use sn_ui::screen::{Dir, FocusTarget, Link};
 
-use crate::registry::{reseat, AppArg, Bundle};
+use crate::registry::{reseat, AppArg, Bundle, MenuArg, MenuKind};
 
 /// A top-bar destination.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Tab {
     Home,
-    LiveTv,
+    /// Stremio's Discover: a sub-tab per type (Live TV among them), a catalog, a genre.
+    Discover,
     Library,
-    Addons,
     Settings,
     Search,
 }
@@ -47,25 +48,31 @@ pub struct TabEntry {
     pub label: fn() -> &'static str,
 }
 
-/// The destinations, in bar order. Search is last: the strip draws its last pill as the
-/// magnifier.
-pub const TABS: [TabEntry; 6] = [
+/// The pills, in bar order. Search is last: the strip draws its last pill as the magnifier.
+/// Addons is not one (id 3 stays retired, so no other pill is renumbered), and Settings is not
+/// one any more: both live behind the account pill at the bar's left end ([`ACCOUNT_ELEM`]), which
+/// took Settings' id 4. Discover took Live TV's pill (id 1): Live TV is its sub-tab now.
+pub const TABS: [TabEntry; 4] = [
     TabEntry { tab: Tab::Home, id: 0, label: sn_platform::i18n::msg::app_tab_home },
-    TabEntry { tab: Tab::LiveTv, id: 1, label: sn_platform::i18n::msg::app_tab_live_tv },
+    TabEntry { tab: Tab::Discover, id: 1, label: sn_platform::i18n::msg::app_tab_discover },
     TabEntry { tab: Tab::Library, id: 2, label: sn_platform::i18n::msg::app_tab_library },
-    TabEntry { tab: Tab::Addons, id: 3, label: sn_platform::i18n::msg::app_tab_addons },
-    TabEntry { tab: Tab::Settings, id: 4, label: sn_platform::i18n::msg::app_tab_settings },
     TabEntry { tab: Tab::Search, id: 5, label: sn_platform::i18n::msg::app_tab_search },
 ];
 
+/// **The account pill** — the avatar at the bar's left end, before Home. OK opens the account menu
+/// ([`open_account_menu`]: Settings, Addons, the account, Sign out or Sign in). It is
+/// [`Tab::Settings`]'s stop: the Settings page and the Addons list are "on" it, so it wears the
+/// current-page plate there and BACK on their content returns to it. No colour key names it.
+pub const ACCOUNT_ELEM: u32 = STRIP_BASE + 4;
+
 impl Tab {
-    fn entry(self) -> &'static TabEntry {
-        TABS.iter().find(|e| e.tab == self).expect("every tab has an entry")
+    fn entry(self) -> Option<&'static TabEntry> {
+        TABS.iter().find(|e| e.tab == self)
     }
 
-    /// The bar position.
-    pub fn index(self) -> usize {
-        TABS.iter().position(|e| e.tab == self).expect("every tab has an entry")
+    /// The pill's bar position; `None` for Settings, whose stop is the account pill.
+    pub fn index(self) -> Option<usize> {
+        TABS.iter().position(|e| e.tab == self)
     }
 
     pub fn at(index: usize) -> Option<Tab> {
@@ -76,9 +83,8 @@ impl Tab {
     pub fn arg(self) -> AppArg {
         match self {
             Tab::Home => AppArg::Home,
-            Tab::LiveTv => AppArg::LiveTv,
+            Tab::Discover => AppArg::Discover,
             Tab::Library => AppArg::Library,
-            Tab::Addons => AppArg::Addons,
             Tab::Settings => AppArg::Settings,
             Tab::Search => AppArg::Search,
         }
@@ -88,34 +94,43 @@ impl Tab {
     pub fn of_arg(arg: &AppArg) -> Option<Tab> {
         Some(match arg {
             AppArg::Home => Tab::Home,
-            AppArg::LiveTv => Tab::LiveTv,
+            // Live TV is Discover opened on its Live TV sub-tab
+            AppArg::Discover | AppArg::LiveTv | AppArg::DiscoverAt(_) => Tab::Discover,
             AppArg::Library => Tab::Library,
-            AppArg::Addons => Tab::Addons,
-            AppArg::Settings => Tab::Settings,
-            AppArg::Search => Tab::Search,
+            // the Addons list is the account pill's other page (it opens from the account menu)
+            AppArg::Settings | AppArg::Addons => Tab::Settings,
+            AppArg::Search | AppArg::SearchFor(_) => Tab::Search,
             _ => return None,
         })
     }
 
-    /// Its pill's focus element.
+    /// Its pill's focus element (Settings': the account pill).
     pub fn elem(self) -> u32 {
-        STRIP_BASE + self.entry().id
+        self.entry().map_or(ACCOUNT_ELEM, |e| STRIP_BASE + e.id)
     }
 
-    /// The destination whose pill `elem` is.
+    /// The destination whose pill `elem` is (the account pill's is Settings).
     pub fn of_elem(elem: u32) -> Option<Tab> {
+        if elem == ACCOUNT_ELEM {
+            return Some(Tab::Settings);
+        }
         let id = elem.checked_sub(STRIP_BASE)?;
         TABS.iter().find(|e| e.id == id).map(|e| e.tab)
     }
 
     pub fn label(self) -> &'static str {
-        (self.entry().label)()
+        self.entry().map_or_else(sn_platform::i18n::msg::app_tab_settings, |e| (e.label)())
     }
 
-    /// The neighbour `step` pills along, wrapping at the ends.
+    /// The neighbour `step` pills along, wrapping at the ends. From Settings (the account pill,
+    /// left of Home) the walk starts at the bar's ends: forward is Home, back is Search.
     pub fn step(self, step: i32) -> Tab {
         let n = TABS.len() as i32;
-        let i = (self.index() as i32 + step).rem_euclid(n);
+        let i = match self.index() {
+            Some(i) => (i as i32 + step).rem_euclid(n),
+            None if step > 0 => (step - 1).rem_euclid(n),
+            None => (n + step).rem_euclid(n),
+        };
         TABS[i as usize].tab
     }
 }
@@ -168,9 +183,13 @@ pub fn deliberate(entry: EntryId, from: Option<FocusKey<u32>>, by: sn_machine::m
 }
 
 /// **A pill was pressed on a tab page.** Another destination is a `SelectTab`; the page's own
-/// pill enters the page (`first`, when it has something to focus). `false` when `elem` is not a
-/// pill.
-pub fn on_pill(elem: u32, here: Tab, first: Option<GroupId>, fx: &mut Effects<'_, Bundle>) -> bool {
+/// pill enters the page (`first`, when it has something to focus); the account pill opens the
+/// account menu ([`open_account_menu`]), on every page. `false` when `elem` is not a pill.
+pub fn on_pill(elem: u32, here: Tab, first: Option<GroupId>, cx: &Cx<'_, Bundle>, fx: &mut Effects<'_, Bundle>) -> bool {
+    if elem == ACCOUNT_ELEM {
+        open_account_menu(cx, fx);
+        return true;
+    }
     let Some(tab) = Tab::of_elem(elem) else { return false };
     if tab == here {
         if let Some(group) = first {
@@ -180,6 +199,29 @@ pub fn on_pill(elem: u32, here: Tab, first: Option<GroupId>, fx: &mut Effects<'_
         fx.push(Fx::Nav(NavOp::SelectTab(tab.arg())));
     }
     true
+}
+
+/// **The account menu**, hung under the account pill of the page that pressed it (focus returns
+/// to the pill when it closes). Its rows are `crate::menu`'s (`MenuKind::Account`).
+pub fn open_account_menu(cx: &Cx<'_, Bundle>, fx: &mut Effects<'_, Bundle>) {
+    let host = match (cx.focus.current, cx.owner) {
+        (Some(k), _) => k.entry,
+        (None, sn_machine::machine::InputOwner::Entry(e)) => e,
+        (None, _) => return,
+    };
+    open_account_menu_at(host, FocusKey { entry: host, elem: ACCOUNT_ELEM }, sn_ui::widgets::CHIP_FRAME, fx);
+}
+
+/// The account menu hung beside `anchor`, focus returning to `back` when it closes (Settings'
+/// account row opens it in place).
+pub fn open_account_menu_at(host: EntryId, back: FocusKey<u32>, anchor: sn_ui::Rect, fx: &mut Effects<'_, Bundle>) {
+    fx.push(Fx::Nav(NavOp::Present(AppArg::Menu(MenuArg {
+        host,
+        reply: fx.from(),
+        focus: Some(back),
+        anchor: MenuArg::anchor_of(anchor),
+        kind: MenuKind::Account,
+    }))));
 }
 
 /// What a remote hotkey asks for.
@@ -194,11 +236,17 @@ pub enum Hotkey {
 }
 
 /// The colour buttons, as the dev set's Magic Remote sends them: `wcode` 486-489 with `sym` 0
-/// (measured on the dev set by PlxNative, 2026-08-26 — `docs/remote-keys.md`).
+/// (measured on the dev set by PlxNative, 2026-08-26 — `docs/remote-keys.md`). YELLOW is not a
+/// [`hotkey`]: a page reads it from its own input (Home's rows, *See all*).
 pub const WCODE_RED: u32 = 486;
 pub const WCODE_GREEN: u32 = 487;
 pub const WCODE_YELLOW: u32 = 488;
 pub const WCODE_BLUE: u32 = 489;
+/// The channel rocker on the owner's C1 Magic Remote: CH ▲ 480, CH ▼ 481, `sym` 0 (codes from
+/// the beta's unmapped-key log lines 2026-10-17; which is which confirmed by the owner 2026-10-18,
+/// after the first reading had them backwards).
+pub const WCODE_CH_UP: u32 = 480;
+pub const WCODE_CH_DOWN: u32 = 481;
 
 /// The remote key `(sym, wcode)` names, if it is a hotkey. Matched in `wcode` alone, the field
 /// the television fills for every remote button above 300.
@@ -207,10 +255,9 @@ pub fn hotkey(_sym: u32, wcode: u32) -> Option<Hotkey> {
     Some(match wcode {
         WCODE_RED => Hotkey::PrevTab,
         WCODE_GREEN => Hotkey::NextTab,
-        WCODE_YELLOW => Hotkey::Go(Tab::Settings),
         WCODE_BLUE => Hotkey::Go(Tab::Search),
-        WCODE_CH_UP_KEY => Hotkey::PrevTab,
-        WCODE_CH_DOWN_KEY => Hotkey::NextTab,
+        WCODE_CH_UP | WCODE_CH_UP_KEY => Hotkey::PrevTab,
+        WCODE_CH_DOWN | WCODE_CH_DOWN_KEY => Hotkey::NextTab,
         _ => return None,
     })
 }
@@ -281,26 +328,56 @@ mod tests {
 
     #[test]
     fn every_destination_round_trips_through_its_arg_and_its_pill() {
+        assert_eq!(Tab::of_arg(&AppArg::LiveTv), Some(Tab::Discover), "Live TV is Discover's sub-tab");
         for (i, e) in TABS.iter().enumerate() {
             assert_eq!(Tab::of_arg(&e.tab.arg()), Some(e.tab));
             assert_eq!(Tab::of_elem(e.tab.elem()), Some(e.tab));
-            assert_eq!(e.tab.index(), i);
+            assert_eq!(e.tab.index(), Some(i));
             assert!(!e.tab.label().is_empty());
         }
         assert_eq!(TABS.last().map(|e| e.tab), Some(Tab::Search), "the strip draws its last pill as the magnifier");
-        let ids: std::collections::BTreeSet<u32> = TABS.iter().map(|e| e.id).collect();
-        assert_eq!(ids.len(), TABS.len(), "strip ids are unique");
+        let ids: std::collections::BTreeSet<u32> = TABS.iter().map(|e| e.id).chain([ACCOUNT_ELEM - STRIP_BASE]).collect();
+        assert_eq!(ids.len(), TABS.len() + 1, "strip ids are unique, the account pill's among them");
     }
 
     #[test]
-    fn the_hotkeys_walk_the_bar_and_name_two_destinations() {
+    fn the_hotkeys_walk_the_bar_and_name_one_destination() {
         assert_eq!(hotkey(0, WCODE_BLUE), Some(Hotkey::Go(Tab::Search)));
-        assert_eq!(hotkey(0, WCODE_YELLOW), Some(Hotkey::Go(Tab::Settings)));
+        assert_eq!(hotkey(0, WCODE_YELLOW), None, "YELLOW is the page's (a row's See all), no tab");
         assert_eq!(hotkey(0, 72), None, "PAUSE is no hotkey");
-        assert_eq!(hotkey_target(Tab::Home, Hotkey::NextTab), Tab::LiveTv);
+        assert_eq!(hotkey_target(Tab::Home, Hotkey::NextTab), Tab::Discover);
+        assert_eq!(hotkey_target(Tab::Discover, Hotkey::NextTab), Tab::Library);
+        assert_eq!(hotkey_target(Tab::Library, Hotkey::PrevTab), Tab::Discover);
         assert_eq!(hotkey_target(Tab::Home, Hotkey::PrevTab), Tab::Search, "the walk wraps");
         assert_eq!(hotkey_target(Tab::Search, Hotkey::NextTab), Tab::Home);
         assert_eq!(hotkey(0, sn_ui::consts::WCODE_CH_DOWN_KEY), Some(Hotkey::NextTab));
         assert_eq!(hotkey(0, sn_ui::consts::WCODE_CH_UP_KEY), Some(Hotkey::PrevTab));
+    }
+
+    /// Settings and Addons live behind the account pill: neither is a pill, both pages are "on"
+    /// the account pill, and the colour/channel walk goes straight from Library to Search.
+    #[test]
+    fn settings_and_addons_are_the_account_pills_and_the_walk_skips_them() {
+        assert_eq!(TABS.iter().map(|e| e.tab).collect::<Vec<_>>(), [Tab::Home, Tab::Discover, Tab::Library, Tab::Search]);
+        assert_eq!(Tab::of_arg(&AppArg::Settings), Some(Tab::Settings), "the Settings route still opens its page");
+        assert_eq!(Tab::of_arg(&AppArg::Addons), Some(Tab::Settings));
+        assert_eq!((Tab::Settings.index(), Tab::Settings.elem()), (None, ACCOUNT_ELEM));
+        assert_eq!(Tab::of_elem(ACCOUNT_ELEM), Some(Tab::Settings));
+        assert_eq!(hotkey_target(Tab::Library, Hotkey::NextTab), Tab::Search);
+        assert_eq!(hotkey_target(Tab::Search, Hotkey::PrevTab), Tab::Library);
+        assert_eq!(hotkey_target(Tab::Settings, Hotkey::NextTab), Tab::Home, "from the account pill, forward is Home");
+        assert_eq!(hotkey_target(Tab::Settings, Hotkey::PrevTab), Tab::Search, "and back is the bar's other end");
+        for code in [WCODE_RED, WCODE_GREEN, WCODE_BLUE, WCODE_CH_UP, WCODE_CH_DOWN] {
+            assert!(!matches!(hotkey(0, code), Some(Hotkey::Go(Tab::Settings))), "no new key names the account pill");
+        }
+    }
+
+    /// The channel rocker as the owner's C1 Magic Remote sends it, from the beta's
+    /// `input: unmapped key` log lines: CH ▲ is wcode 480, CH ▼ is 481 (the owner found the
+    /// first reading, 481 ▲, backwards in the player: CH + went back, CH − on).
+    #[test]
+    fn the_measured_channel_rocker_switches_tabs() {
+        assert_eq!(hotkey(0, 480), Some(Hotkey::PrevTab));
+        assert_eq!(hotkey(0, 481), Some(Hotkey::NextTab));
     }
 }

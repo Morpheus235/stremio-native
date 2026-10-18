@@ -32,8 +32,8 @@ ROOT = Path(__file__).resolve().parent.parent
 PKG = ROOT / "pkg"
 SS = 4  # supersampling factor
 
-TOP = (18, 34, 74)        # deep blue
-BOTTOM = (10, 120, 132)   # teal
+TOP = (30, 22, 70)        # deep indigo (Stremio-like night violet)
+BOTTOM = (123, 91, 245)   # Stremio-like violet accent
 GLYPH = (246, 248, 250)
 BADGES = {"beta": ("BETA", (242, 169, 0), (24, 20, 8)), "debug": ("DEV", (120, 128, 138), (250, 250, 250))}
 ICONS = {"icon.png": 80, "largeIcon.png": 130, "icon160.png": 160, "icon320.png": 320}
@@ -76,7 +76,7 @@ def tile(size: int, badge: "str | None" = None) -> Image.Image:
                                     width=max(1, round(n * 0.035)))
     out = Image.alpha_composite(out, overlay)
     d = ImageDraw.Draw(out)
-    play_triangle(d, c + n * 0.02, c, n * 0.2, GLYPH + (255,))
+    play_triangle(d, c, c, n * 0.18, GLYPH + (255,))  # centroid on the ring centre: optically centred
     if badge:
         word, bg, fg = BADGES[badge]
         band = round(n * 0.26)

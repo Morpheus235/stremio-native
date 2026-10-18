@@ -28,8 +28,12 @@ pub const fn rgb8(r: u8, g: u8, b: u8) -> [f32; 4] {
 // Neutral — achromatic. These two stops are the ones the renderer paints with directly; the rest of
 // the palette is `ui::theme`'s private primitive layer, which imports these so a code is still
 // written down in exactly one place.
-/// The app ground, Apple TV's shelf gray `#2c2c2e` (`theme::SURFACE_APP`'s stop).
-pub const NEUTRAL_500: [f32; 4] = rgb8(0x2c, 0x2c, 0x2e);
+/// The app ground (`theme::SURFACE_APP`'s stop): Stremio's purple-navy `#1a173e`, stremio-web's
+/// `--secondary-background-color: rgba(26, 23, 62, 1)` (`src/App/styles.less`). The lighter end of
+/// Stremio's `41deg` page gradient rather than its near-black `#0c0b11` end, so a focused card's
+/// drop shadow still has a ground to darken. (Was Apple TV's shelf gray `#2c2c2e`; the name stays
+/// so the stop keeps its one home.)
+pub const NEUTRAL_500: [f32; 4] = rgb8(0x1a, 0x17, 0x3e);
 /// The scrim ink, near-black `#050508` (`theme::scrim`'s stop). It is NOT merged into `NEUTRAL_950`
 /// (`#08080a`, two perceptual units lighter): the hero-text legibility floor
 /// (`widgets::hero_scrim_tests::the_hero_text_reads_over_bright_artwork`) has 0.02:1 of headroom and the
@@ -38,8 +42,8 @@ pub const NEUTRAL_1000: [f32; 4] = rgb8(0x05, 0x05, 0x08);
 
 /// GL clear color — 3-float (`frame_clear` takes r,g,b, no alpha). The app's DEFAULT base, and
 /// `theme::SURFACE_APP` itself rather than a second copy of its code (both are [`NEUTRAL_500`]):
-/// browsing screens clear to the Apple-TV gray, which is what makes a route change read as a
-/// seamless dip. Home overdraws it with `SURFACE_APP` (the identical gray). Two punches through to
+/// browsing screens clear to the app ground, which is what makes a route change read as a
+/// seamless dip. Home overdraws it with `SURFACE_APP` (the identical colour). Two punches through to
 /// the hardware video plane use transparent black instead: the player route, and the detail page
 /// while a trailer preview has presented a frame (`gfx::frame_clear_through`).
 pub const CLEAR_RGB: (f32, f32, f32) = (NEUTRAL_500[0], NEUTRAL_500[1], NEUTRAL_500[2]);

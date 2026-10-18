@@ -178,6 +178,12 @@ impl CurlTransport {
     pub fn new(headers: RequestHeaders, cancel: Box<dyn Fn() -> bool>) -> CurlTransport {
         CurlTransport { headers, cancel }
     }
+
+    /// Hand the transport to another thread's teardown signal (the probe's source moving to the
+    /// demuxer: `ff::hls_handoff`).
+    pub fn set_cancel(&mut self, cancel: Box<dyn Fn() -> bool>) {
+        self.cancel = cancel;
+    }
 }
 
 fn from_open(e: crate::curlio::OpenErr) -> FetchError {
@@ -383,7 +389,13 @@ pub struct HlsSource<T: Transport, C: Clock> {
     variant: Option<VariantInfo>,
     start_us: u64,
     delivered: u64,
+    /// Every byte delivered, while [`Self::record`] is on: the probe's reads, replayed to the
+    /// demuxer so it does not fetch the same segments again. None when off or past [`TAPE_CAP`].
+    tape: Option<Vec<u8>>,
 }
+
+/// The most a recording keeps; a probe that read more is not replayed.
+const TAPE_CAP: usize = 48 * 1024 * 1024;
 
 /// Read a whole body: `len` bytes when given (a byte range), else to its end, at most `cap`.
 fn read_body(body: &mut dyn Body, len: Option<u64>, cap: usize) -> Result<Vec<u8>, FetchError> {
@@ -497,6 +509,7 @@ impl<T: Transport, C: Clock> HlsSource<T, C> {
             container,
             variant,
             delivered: 0,
+            tape: None,
             playlist,
         };
         sn_base::eventlog::log(&format!(
@@ -593,6 +606,20 @@ impl<T: Transport, C: Clock> HlsSource<T, C> {
     }
 
     /// Bytes handed to the reader so far.
+    /// Start recording what [`Self::read`] delivers.
+    pub fn record(&mut self) {
+        self.tape = Some(Vec::new());
+    }
+
+    /// Stop recording: every byte delivered since [`Self::record`], or None when it overflowed.
+    pub fn take_tape(&mut self) -> Option<Vec<u8>> {
+        self.tape.take()
+    }
+
+    pub fn transport_mut(&mut self) -> &mut T {
+        &mut self.t
+    }
+
     pub fn delivered(&self) -> u64 {
         self.delivered
     }
@@ -616,6 +643,13 @@ impl<T: Transport, C: Clock> HlsSource<T, C> {
                 dst[..n].copy_from_slice(&self.out[self.out_pos..self.out_pos + n]);
                 self.out_pos += n;
                 self.delivered += n as u64;
+                if let Some(tape) = &mut self.tape {
+                    if tape.len() + n > TAPE_CAP {
+                        self.tape = None;
+                    } else {
+                        tape.extend_from_slice(&dst[..n]);
+                    }
+                }
                 return Ok(n);
             }
             self.out.clear();

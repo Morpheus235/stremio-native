@@ -16,6 +16,12 @@
 //!   ([`SearchStore::replan`]).
 //! - **The recents are the user's setting**, seeded by the application from the settings file;
 //!   its persistence watches [`SearchStore::settings_gen`].
+//! - **Suggestions** ([`SearchStore::suggestions`]) complete what is being typed: the recents that
+//!   start with or contain it, then the titles the searches of this session found for it — the
+//!   rows' own landings, kept per query ([`MAX_CACHED`]) and read back for any longer text, so no
+//!   request is made for them. A separate completion request to the first searchable addon was
+//!   considered and not made: the typed query's own debounced search asks that same catalog
+//!   [`DEBOUNCE_MS`] after the keystroke, and its titles are what a completion would return.
 //!
 //! Pure like every store here: time arrives as an argument and requests leave as [`SearchJob`]s.
 
@@ -29,6 +35,10 @@ use sn_stremio::FetchError;
 pub const DEBOUNCE_MS: u32 = 400;
 /// Recent searches kept, newest first.
 pub const MAX_RECENTS: usize = 8;
+/// Suggestions offered for the typed text at most.
+pub const MAX_SUGGESTIONS: usize = 6;
+/// Queries whose found titles the session keeps for suggestions; past this the oldest goes.
+pub const MAX_CACHED: usize = 32;
 
 /// A row's first page, to fetch off the frame thread.
 #[derive(Clone, Debug)]
@@ -38,6 +48,8 @@ pub struct SearchJob {
     pub row: usize,
     pub url: String,
     pub cancel: Cancel,
+    /// "<addon> <type>/<catalog>" for the timing log; never the URL (it carries configuration).
+    pub label: String,
 }
 
 #[derive(Clone, Debug)]
@@ -71,6 +83,8 @@ pub struct SearchStore {
     rows: Vec<SearchRow>,
     out: Vec<Option<Cancel>>,
     recents: Vec<String>,
+    /// The titles each query of the session found, by lowercased query, oldest first.
+    found: Vec<(String, Vec<String>)>,
     gen: u32,
     settings_gen: u32,
 }
@@ -93,6 +107,7 @@ impl SearchStore {
             rows: Vec::new(),
             out: Vec::new(),
             recents,
+            found: Vec::new(),
             gen: 0,
             settings_gen: 0,
         }
@@ -252,7 +267,9 @@ impl SearchStore {
         let url = self.rows[row].pager.next_url()?;
         let cancel = Cancel::default();
         self.out[row] = Some(cancel.clone());
-        Some(SearchJob { qgen: self.qgen, row, url, cancel })
+        let r = &self.rows[row];
+        let label = format!("{} {}/{}", r.addon_name, r.pager.catalog.kind, r.pager.catalog.id);
+        Some(SearchJob { qgen: self.qgen, row, url, cancel, label })
     }
 
     /// Fold a row's page in. `false` for a landing of a query no longer current.
@@ -263,9 +280,51 @@ impl SearchStore {
         if self.out[landing.row].take().is_none() {
             return false;
         }
+        if let Ok(page) = &landing.result {
+            let key = self.query.to_lowercase();
+            if !self.found.iter().any(|(q, _)| *q == key) {
+                if self.found.len() >= MAX_CACHED {
+                    self.found.remove(0);
+                }
+                self.found.push((key.clone(), Vec::new()));
+            }
+            if let Some((_, titles)) = self.found.iter_mut().find(|(q, _)| *q == key) {
+                titles.extend(page.metas.iter().map(|m| title_of(&m.name)).filter(|t| !t.is_empty()));
+            }
+        }
         self.rows[landing.row].pager.land(landing.result);
         self.bump();
         true
+    }
+
+    /// What to offer for the typed text, at most [`MAX_SUGGESTIONS`], each once (whatever its
+    /// case) and never the text itself: the recents that start with it, then those that contain
+    /// it, then the titles found for the longest query of this session the text starts with that
+    /// contain it, in the order they were found. Nothing for text too short to search.
+    pub fn suggestions(&self) -> Vec<String> {
+        let typed = self.typed.trim();
+        if typed.chars().count() < MIN_QUERY {
+            return Vec::new();
+        }
+        let q = typed.to_lowercase();
+        let starts = self.recents.iter().filter(|t| t.to_lowercase().starts_with(&q));
+        let contains = self.recents.iter().filter(|t| {
+            let t = t.to_lowercase();
+            !t.starts_with(&q) && t.contains(&q)
+        });
+        let found = self.found.iter().filter(|(k, _)| q.starts_with(k.as_str())).max_by_key(|(k, _)| k.len());
+        let titles = found.into_iter().flat_map(|(_, t)| t.iter()).filter(|t| t.to_lowercase().contains(&q));
+        let mut out: Vec<String> = Vec::new();
+        for t in starts.chain(contains).chain(titles) {
+            let l = t.to_lowercase();
+            if l != q && !out.iter().any(|o| o.to_lowercase() == l) {
+                out.push(t.clone());
+                if out.len() == MAX_SUGGESTIONS {
+                    break;
+                }
+            }
+        }
+        out
     }
 
     /// A row's pager, for the full grid its MORE opens (seeded with what the row already holds).
@@ -281,6 +340,17 @@ impl SearchStore {
             })
             .map(|r| &r.pager)
     }
+}
+
+/// A found title as a suggestion: trimmed, without a trailing year (`Heat (1995)` → `Heat`).
+pub fn title_of(name: &str) -> String {
+    let name = name.trim();
+    let bare = name
+        .strip_suffix(')')
+        .and_then(|s| s.rsplit_once('('))
+        .filter(|(_, year)| year.len() == 4 && year.chars().all(|c| c.is_ascii_digit()))
+        .map_or(name, |(head, _)| head.trim_end());
+    bare.to_string()
 }
 
 #[cfg(test)]
@@ -368,6 +438,53 @@ mod tests {
         filter.toggle("live");
         assert_eq!(s.replan(&addons(), &filter).len(), 0);
         assert_eq!(s.phase(), Phase::NoCatalogs, "every addon off reads as such, not as no results");
+    }
+
+    fn named(names: &[&str]) -> CatalogPage {
+        CatalogPage { metas: names.iter().map(|n| MetaPreview { id: n.to_string(), name: n.to_string(), ..Default::default() }).collect() }
+    }
+
+    #[test]
+    fn suggestions_are_matching_recents_then_found_titles_each_once() {
+        let mut s = SearchStore::new(vec!["the batman".into(), "Batman Begins".into(), "news".into()]);
+        s.type_query("bat", 0);
+        assert_eq!(s.suggestions(), ["Batman Begins", "the batman"], "a recent that starts with it, then one that contains it");
+        let jobs = s.submit("bat", &addons(), &AddonFilter::default());
+        assert!(s.land(SearchLanding { qgen: jobs[0].qgen, row: 0, result: Ok(named(&["Batman (1989)", "BATMAN BEGINS", "Bat Out of Hell", "Robin"])) }));
+        assert!(s.land(SearchLanding { qgen: jobs[0].qgen, row: 1, result: Ok(named(&["Batman", "Batwoman"])) }));
+        assert_eq!(
+            s.suggestions(),
+            ["Batman Begins", "the batman", "Batman", "Bat Out of Hell", "Batwoman"],
+            "found titles follow, without their year, case-insensitively once, only those that match"
+        );
+        s.type_query("batw", 10);
+        assert_eq!(s.suggestions(), ["Batwoman"], "a longer text reads the shorter query's titles at once, no request");
+        s.type_query("b", 20);
+        assert!(s.suggestions().is_empty(), "too short to search");
+        s.type_query("batman begins", 30);
+        assert!(!s.suggestions().iter().any(|t| t.eq_ignore_ascii_case("batman begins")), "never the text itself");
+        assert_eq!(title_of("Heat (1995)"), "Heat");
+        assert_eq!(title_of("Blade Runner 2049"), "Blade Runner 2049", "a year in the title is the title");
+        assert_eq!(title_of("Show (US)"), "Show (US)");
+    }
+
+    #[test]
+    fn a_stale_landing_feeds_no_suggestions_and_the_cache_is_bounded() {
+        let mut s = SearchStore::default();
+        let old = s.submit("batman", &addons(), &AddonFilter::default());
+        s.submit("superman", &addons(), &AddonFilter::default());
+        assert!(!s.land(SearchLanding { qgen: old[0].qgen, row: 0, result: Ok(named(&["Batman Returns"])) }));
+        s.type_query("batman", 0);
+        assert!(s.suggestions().is_empty(), "the dropped landing is not remembered");
+        for i in 0..MAX_CACHED + 4 {
+            let jobs = s.submit(&format!("q{i}"), &addons(), &AddonFilter::default());
+            s.land(SearchLanding { qgen: jobs[0].qgen, row: 0, result: Ok(named(&[&format!("q{i} title")])) });
+        }
+        assert_eq!(s.found.len(), MAX_CACHED);
+        s.type_query("q0", 0);
+        assert!(s.suggestions().is_empty(), "the oldest query went first");
+        s.type_query(&format!("q{}", MAX_CACHED + 3), 0);
+        assert_eq!(s.suggestions(), [format!("q{} title", MAX_CACHED + 3)]);
     }
 
     #[test]

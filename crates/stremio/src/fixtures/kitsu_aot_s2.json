@@ -1,0 +1,63 @@
+{
+ "meta": {
+  "id": "kitsu:8671",
+  "type": "series",
+  "name": "Attack on Titan Season 2",
+  "poster": "https://media.kitsu.app/anime/poster_images/8671/medium.jpg",
+  "releaseInfo": "2017",
+  "imdbRating": "8.4",
+  "genres": [
+   "Mystery",
+   "Super Power",
+   "Military",
+   "Fantasy",
+   "Drama",
+   "Action"
+  ],
+  "runtime": "24 min",
+  "videos": [
+   {
+    "id": "kitsu:8671:1",
+    "title": "Beast Titan",
+    "released": "2017-03-31T15:30:00.000Z",
+    "season": 1,
+    "episode": 1,
+    "thumbnail": "https://media.kitsu.app/episodes/thumbnails/199589/original.jpg",
+    "overview": "Coupled with the military's cover-up of a previous incident,",
+    "runtime": "24 min",
+    "imdb_id": "tt2560140",
+    "imdbSeason": 2,
+    "imdbEpisode": 1,
+    "absoluteEpisode": 26
+   },
+   {
+    "id": "kitsu:8671:2",
+    "title": "I'm Home",
+    "released": "2017-04-07T15:30:00.000Z",
+    "season": 1,
+    "episode": 2,
+    "thumbnail": "https://media.kitsu.app/episodes/thumbnails/199590/original.png",
+    "overview": "With the appearance of Titans within Wall Rose, Sasha and Co",
+    "runtime": "24 min",
+    "imdb_id": "tt2560140",
+    "imdbSeason": 2,
+    "imdbEpisode": 2,
+    "absoluteEpisode": 27
+   },
+   {
+    "id": "kitsu:8671:12",
+    "title": "Scream",
+    "released": "2017-06-16T15:30:00.000Z",
+    "season": 1,
+    "episode": 12,
+    "thumbnail": "https://media.kitsu.app/episode/199600/thumbnail/66cab07242a6260acd2f6c55bbb8dafc.jpg",
+    "overview": "Eren's confrontation with the Smiling Titan raises questions",
+    "runtime": "24 min",
+    "imdb_id": "tt2560140",
+    "imdbSeason": 2,
+    "imdbEpisode": 12,
+    "absoluteEpisode": 37
+   }
+  ]
+ }
+}
