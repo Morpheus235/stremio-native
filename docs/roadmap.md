@@ -1,83 +1,88 @@
 # Roadmap
 
-## 1. Foundation (in progress)
-Layer crates ported and renamed (`sn_*`): base, machine, net, platform, gfx, ui, storage.
-Plex-specific transport behaviour removed from `net`; the bundled-roots TLS fallback applies to
-any HTTPS host (old TVs lack the ISRG roots most addons chain to).
+## Done
 
-## 2. Media
-Port the FFmpeg demuxer, curl pull source, HLS, libass subtitles and the Starfish player engine.
-The Plex transcode decision (`route/`) and transcode ABR are not carried over.
+- **Foundation.** The PlxNative layers, ported as `sn_*` crates: base, machine, net, platform,
+  gfx, ui, storage. Plex-specific transport is gone. The bundled-roots TLS fallback applies to any
+  HTTPS host, because old TVs lack the roots most addons chain to.
+- **Addons.** Manifest, catalog, meta, stream and subtitle resources, with Cinemeta first.
+  Catalogs page with `skip` until a short page comes back. Each addon's timeouts and failures are
+  shown, never a silently short list. `behaviorHints` are honoured (`proxyHeaders`,
+  `notWebReady`, `bingeGroup`), so live-TV addons such as TvVoo play.
+- **Viewport-first loading** (`crates/stremio/src/sched.rs`). The nearest request starts first,
+  and work scrolled out of view is cancelled.
+- **Account.** Sign-in, a kept session, the account's addons, Continue Watching, Library and
+  watched state.
+- **Screens.**
+  - Home: one row per catalog.
+  - Discover, Library, Continue Watching, Live TV, Settings.
+  - Search: every catalog with the `search` extra, of any type, with an addon filter, a
+    loading/empty/error state per row and recent searches.
+  - Detail: episodes by season, and each addon's streams with its own loading state.
+  - Top-bar and colour-key shortcuts.
+- **Player.**
+  - Probe before Load: the bundled demuxer reads the container first, so the Load names the
+    real codecs.
+  - Hardware playback over the Starfish buffer feed. HLS.
+  - Dolby Vision Profile 7 is played as 8.1 (`crates/media/src/dovi.rs`).
+  - libass text subtitles with embedded fonts, plus addon subtitles.
+  - Track choice, Up Next, and progress saved to the account.
+  - Skip intro/recap/credits, from chapter names or introdb (by IMDb id, also for `tmdb:` items).
+  - CH +/- jumps between chapters.
+- **Audio the TV can't decode.**
+  - Software decode feeds S16LE 48 kHz PCM: TrueHD, DTS, FLAC, LPCM, Opus, Vorbis, MP2, WMA, ALAC.
+  - Multichannel goes out as AC-3 640 kb/s 5.1 by default, which is what optical and plain ARC
+    carry.
+  - Settings → Multichannel audio can choose PCM instead (Automatic picks it on HDMI eARC),
+    plain stereo, or Pro Logic II.
+  - Verified on the C1 over optical with all 5.1 channels in place: AC-3, E-AC-3, AAC, TrueHD,
+    DTS, FLAC, PCM.
+  - webOS 5/6 refuse a DTS Load, so DTS always goes through software.
 
-- **DTS plays natively.** Feed the DTS core to the TV's decoder when its codec table lists DTS
-  (not believed on webOS 5/6, whose sets refuse a `"DTS"` Load) and the stream's channel count fits the measured ceiling (DTS-HD extensions are stripped to the
-  core). Otherwise decode in software and feed AC3: there is no server to transcode it. Done for
-  DTS (`ff::transcode`: the bundled `dca` decoder and float `ac3` encoder, core-only, at most 5.1,
-  640 kb/s); still to verify on a TV. TrueHD, FLAC, LPCM, Opus, Vorbis, MP2, WMA, ALAC (and MP3 on a set
-  whose table has no MPEG audio row; elsewhere MP3 goes native as `"MP3"`) are
-  decoded on the CPU and fed as S16LE 48 kHz PCM (`ff::adec`, `libsnadec.so`, ported from
-  PlxNative) — stereo always; more than two channels go through the same `ff::transcode` as
-  AC-3 5.1 (what optical and plain ARC carry) unless Settings > Multichannel audio says PCM, or
-  Automatic finds the TV's sound output on HDMI eARC. Its Stereo and Pro Logic II rungs
-  fold every multichannel track the build decodes to a plain or a DPLII matrixed stereo pair instead. Still to verify on
-  a TV.
-- **Probe before Load.** A stream comes with no codec facts, so the player opens it with the
-  bundled demuxer first (`ff::probe`, off-frame, bounded) and declares the Load from what the
-  container says; a caller's declaration is an optional override.
-- **Never hang on audio the pipeline cannot render.** A stalled start falls back instead of
-  spinning forever; a video-only stream plays silently.
+## Open
 
-## 3. Stremio addon layer
-- Manifest, catalog, meta, stream and subtitle resources; Cinemeta first.
-- **Complete catalogs.** Page with the `skip` extra until an addon returns a short page. Per-addon
-  timeouts and failures are surfaced, never a silently short list.
-- **Search every searchable catalog**, of any type (TV/channel catalogs such as TvVoo's, not only
-  movie/series), per addon, with a filter to choose which addons are queried.
-- **Per-addon results are signalled.** An addon with more hits than one page shows that more
-  exist and loads them on demand.
-- **TvVoo streams load.** Honour `behaviorHints` (`proxyHeaders` request headers, `notWebReady`,
-  `bingeGroup`) and the stream URL forms live-TV addons return.
-- **Viewport-first loading.** Catalog rows and artwork load for what is on screen first; requests
-  for rows scrolled past are cancelled or deprioritised and rescheduled, never drained top-down.
-
-## 4. App and screens
-Boot, home rows, detail with streams, library, settings, player.
-
-Landed: the application crate (`crates/app`: boot, the frame loop over the dispatcher, the
-lifecycle, the webOS port, the addon transport and the poster source on workers) and the first
-screens (`crates/screens`): Home with one row per browsable catalog of the installed addons
-(signed out: the defaults), Detail listing each addon's streams with its own loading/failed state
-(episodes by season for a series), and the player page with its transport HUD (scrubbing, the
-audio and subtitle tracks, Info, Up Next from the series' meta; progress recorded to the account's
-library for Continue Watching). Still to come: sign-in and the account's addons, library, settings,
-search.
-
-- **Search** with loading, empty and error states (a spinner while a query is in flight).
-- **Hotkeys**: move left/right through the top bar, jump to Search and Settings from anywhere.
+- Player freeze on exit at the end of an episode, or on resuming one. Under investigation: the
+  previous session's log is kept as `stremionative-events.prev.log`.
+- Stereo and Pro Logic II don't cover AC-3/E-AC-3 tracks yet. The bundled FFmpeg has no ac3/eac3
+  decoder, so those stay native.
+- Automatic could pick stereo for TV speakers, headphones and Bluetooth output.
+- 7.1 PCM over eARC (5.1 is the ceiling today).
+- A TvVoo channel that starts without sound.
+- Contrast pass on the episode list, the selected episode and the stream list.
 
 ## Distribution: Homebrew Channel repository
-`ci/hbrepo.py` turns a built .ipk into a Homebrew Channel repository (`repo.json`, the package
-manifest with sha256 and size, and the ipk). `.github/workflows/hbrepo.yml` publishes it on
-GitHub Pages for every release, so a TV adds
-`https://morpheus235.github.io/stremio-native/repo.json` under Settings > Add repository and
-receives updates as new releases appear. The package itself is `make ipk` (`ci/mkipk.py`,
-reproducible, read back with `--verify`); the launcher art (`pkg/icon160.png` and friends, the
-badged `pkg/beta/` set) is drawn by `ci/make-icons.py`.
+
+`ci/hbrepo.py` turns a built ipk into a Homebrew Channel repository: `repo.json`, the package
+manifest with sha256 and size, and the ipk URL. `.github/workflows/hbrepo.yml` publishes it on
+GitHub Pages for every release. A TV adds `https://morpheus235.github.io/stremio-native/repo.json`
+under Settings → Add repository and gets updates as releases appear.
+
+The package itself is built by `make ipk` (`ci/mkipk.py`). It is reproducible and read back with
+`--verify`. The launcher art (`pkg/`, plus the badged `pkg/beta/` and `pkg/debug/` sets) is drawn
+by `ci/make-icons.py`.
 
 ## Releases
-Tags on `main`, no release branch: bump `pkg/appinfo.json`'s version, then
-`git tag -a vX.Y.Z -m "StremioNative X.Y.Z" && git push origin vX.Y.Z`. `release.yml` checks the tag
-matches the packaged version and is on `main`, runs the tests, cross-builds the ipk on an arm64
-runner with the pinned webOS NDK, publishes the GitHub release (ipk + sha256) and refreshes the
-Homebrew Channel repository. A suffixed tag (`v0.2.0-rc.1`) publishes a prerelease only. `ci.yml`
-runs the host tests, the shipping feature set, the packaging selftests, an ARM compile check and a
-full package build (`make RELEASE=1 FLAVOR=stable ipk` on an arm64 runner with the NDK; built and
-read back, not published) on every push and pull request.
+
+Releases are tags on `main`, with no release branch. Bump `pkg/appinfo.json`'s version, then run
+`git tag -a vX.Y.Z -m "StremioNative X.Y.Z" && git push origin vX.Y.Z`.
+
+`release.yml` then:
+1. checks that the tag matches the packaged version and is on `main`;
+2. runs the tests;
+3. cross-builds the ipk on an arm64 runner with the pinned webOS NDK;
+4. publishes the GitHub release (ipk + sha256);
+5. refreshes the Homebrew Channel repository.
+
+`ci.yml` runs on every push and pull request. It runs the host tests, the shipping feature set,
+the packaging selftests and an ARM compile check, and does a full package build that is read back
+but not published.
 
 ### Beta
-A suffixed tag (`v0.2.0-beta.1`) builds the separate **StremioNative Beta** app (`FLAVOR=beta`, app
-id `com.morpheus235.stremionative.beta`, version `X.Y.YYYYMMDD`, so at most one beta a day) and
-publishes it as a GitHub prerelease. The one Homebrew Channel `repo.json` lists both apps, each
-pointing at its newest release; install either or both. Still needed: rename the `nightly`
-install flavor to `beta` in `ci/install-identities.json` and `sn_platform`, and teach the
-packaging step the flavor's id, title and version.
+
+A suffixed tag (`v0.2.0-beta.1`) builds the separate **StremioNative Beta** app instead:
+- `FLAVOR=beta`, app id `com.morpheus235.stremionative.beta`;
+- version `X.Y.YYYYMMDD`, so at most one beta a day;
+- published as a GitHub prerelease.
+
+The one `repo.json` lists both apps, each pointing at its newest release, so either or both can
+be installed.

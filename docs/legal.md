@@ -17,11 +17,12 @@ https://github.com/Morpheus235/stremio-native.
 | Component | License |
 | --- | --- |
 | FFmpeg (bundled build) | LGPL-2.1-or-later |
-| libass, and its font stack (FreeType, HarfBuzz, FriBidi) | ISC; FreeType License; MIT; LGPL-2.1 |
+| libass, and its font stack (FreeType, HarfBuzz, FriBidi, libunibreak) | ISC; FreeType License; MIT; LGPL-2.1; zlib |
+| dovi_tool (Dolby Vision RPU conversion, ported to Rust) | MIT |
 | nanosvg | zlib |
 | Bundled fonts (`pkg/OFL.txt`) | SIL Open Font License 1.1 |
 | Rust crates | as declared in each crate's manifest (MIT, Apache-2.0, Unicode-3.0) |
 
-The in-app About page will show these statements and the full license texts.
+The in-app About page (Settings → About) shows these statements and the full license texts.
 
 **Privacy.** See [PRIVACY.md](../PRIVACY.md).

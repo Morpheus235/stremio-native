@@ -67,9 +67,10 @@ const NOTICE_TEXT: &str = include_str!("../../../NOTICE");
 
 /// The third-party components the package ships and their licences (`docs/legal.md`). Names and
 /// licence identifiers are proper nouns, never translated.
-pub const COMPONENTS: [(&str, &str); 5] = [
+pub const COMPONENTS: [(&str, &str); 6] = [
     ("FFmpeg", "LGPL-2.1-or-later"),
-    ("libass, FreeType, HarfBuzz, FriBidi", "ISC; FreeType License; MIT; LGPL-2.1"),
+    ("libass, FreeType, HarfBuzz, FriBidi, libunibreak", "ISC; FreeType License; MIT; LGPL-2.1; zlib"),
+    ("dovi_tool (Dolby Vision RPU conversion, ported)", "MIT"),
     ("nanosvg", "zlib"),
     ("Inter, Noto (bundled fonts)", "SIL Open Font License 1.1"),
     ("Rust crates", "MIT, Apache-2.0, Unicode-3.0"),
