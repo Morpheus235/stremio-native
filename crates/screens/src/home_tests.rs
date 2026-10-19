@@ -138,8 +138,10 @@ fn moving_down_the_rows_moves_the_reported_view() {
     assert!(last.end == 6 && last.start > 0, "the last rows are in view and the first scrolled away ({last:?})");
 }
 
+/// A Home row is its catalog's first page: walking to its end reaches See all and asks for no
+/// next page (one landing under the cards on screen swapped them for others, page after page).
 #[test]
-fn a_shelf_reaching_its_end_asks_for_more_of_its_row() {
+fn a_shelf_reaching_its_end_asks_for_no_next_page() {
     let _g = sn_base::testlock::serial();
     let (mut store, jobs) = cinemeta();
     for job in jobs {
@@ -151,15 +153,13 @@ fn a_shelf_reaching_its_end_asks_for_more_of_its_row() {
     let mut app = TestApp::boot(store);
     app.notify(StoreId::Catalog, gen);
     app.frames(2);
-    app.take_effects();
-    for _ in 0..7 {
+    for _ in 0..8 {
         app.press(Key::Right);
     }
-    let effects = app.take_effects();
-    assert!(
-        effects.iter().any(|fx| matches!(fx, AppFx::Catalog(CatalogCmd::More(r)) if *r == row(0))),
-        "walking to the end of a short row asks for its next page: {effects:?}"
-    );
+    app.frames(30);
+    assert_eq!(focus(&app), Some(crate::home::more_elem(row(0))), "the row ends in its See all tile");
+    let pages: Vec<_> = app.rig.catalog.take_jobs().into_iter().filter(|j| matches!(j, Job::Page { row: r, .. } if *r == row(0))).collect();
+    assert!(pages.is_empty(), "no next page is asked: {pages:?}");
 }
 
 #[test]
@@ -316,7 +316,7 @@ fn the_type_dropdown_narrows_home_to_one_type_from_the_remote() {
     let last = w.last().expect("the new window is reported");
     assert_eq!(last.kind.as_deref(), Some("series"));
     assert!(last.rows.end <= 3, "positions among the three series rows: {last:?}");
-    assert!(app.take_effects().iter().all(|fx| !matches!(fx, AppFx::Catalog(CatalogCmd::More(_)))), "nothing is fetched");
+    assert!(!app.rig.catalog.take_jobs().iter().any(|j| matches!(j, Job::Page { .. })), "nothing is fetched");
     app.press(Key::Down);
     app.press(Key::Ok);
     assert!(
@@ -522,38 +522,6 @@ fn right_past_the_last_card_reaches_see_all_and_ok_opens_the_catalog() {
     assert_eq!(focus(&app), tile, "BACK returns to the tile");
     app.press(Key::Left);
     assert!(focus(&app).is_some_and(|e| e < sn_ui::geom::NAMESPACE_FLOOR), "LEFT from the tile is the last card");
-}
-
-/// Focus resting on a row's See all tile does not page the row on. A page landing while focus is
-/// on the tile moved the tile (and the row with it) past the new cards, and the tile at the end
-/// again asked for the next page: every page in turn replaced the cards on screen until the
-/// catalog ran out.
-#[test]
-fn a_row_resting_on_its_see_all_tile_asks_for_no_more_pages() {
-    let _g = sn_base::testlock::serial();
-    let mut app = one_addon_home(3);
-    for _ in 0..3 {
-        app.press(Key::Right);
-    }
-    assert_eq!(focus(&app), Some(crate::home::more_elem(row(0))));
-    app.frames(5);
-    app.take_effects();
-    // a page that was on its way lands
-    let id = app.rig.catalog.rows()[0].id;
-    app.rig.catalog.want_more(id);
-    for job in app.rig.catalog.take_jobs() {
-        if let Job::Page { row, .. } = job {
-            app.rig.catalog.land(Landing::Page { row, result: Ok(page("tt-next-", 20)) });
-        }
-    }
-    let gen = app.rig.catalog.gen();
-    app.notify(StoreId::Catalog, gen);
-    app.frames(30);
-    let effects = app.take_effects();
-    assert!(
-        !effects.iter().any(|fx| matches!(fx, AppFx::Catalog(CatalogCmd::More(_)))),
-        "resting on the tile asks for nothing more: {effects:?}"
-    );
 }
 
 /// The pointer clicks a See all tile through the same hit map: a card's click, which commits on

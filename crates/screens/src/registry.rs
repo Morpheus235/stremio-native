@@ -566,8 +566,6 @@ pub enum CatalogCmd {
     /// The rows on screen, as positions among the rows of the type Home shows (viewport-first
     /// loading; a row the type filter hides is never asked for).
     View(crate::stores::catalog::RowWindow),
-    /// A shelf reached the end of what is loaded.
-    More(RowId),
     /// A failed row's read-out was pressed.
     Retry(RowId),
     /// The failed install list's read-out was pressed.

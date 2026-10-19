@@ -522,7 +522,6 @@ impl Bridge {
     fn catalog_cmd(&mut self, cmd: CatalogCmd) {
         match cmd {
             CatalogCmd::View(rows) => self.catalog.set_view(rows),
-            CatalogCmd::More(row) => self.catalog.want_more(row),
             CatalogCmd::Retry(row) => self.catalog.retry(row),
             CatalogCmd::RetryAddons => self.catalog.retry_addons(),
         }

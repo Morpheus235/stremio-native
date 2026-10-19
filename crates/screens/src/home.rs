@@ -17,9 +17,8 @@
 //!
 //! - **the rows on screen** (`CatalogCmd::View`), recomputed from the stack's own shelf frames on
 //!   every tick and sent when they change, which is what makes the store load what is in view
-//!   first and cancel what was scrolled past;
-//! - **more of a row** (`CatalogCmd::More`), from the shelf's own `Want` when its window reaches
-//!   past what has loaded.
+//!   first and cancel what was scrolled past. A row is its catalog's FIRST page and never pages
+//!   on (a landing under the cards on screen swapped them); See all opens the whole catalog.
 //!
 //! **The type dropdown** (`crate::dropdown`, its options `crate::type_filter`'s) stands above the
 //! shelves when the rows hold more than one type: OK opens its popover, and a pick keeps only the
@@ -32,8 +31,7 @@
 //! `crate::continue_page`), four ways, none of them a stop on the way between rows:
 //!
 //! - the row's **See all tile** after its last loaded card (`CardSource::see_all`, the shared
-//!   shelf's tile): RIGHT from the last card reaches it, OK opens the row. A row still paging draws
-//!   nothing past the tile; the page that lands goes in before it;
+//!   shelf's tile): RIGHT from the last card reaches it, OK opens the row;
 //! - **LEFT on the row's first card** (the shelf's left edge is `EdgeRule::Screen`, and the page
 //!   takes the re-delivered key on its DOWN edge only, so a held LEFT walking back stops there);
 //! - the remote's **YELLOW** key on any card of the row (Settings lists it);
@@ -318,8 +316,11 @@ impl CardSource<Bundle> for RowCards<'_> {
             None => TileLabel::default(),
         }
     }
+    /// A Home row is its catalog's first page: more is coming only until that page lands, then it
+    /// never pages on (a page landing under the cards on screen swapped them for others; the rest
+    /// of the catalog is See all's).
     fn more(&self) -> bool {
-        self.row.pager.has_more()
+        self.row.items().is_empty() && self.row.pager.has_more()
     }
 }
 
@@ -1140,9 +1141,6 @@ impl Machine<Bundle> for HomeScreen {
                 if self.view.as_ref() != Some(&view) {
                     self.view = Some(view.clone());
                     fx.push(Fx::App(AppFx::Catalog(CatalogCmd::View(view))));
-                }
-                if let Some(StackEvent::Card(Sec::Row(id), CardEvent::Want(_))) = got {
-                    fx.push(Fx::App(AppFx::Catalog(CatalogCmd::More(id))));
                 }
                 // Home mounts before anything has landed, with the remote resting on its pill: that
                 // is a seat nobody chose, so the first row that lands (Continue Watching first)
