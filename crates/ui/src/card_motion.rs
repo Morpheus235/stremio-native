@@ -213,6 +213,22 @@ fn declines_in(dump: bool, verdict: Option<Verdict>, moving_declines: bool) -> b
     }
 }
 
+thread_local! { static FLY_BY: Cell<bool> = const { Cell::new(false) }; }
+
+/// While the guard lives, the cards drawn are being FLOWN PAST: a row whose scroll still has far
+/// to go to the focus (a held key, a burst of presses). A source shows what is already resident
+/// for them and starts no work ([`flying`]); the cards the scroll settles on ask as usual, so
+/// the row does not fetch every poster between where it was and where the focus went.
+pub struct FlyBy(bool);
+pub fn fly_by(on: bool) -> FlyBy { FlyBy(FLY_BY.with(|c| c.replace(on))) }
+impl Drop for FlyBy {
+    fn drop(&mut self) { FLY_BY.with(|c| c.set(self.0)); }
+}
+
+/// Is the card being drawn flown past ([`fly_by`])? Never in a frame dump, which draws one
+/// deterministic frame at a time and waits for every placeholder ([`declines_request`]).
+pub fn flying() -> bool { !sn_gfx::dump::armed() && FLY_BY.with(Cell::get) }
+
 /// A declined miss has no worker whose completion could wake it. The next sample
 /// MUST present, including an unknown card first appearing on an otherwise idle page.
 pub fn deferred() { sn_machine::idle::invalidate(); }

@@ -9,7 +9,7 @@
 
 use std::borrow::Cow;
 
-use sn_machine::machine::{Canon, Cx, Effects, EntryId, Fx, GroupId, Handled, LogicalState, Machine, NavOp};
+use sn_machine::machine::{Canon, Cx, Effects, EntryId, Fx, GroupId, Handled, InputEvent, InputKind, Edge, LogicalState, Machine, NavOp};
 use sn_machine::present::Provenance;
 use sn_platform::i18n::msg;
 use sn_ui::cards::{CardEvent, GridSpec, Kind, SectionSpec, Stack, StackEvent, StackPage};
@@ -258,6 +258,13 @@ impl Machine<Bundle> for ContinueScreen {
             }
             ScreenEvent::Enter(_) | ScreenEvent::Uncover => {
                 fx.invalidate(Provenance::Nav);
+                Handled::Yes
+            }
+            // YELLOW opened this page from a row (Home's See all); YELLOW closes it again
+            ScreenEvent::Input(InputEvent { kind: InputKind::Key { wcode: crate::tabs::WCODE_YELLOW, edge, .. }, .. }) => {
+                if *edge == Edge::Down {
+                    fx.push(Fx::Nav(NavOp::Pop));
+                }
                 Handled::Yes
             }
             _ => Handled::No,

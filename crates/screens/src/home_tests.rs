@@ -538,6 +538,29 @@ fn a_click_on_a_rows_see_all_tile_opens_its_catalog() {
     assert_eq!(catalog_on_top(&app), Some(("series".into(), "top".into())), "{}", app.top_name());
 }
 
+/// A row's heading is the pointer's way to its catalog: a click on it opens the row whole, and
+/// YELLOW on the catalog page closes it again. No D-pad move ever lands on a heading.
+#[test]
+fn a_click_on_a_rows_heading_opens_its_catalog_and_yellow_closes_it() {
+    use crate::tabs::WCODE_YELLOW;
+    use sn_machine::machine::{Edge, InputKind};
+    let _g = sn_base::testlock::serial();
+    let mut app = one_addon_home(20);
+    let is_heading = |e: Option<u32>| e.is_some_and(|e| e >= sn_ui::geom::NAMESPACE_FLOOR + 0x0300_0000 && e < sn_ui::geom::NAMESPACE_FLOOR + 0x0400_0000);
+    for key in [Key::Down, Key::Down, Key::Up, Key::Up, Key::Down, Key::Right, Key::Up, Key::Down] {
+        app.press(key);
+        assert!(!is_heading(focus(&app)), "{key:?} landed on a heading");
+    }
+    let r = app.d.last_stops().iter().find(|s| is_heading(Some(s.key.elem))).map(|s| s.rect).expect("a heading is a pointer stop");
+    app.send(InputKind::Click { x: r.cx(), y: r.cy(), hit: None });
+    app.send(InputKind::Key { key: Key::Ok, sym: 0, wcode: 0, edge: Edge::Up, at_edge: false });
+    app.frames(40);
+    assert_eq!(catalog_on_top(&app), movies(), "{}", app.top_name());
+    app.press_raw(0, WCODE_YELLOW);
+    app.frames(40);
+    assert_eq!(app.top_name(), "home", "YELLOW closes the catalog it opened");
+}
+
 /// YELLOW on any card of a row opens that row's catalog (it is no tab shortcut any more); no
 /// heading draws a key hint for it.
 #[test]

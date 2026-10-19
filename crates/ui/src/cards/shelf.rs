@@ -30,6 +30,11 @@ const LOOK_AHEAD: usize = 6;
 /// poster source decides how many of them may be in flight (`PREFETCH_OUTSTANDING_MAX`).
 pub(super) const WARM_AHEAD_CARDS: usize = 8;
 
+/// How far (in card pitches) the scroll may still have to travel to the focus before the cards it
+/// passes count as flown past (`card_motion::fly_by`): above one, so a single press loads the card
+/// that scrolls in at once.
+const FLY_BY_PITCHES: f32 = 1.5;
+
 /// Cards from either end of a row inside which focus counts as near that edge, for
 /// [`Shelf::page_ask`].
 pub const PAGE_EDGE_CARDS: usize = 6;
@@ -655,6 +660,10 @@ impl Shelf {
             }
         }
         self.warm.last = Some(focus);
+        // the cards ahead of a scroll that is flying past them are not where it will stop
+        if self.flying(src, Some(focus)) {
+            return;
+        }
         let n = src.len();
         let forward = self.warm.forward;
         let pitch = self.pitch();
@@ -758,6 +767,13 @@ impl Shelf {
         Rect::new(r.x + self.landing.offset(n, i), r.y, r.w, r.h)
     }
 
+    /// Is the scroll still more than [`FLY_BY_PITCHES`] from where the focus will rest? Its cards
+    /// are then flown past and ask for no art.
+    fn flying<H: Host, S: CardSource<H>>(&self, src: &S, focus: Option<usize>) -> bool {
+        focus.filter(|&i| i < src.len())
+            .is_some_and(|i| self.row.settle_lag(src.len(), i, self.style).abs() > FLY_BY_PITCHES * self.pitch())
+    }
+
     /// The scroll the row is drawn at: the spring's, scaled by [`CardSource::sweep`].
     fn drawn_scroll<H: Host, S: CardSource<H>>(&self, src: &S) -> f32 {
         self.row.scroll_x() * src.sweep()
@@ -820,6 +836,7 @@ impl Shelf {
         let pressed = super::pressed_index(f.cx, self.entry, src);
         let sx = self.drawn_scroll(src);
         let pr = p.translate(-sx, 0.0);
+        let _fly = crate::card_motion::fly_by(self.flying(src, focus));
         let visible = |i: usize| crate::on_axis(self.slot(i, n, at, sx).x, self.style.w, SCR_W, self.margin);
         for i in (0..n).filter(|&i| focus != Some(i) && visible(i)) {
             let s = super::press_scale(self.pop(src, i, focus), i, pressed, f.cx);
@@ -893,6 +910,7 @@ impl Shelf {
         let focus = super::focused_index(&f.focus, self.entry, src);
         let pressed = super::pressed_index(f.cx, self.entry, src);
         let pr = p.translate(-self.drawn_scroll(src), 0.0);
+        let _fly = crate::card_motion::fly_by(self.flying(src, focus));
         if let Some(i) = focus.filter(|&i| i < src.len()) {
             let s = super::press_scale(self.pop(src, i, focus), i, pressed, f.cx);
             self.draw_card(f, pr, src, i, at, s, true);

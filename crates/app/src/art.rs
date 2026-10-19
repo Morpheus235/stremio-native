@@ -674,6 +674,20 @@ impl Art {
         Some((key, true))
     }
 
+    /// A card flown past (`card_motion::fly_by`): its texture if it is already here, and nothing
+    /// asked, started or stamped as wanted otherwise.
+    fn peek(&self, path: &str, w: i32, h: i32) -> Option<PosterKey> {
+        let mut inner = self.inner.borrow_mut();
+        let frame = inner.frame;
+        let key = *inner.by_req.get(&(path.to_string(), w, h))?;
+        let slot = inner.slots.get_mut(&key)?;
+        // a resident one counts as drawn, so it is not evicted from under the pass
+        (slot.state == State::Ready).then(|| {
+            slot.drawn = frame;
+            PosterKey(key)
+        })
+    }
+
     fn state(&self, key: u32) -> Option<State> {
         self.inner.borrow().slots.get(&key).map(|s| s.state)
     }
@@ -683,6 +697,9 @@ impl tex::Source for Art {
     fn probe(&self, _srv: u16, path: &str, w: i32, h: i32, _png: bool) -> Option<PosterKey> {
         if path.is_empty() {
             return None;
+        }
+        if sn_ui::card_motion::flying() {
+            return self.peek(path, w, h);
         }
         let (key, _) = self.ask(path, w, h, Touch::Draw)?;
         self.pump();
@@ -849,6 +866,28 @@ mod tests {
         assert_eq!(art.probe(0, "https://img.example/a.jpg", 250, 375, false), Some(PosterKey(key)));
         assert!(art.idle());
         assert_eq!(art.stats().fetched, 1);
+        tex::reset_for_test(64 << 20);
+    }
+
+    #[test]
+    fn a_card_flown_past_starts_nothing_but_still_shows_what_is_here() {
+        let _g = sn_base::testlock::serial();
+        tex::reset_for_test(64 << 20);
+        let (art, started) = art(true);
+        assert_eq!(art.probe(0, "https://img.example/here.jpg", 250, 375, false), None);
+        let here = keys(&started)[0];
+        ready(&art, here, 500, 750);
+        art.drain();
+        {
+            let _fly = sn_ui::card_motion::fly_by(true);
+            for i in 0..20 {
+                assert_eq!(art.probe(0, &format!("https://img.example/{i}.jpg"), 250, 375, false), None);
+            }
+            assert_eq!(art.probe(0, "https://img.example/here.jpg", 250, 375, false), Some(PosterKey(here)), "a resident poster still draws");
+        }
+        assert_eq!(keys(&started).len(), 1, "nothing flown past was asked for");
+        assert_eq!(art.probe(0, "https://img.example/19.jpg", 250, 375, false), None);
+        assert_eq!(keys(&started).len(), 2, "the card the scroll stops on asks as usual");
         tex::reset_for_test(64 << 20);
     }
 

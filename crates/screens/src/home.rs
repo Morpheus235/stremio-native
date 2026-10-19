@@ -29,16 +29,16 @@
 //!
 //! **See all.** A catalog row opens its catalog whole (`AppArg::Catalog`, the page Search's MORE
 //! opens), Continue Watching the Continue Watching page (`AppArg::Continue`,
-//! `crate::continue_page`), three ways, none of them a stop on the way between rows:
+//! `crate::continue_page`), four ways, none of them a stop on the way between rows:
 //!
 //! - the row's **See all tile** after its last loaded card (`CardSource::see_all`, the shared
 //!   shelf's tile): RIGHT from the last card reaches it, OK opens the row. A row still paging draws
 //!   its skeletons after the tile, and the page that lands goes in before it;
 //! - **LEFT on the row's first card** (the shelf's left edge is `EdgeRule::Screen`, and the page
 //!   takes the re-delivered key on its DOWN edge only, so a held LEFT walking back stops there);
-//! - the remote's **YELLOW** key on any card of the row (no on-screen hint; Settings lists it).
-//!
-//! A heading is drawn, not focused: UP and DOWN go row to row (`HomeScreen::links`).
+//! - the remote's **YELLOW** key on any card of the row (Settings lists it);
+//! - the row's **heading**, which carries a chevron: the pointer's target. Its group takes no
+//!   D-pad landing (`AxisMask(0)`), so UP and DOWN still go row to row (`HomeScreen::links`).
 //!
 //! **The View toggle** (`crate::item_list`) stands at the dropdown row's right end (Discover's and
 //! the Library's place): posters, or each row as a list section — its heading, its first
@@ -64,6 +64,7 @@ use sn_stremio::types::MetaPreview;
 use sn_ui::cards::{CardEvent, CardSource, Kind, RowStyle, SectionSpec, Stack, StackEvent, StackPage, TileLabel};
 use sn_ui::consts::{CARD_H, MARGIN_X, SCR_H, SCR_W};
 use sn_ui::label::{Label, VAlign};
+use sn_ui::linked_heading::LinkedHeading;
 use sn_ui::screen::{At, DrawFrame, EdgeRule, FocusSource, Focusable, GroupSpec, HitSource, Link, RenderStrategy, Screen, ScreenEvent};
 use sn_ui::widgets::{Art, StatusKind, StatusOverlay};
 use sn_ui::{theme, Env, Rect, View};
@@ -110,6 +111,10 @@ const CW_SEE_ALL_GROUP: GroupId = GroupId(0x7FFF_0003);
 pub const TOGGLE_ELEM: u32 = sn_ui::geom::NAMESPACE_FLOOR + 0x102;
 /// A catalog row's See all: [`more_elem`] (a key namespace, not an index).
 const MORE_BASE: u32 = sn_ui::geom::NAMESPACE_FLOOR + 0x0100_0000;
+/// A catalog row's heading, the pointer's way to its See all: [`head_elem`].
+const HEAD_BASE: u32 = sn_ui::geom::NAMESPACE_FLOOR + 0x0300_0000;
+/// Continue Watching's heading.
+const CW_HEAD_ELEM: u32 = sn_ui::geom::NAMESPACE_FLOOR + 0x103;
 /// List mode shows a row's first items; its See all row opens the rest.
 pub const LIST_PREVIEW: usize = 10;
 /// The rank of the headings and the dropdown row: after every row, so the engine's seat on a page
@@ -133,9 +138,9 @@ pub enum Sec {
     /// The account library's items in progress.
     Continue,
     Row(RowId),
-    /// Continue Watching's heading (drawn, not focused).
+    /// Continue Watching's heading: a pointer stop with a chevron, never a D-pad stop.
     ContinueMore,
-    /// A catalog row's heading (drawn, not focused).
+    /// A catalog row's heading: a pointer stop with a chevron, never a D-pad stop.
     More(RowId),
     /// List mode: Continue Watching's item `i`. Its element is the card's.
     ContinueItem(usize),
@@ -180,6 +185,21 @@ fn row_retry_rect(r: Rect, measure: &dyn sn_machine::machine::Measure) -> Rect {
 /// A catalog row's See all element (its shelf's tile, or its list's last row).
 pub fn more_elem(id: RowId) -> u32 {
     MORE_BASE + row_group(id).0
+}
+
+/// A catalog row's heading element: a pointer stop (D-pad moves never land on it) that opens the
+/// row's See all.
+fn head_elem(id: RowId) -> u32 {
+    HEAD_BASE + row_group(id).0
+}
+
+/// The See all a heading element opens, or `None` for any other element.
+fn heading_see_all(elem: u32) -> Option<u32> {
+    match elem {
+        CW_HEAD_ELEM => Some(CW_MORE_ELEM),
+        e if (HEAD_BASE..HEAD_BASE + 0x0100_0000).contains(&e) => Some(e - HEAD_BASE + MORE_BASE),
+        _ => None,
+    }
 }
 
 /// Is `elem` a catalog row's See all?
@@ -415,6 +435,9 @@ impl Page {
         if elem == CW_MORE_ELEM || is_more(elem) {
             return Some(elem);
         }
+        if let Some(e) = heading_see_all(elem) {
+            return Some(e);
+        }
         if self.cw.contains(elem) {
             return Some(CW_MORE_ELEM);
         }
@@ -534,8 +557,9 @@ impl StackPage<Bundle> for Page {
         if self.bar(cx) {
             out.push(SectionSpec::new(Sec::Types, Kind::Custom { height: dropdown::BAND, focusable: true }, TYPES_GROUP).ranked(LAST_RANK));
         }
-        // a heading is drawn, never a stop: UP and DOWN go row to row
-        let heading = |k: Sec, group: GroupId| SectionSpec::new(k, Kind::Custom { height: HEAD_TO_ROW, focusable: false }, group).ranked(LAST_RANK);
+        // a heading is the pointer's way to the row's See all; its group takes no D-pad landing
+        // (`plain_group`), so UP and DOWN still go row to row
+        let heading = |k: Sec, group: GroupId| SectionSpec::new(k, Kind::Custom { height: HEAD_TO_ROW, focusable: true }, group).ranked(LAST_RANK);
         let item = |k: Sec, group: GroupId, rank: u32| SectionSpec::new(k, Kind::Custom { height: item_list::ROW_H, focusable: true }, group).ranked(rank);
         // LEFT past a shelf's first card is re-delivered to the page, which opens the row's See all
         let shelf = |k: Sec, group: GroupId, rank: u32| {
@@ -623,6 +647,8 @@ impl StackPage<Bundle> for Page {
             Sec::Failed(id) => Some(row_retry_elem(id)),
             Sec::ContinueSeeAll => Some(CW_MORE_ELEM),
             Sec::SeeAll(id) => Some(more_elem(id)),
+            Sec::ContinueMore => Some(CW_HEAD_ELEM),
+            Sec::More(id) => Some(head_elem(id)),
             Sec::Item(..) | Sec::ContinueItem(_) => self.list_elems.get(&k).copied(),
             _ => None,
         }
@@ -656,6 +682,12 @@ impl StackPage<Bundle> for Page {
             Sec::Types => self.bar_rects(cx.measure, section.y).get(n).copied().unwrap_or(section),
             Sec::Item(..) | Sec::ContinueItem(_) | Sec::SeeAll(_) | Sec::ContinueSeeAll => item_list::face_rect(section),
             Sec::Failed(_) => row_retry_rect(section, cx.measure),
+            Sec::More(_) | Sec::ContinueMore => {
+                let Some((title, note, _)) = Self::heading(cx, k) else { return section };
+                let h = LinkedHeading::heading(&title, &note).bounded(SCR_W - 2.0 * MARGIN_X);
+                let m = h.measure(cx.measure);
+                h.face_rect(MARGIN_X, section.y + HEADING_TOP, 1.0, &m)
+            }
             Sec::Band => Self::band_overlay(Self::store(cx), self.types.kind(), 0, section.y)
                 .and_then(|o| o.action_frame_measured(cx.measure))
                 .unwrap_or(section),
@@ -668,6 +700,17 @@ impl StackPage<Bundle> for Page {
         match k {
             Sec::Types => dropdown::group(id, extent, self.bar_elems().len()),
             Sec::Item(..) | Sec::ContinueItem(_) | Sec::SeeAll(_) | Sec::ContinueSeeAll => item_list::group(id, extent),
+            // the pointer's only: no D-pad move lands here; one that leaves goes to the rows
+            Sec::More(_) | Sec::ContinueMore => GroupSpec {
+                id,
+                kind: GroupKind::Free,
+                seat: Seat::First,
+                reachable: AxisMask(0),
+                edge: [EdgeRule::Geometric, EdgeRule::Geometric, EdgeRule::Stop, EdgeRule::Stop],
+                extent,
+                len: 1,
+                elem: ElemKind::Control,
+            },
             _ => GroupSpec {
                 id,
                 kind: GroupKind::Free,
@@ -720,9 +763,10 @@ impl StackPage<Bundle> for Page {
                 }
                 let Some((title, note, _)) = Self::heading(f.cx, k) else { return };
                 let p = f.painter.alpha(f.page_alpha);
-                let y = r.y + HEADING_TOP;
-                // no key hint: YELLOW opening the row whole is documented in Settings' remote keys
-                sn_ui::cards::draw_heading(p, &title, &note, MARGIN_X, y, SCR_W - 2.0 * MARGIN_X, f.measure);
+                let h = LinkedHeading::heading(&title, &note).bounded(SCR_W - 2.0 * MARGIN_X);
+                let m = h.measure(f.measure);
+                let t = if focused(f, self.elem_of(k)) { 1.0 } else { 0.0 };
+                h.draw(p, MARGIN_X, r.y + HEADING_TOP, t, &m, f.measure);
             }
             Sec::SeeAll(_) | Sec::ContinueSeeAll => {
                 let on = focused(f, self.elem_of(k));
@@ -919,6 +963,7 @@ impl HomeScreen {
         match elem {
             TOGGLE_ELEM => self.toggle(fx),
             CW_MORE_ELEM => fx.push(Fx::Nav(NavOp::Push(AppArg::Continue))),
+            e if heading_see_all(e).is_some() => return heading_see_all(e).is_some_and(|m| self.activate(cx, m, fx)),
             e if is_more(e) => self.open_catalog(cx, e, fx),
             RETRY_ELEM | BAND_RETRY_ELEM => fx.push(Fx::App(AppFx::Catalog(CatalogCmd::RetryAddons))),
             e if is_row_retry(e) => {

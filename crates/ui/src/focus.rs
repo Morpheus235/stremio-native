@@ -331,7 +331,7 @@ impl<K: Copy + Eq + Hash> FocusEngine<K> {
         f.groups(cx, &mut groups);
         let Some(cur) = self.current(owner) else {
             // no focus yet: the first group's seat is the last resort (logged once by the caller)
-            let Some(spec) = groups.iter().find(|s| s.len > 0) else {
+            let Some(spec) = groups.iter().find(|s| s.len > 0 && s.reachable.0 != 0) else {
                 return Outcome::Nothing;
             };
             self.fell_back = true;
@@ -466,9 +466,10 @@ fn side(dir: Dir) -> usize {
 /// The `ContainerGroup`/`FirstInGroup` group lookup, shared: the named group, or the engine's
 /// last-resort fallback to the first non-empty group (logged once by the caller's `fell_back`
 /// path elsewhere) — `None` for no candidate at all, and `None` again for a candidate that is
-/// empty, since a `spec.len == 0` group has nowhere for either target to land.
+/// empty, since a `spec.len == 0` group has nowhere for either target to land. A pointer-only
+/// group (`reachable` empty, e.g. Home's row headings) is never the fallback.
 fn resolve_group(groups: &[GroupSpec], g: GroupId) -> Option<&GroupSpec> {
-    let spec = groups.iter().find(|s| s.id == g).or_else(|| groups.iter().find(|s| s.len > 0))?;
+    let spec = groups.iter().find(|s| s.id == g).or_else(|| groups.iter().find(|s| s.len > 0 && s.reachable.0 != 0))?;
     (spec.len > 0).then_some(spec)
 }
 
