@@ -863,6 +863,12 @@ where
         self.frame += 1;
         self.last_tick = tick;
         self.prepared = false;
+        for ev in &inputs {
+            if let InputKind::Key { key: Key::Up | Key::Down | Key::Left | Key::Right, edge: Edge::Down | Edge::Repeat, .. } = ev.kind {
+                crate::card_motion::note_dpad(tick.ms);
+            }
+        }
+        crate::card_motion::begin_dpad_frame(tick.ms);
         let f = self.frame;
         let mut report = FrameReport::default();
         let queued_before = self.queue.len();

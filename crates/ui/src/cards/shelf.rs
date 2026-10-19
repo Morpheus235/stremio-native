@@ -767,10 +767,11 @@ impl Shelf {
         Rect::new(r.x + self.landing.offset(n, i), r.y, r.w, r.h)
     }
 
-    /// Is the scroll still more than [`FLY_BY_PITCHES`] from where the focus will rest? Its cards
-    /// are then flown past and ask for no art.
+    /// Is a D-pad key held (`card_motion::dpad_held`), or the scroll still more than
+    /// [`FLY_BY_PITCHES`] from where the focus will rest? Its cards are then flown past and ask
+    /// for no art.
     fn flying<H: Host, S: CardSource<H>>(&self, src: &S, focus: Option<usize>) -> bool {
-        focus.filter(|&i| i < src.len())
+        crate::card_motion::dpad_held() || focus.filter(|&i| i < src.len())
             .is_some_and(|i| self.row.settle_lag(src.len(), i, self.style).abs() > FLY_BY_PITCHES * self.pitch())
     }
 

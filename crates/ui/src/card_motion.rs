@@ -229,6 +229,43 @@ impl Drop for FlyBy {
 /// deterministic frame at a time and waits for every placeholder ([`declines_request`]).
 pub fn flying() -> bool { !sn_gfx::dump::armed() && FLY_BY.with(Cell::get) }
 
+/// D-pad presses (or auto-repeats) inside [`HOLD_WINDOW_MS`] that make a HELD key: a hold walks a
+/// row at the remote's repeat rate, every card of it on screen for a moment, and a row flies past
+/// all of them ([`dpad_held`]) until the key has been let go for the window.
+const HOLD_PRESSES: usize = 3;
+const HOLD_WINDOW_MS: u32 = 600;
+thread_local! {
+    static DPAD_AT: Cell<[Option<u32>; HOLD_PRESSES]> = const { Cell::new([None; HOLD_PRESSES]) };
+    static DPAD_HELD: Cell<bool> = const { Cell::new(false) };
+}
+
+/// A D-pad key went down or repeated at `ms` (the dispatcher's ingest).
+pub fn note_dpad(ms: u32) {
+    DPAD_AT.with(|c| {
+        let mut at = c.get();
+        at.rotate_right(1);
+        at[0] = Some(ms);
+        c.set(at);
+    });
+}
+
+/// Once a frame, before the draw: is a D-pad key held at `ms`? When a hold ends the page is
+/// woken, so the cards it stopped on ask for their art even on an otherwise idle frame.
+pub fn begin_dpad_frame(ms: u32) {
+    let held = held_at(DPAD_AT.with(Cell::get), ms);
+    if DPAD_HELD.with(|h| h.replace(held)) && !held {
+        sn_machine::idle::invalidate();
+    }
+}
+
+fn held_at(at: [Option<u32>; HOLD_PRESSES], ms: u32) -> bool {
+    at[HOLD_PRESSES - 1].is_some_and(|oldest| ms.wrapping_sub(oldest) <= HOLD_WINDOW_MS)
+        && at[0].is_some_and(|last| ms.wrapping_sub(last) <= HOLD_WINDOW_MS / 2)
+}
+
+/// A D-pad key is held (or tapped as fast as one repeats): see [`begin_dpad_frame`].
+pub fn dpad_held() -> bool { DPAD_HELD.with(Cell::get) }
+
 /// A declined miss has no worker whose completion could wake it. The next sample
 /// MUST present, including an unknown card first appearing on an otherwise idle page.
 pub fn deferred() { sn_machine::idle::invalidate(); }
@@ -267,6 +304,15 @@ mod tests {
         let mut h = History::default();
         h.begin();
         assert_eq!(h.observe_at(ID, Rect::new(0.0, 0.0, 250.0, 375.0), 0, 1.0e9), Verdict::Unknown);
+    }
+    #[test]
+    fn three_quick_presses_are_a_hold_and_it_ends_soon_after_the_last() {
+        let at = |v: [u32; 3]| v.map(Some);
+        assert!(!held_at([Some(0), None, None], 0), "one press is a step");
+        assert!(held_at(at([200, 100, 0]), 200), "three inside the window");
+        assert!(!held_at(at([900, 450, 0]), 900), "slow steps are not a hold");
+        assert!(held_at(at([200, 100, 0]), 500), "still held just after the last repeat");
+        assert!(!held_at(at([200, 100, 0]), 501), "let go: the cards load");
     }
     #[test]
     fn limit_parsing_accepts_positive_numbers_and_rejects_everything_else() {
