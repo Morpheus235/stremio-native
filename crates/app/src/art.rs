@@ -53,11 +53,13 @@ use sn_ui::tex::{self, Decoded, PosterError, PosterReady, Warm};
 use crate::fetch::{NetFetch, Profile, ART_ACCEPT};
 
 /// Fetches out at once for keys a draw asked for.
-pub const VISIBLE_INFLIGHT_MAX: usize = 4;
+pub const VISIBLE_INFLIGHT_MAX: usize = 8;
 /// Fetches out at once for prefetches: speculation never takes a visible key's worker.
 pub const PREFETCH_INFLIGHT_MAX: usize = 1;
 /// Keys remembered (each a poster's texture at most, ~375 KB at 250x375).
 pub const SLOTS_MAX: usize = 160;
+// The texture cache must hold every slot, or it evicts ready art the source still counts as here.
+const _: () = assert!(sn_ui::tex::CACHE_CAP >= SLOTS_MAX);
 /// Frames without a draw after which a wanted key is cancelled (its row left the screen).
 pub const CANCEL_FRAMES: u64 = 30;
 /// Frames a prefetched key may wait for its first draw before it is forgotten.
@@ -498,7 +500,6 @@ impl Art {
     /// Once a frame, on the frame thread, before the present decision: advance the frame, fold
     /// every finished job into the cache, cancel what scrolled away, start what is wanted.
     pub fn drain(&self) {
-        self.inner.borrow_mut().frame += 1;
         for done in self.rx.try_iter().collect::<Vec<_>>() {
             let accept = {
                 let mut inner = self.inner.borrow_mut();
@@ -557,6 +558,13 @@ impl Art {
         }
         self.sweep();
         self.pump();
+    }
+
+    /// A frame was DRAWN. The clock that ages draws ([`CANCEL_FRAMES`], eviction) counts drawn
+    /// frames only: the loop runs many passes between presents on a still page, and counting those
+    /// aged the cards in front of the viewer until their art was evicted and they turned grey.
+    pub fn drawn_frame(&self) {
+        self.inner.borrow_mut().frame += 1;
     }
 
     /// Cancel what nobody is looking at any more.
@@ -763,6 +771,12 @@ impl tex::Source for Art {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One drawn frame, then the loop's fold.
+    fn frame(art: &Art) {
+        art.drawn_frame();
+        art.drain();
+    }
     use sn_ui::tex::Source;
     use std::sync::{Arc, Mutex};
 
@@ -862,7 +876,7 @@ mod tests {
         assert_eq!(keys(&started).len(), 1);
         let key = keys(&started)[0];
         ready(&art, key, 500, 750);
-        art.drain();
+        frame(&art);
         assert_eq!(art.probe(0, "https://img.example/a.jpg", 250, 375, false), Some(PosterKey(key)));
         assert!(art.idle());
         assert_eq!(art.stats().fetched, 1);
@@ -877,10 +891,10 @@ mod tests {
         assert_eq!(art.probe(0, "https://img.example/here.jpg", 250, 375, false), None);
         let here = keys(&started)[0];
         ready(&art, here, 500, 750);
-        art.drain();
+        frame(&art);
         // a held key: three presses inside the window
         for ms in [1000, 1100, 1200] {
-            sn_ui::card_motion::note_dpad(ms);
+            sn_ui::card_motion::note_dpad(ms, sn_machine::machine::Edge::Down);
         }
         sn_ui::card_motion::begin_dpad_frame(1200);
         for i in 0..20 {
@@ -915,13 +929,34 @@ mod tests {
         assert_eq!(art.warm(0, "https://img.example/ahead2.jpg", 250, 375, false), Warm::Claimed);
         assert_eq!(keys(&started).len(), VISIBLE_INFLIGHT_MAX + 1, "and only one");
         // next frame: only the last card is still drawn; one visible fetch comes back
-        art.drain();
+        frame(&art);
         art.probe(0, &format!("https://img.example/{}.jpg", VISIBLE_INFLIGHT_MAX + 2), 250, 375, false);
         let first = keys(&started)[0];
         art.tx.send(Fetched { key: first, outcome: Outcome::Failed { transient: false, error: PosterError::Fetch } }).unwrap();
-        art.drain();
+        frame(&art);
         let last = started.lock().unwrap().last().map(|(u, _, _)| u.clone()).unwrap();
         assert_eq!(last, format!("https://img.example/{}.jpg", VISIBLE_INFLIGHT_MAX + 2), "the most recently drawn waiting key starts next");
+    }
+
+    #[test]
+    fn a_still_page_between_presents_keeps_its_queue_and_its_art() {
+        let _g = sn_base::testlock::serial();
+        tex::reset_for_test(64 << 20);
+        let (art, started) = art(true);
+        for i in 0..VISIBLE_INFLIGHT_MAX + 3 {
+            art.probe(0, &format!("https://img.example/{i}.jpg"), 250, 375, false);
+        }
+        let first = keys(&started)[0];
+        ready(&art, first, 500, 750);
+        frame(&art);
+        // the page stops redrawing: the loop folds results many times without a drawn frame
+        for _ in 0..CANCEL_FRAMES * 4 {
+            art.drain();
+        }
+        assert_eq!(art.stats().cancelled, 0, "the cards still on screen were not taken for scrolled away");
+        assert!(art.take_freed().is_empty(), "and their art was not let go");
+        assert_eq!(art.probe(0, "https://img.example/0.jpg", 250, 375, false), Some(PosterKey(first)));
+        tex::reset_for_test(64 << 20);
     }
 
     #[test]
@@ -934,7 +969,7 @@ mod tests {
         assert_eq!(keys(&started).len(), VISIBLE_INFLIGHT_MAX);
         // the row leaves the screen: nothing draws it again
         for _ in 0..=CANCEL_FRAMES + 1 {
-            art.drain();
+            frame(&art);
         }
         assert!(started.lock().unwrap().iter().all(|(_, _, c)| c.is_cancelled()), "the requests out were told to stop");
         assert_eq!(keys(&started).len(), VISIBLE_INFLIGHT_MAX, "the queued ones never started");
@@ -944,7 +979,7 @@ mod tests {
             art.tx.send(Fetched { key: k, outcome: Outcome::Cancelled }).unwrap();
         }
         art.probe(0, "https://img.example/now-on-screen.jpg", 250, 375, false);
-        art.drain();
+        frame(&art);
         assert_eq!(started.lock().unwrap().last().unwrap().0, "https://img.example/now-on-screen.jpg");
     }
 
@@ -956,7 +991,7 @@ mod tests {
         art.probe(0, url, 250, 375, false);
         let key = keys(&started)[0];
         art.tx.send(Fetched { key, outcome: Outcome::Failed { transient: true, error: PosterError::Fetch } }).unwrap();
-        art.drain();
+        frame(&art);
         art.probe(0, url, 250, 375, false);
         assert_eq!(keys(&started).len(), 1, "inside the backoff nothing is asked");
         assert!(!art.failed(0, url, 250, 375, false), "a transient failure has not settled: the skeleton stays");
@@ -975,7 +1010,7 @@ mod tests {
         art.probe(0, url, 250, 375, false);
         let key = keys(&started)[0];
         art.tx.send(Fetched { key, outcome: Outcome::Failed { transient: false, error: PosterError::Decode } }).unwrap();
-        art.drain();
+        frame(&art);
         for _ in 0..10 {
             assert_eq!(art.probe(0, url, 250, 375, false), None);
         }
@@ -998,10 +1033,10 @@ mod tests {
         art.probe(0, url, 250, 375, false);
         let key = keys(&started)[0];
         art.tx.send(Fetched { key, outcome: Outcome::Failed { transient: false, error: PosterError::Fetch } }).unwrap();
-        art.drain();
+        frame(&art);
         for _ in 0..10 {
             assert_eq!(art.probe(0, url, 250, 375, false), None);
-            art.drain();
+            frame(&art);
         }
         assert_eq!(keys(&started).len(), 1, "a settled miss is held, not refetched every frame");
         assert!(art.failed(0, url, 250, 375, false));
@@ -1040,23 +1075,23 @@ mod tests {
         art.probe(0, url, 250, 375, false);
         let key = keys(&started)[0];
         miss(key);
-        art.drain();
+        frame(&art);
         assert!(art.failed(0, url, 250, 375, false), "settled: the fallback");
         assert!(hold_left(&art, key) <= Duration::from_millis(SETTLED_RETRY_MS), "the first miss is held briefly");
         expire(&art, key);
-        art.drain(); // nobody drew it: nothing is asked
+        frame(&art); // nobody drew it: nothing is asked
         assert_eq!(keys(&started).len(), 1);
         art.probe(0, url, 250, 375, false);
         assert_eq!(keys(&started).len(), 2, "the draw after the hold asks once more");
         assert!(art.failed(0, url, 250, 375, false), "while it is out the tile keeps its fallback");
         miss(key);
-        art.drain();
+        frame(&art);
         assert!(hold_left(&art, key) > Duration::from_millis(SETTLED_RETRY_MS), "a second miss settles for long");
         expire(&art, key);
         art.probe(0, url, 250, 375, false);
         assert_eq!(keys(&started).len(), 3);
         ready(&art, key, 250, 375);
-        art.drain();
+        frame(&art);
         assert!(!art.failed(0, url, 250, 375, false), "the pixels arrived");
         tex::reset_for_test(64 << 20);
     }
@@ -1074,14 +1109,14 @@ mod tests {
         for n in 1..=FALLBACK_AFTER_ATTEMPTS {
             assert!(!art.failed(0, url, 250, 375, false), "attempt {n}: still a wait");
             art.tx.send(Fetched { key, outcome: Outcome::Failed { transient: true, error: PosterError::Fetch } }).unwrap();
-            art.drain();
+            frame(&art);
             expire(&art, key);
             art.probe(0, url, 250, 375, false);
         }
         assert!(art.failed(0, url, 250, 375, false), "the fallback, after {FALLBACK_AFTER_ATTEMPTS} transient failures");
         assert_eq!(keys(&started).len() as u32, FALLBACK_AFTER_ATTEMPTS + 1, "and it is still asked");
         ready(&art, key, 250, 375);
-        art.drain();
+        frame(&art);
         assert!(!art.failed(0, url, 250, 375, false));
         tex::reset_for_test(64 << 20);
     }
@@ -1103,8 +1138,8 @@ mod tests {
         art.probe(0, "https://img.example/old.jpg", 250, 375, false);
         let old = keys(&started)[0];
         ready(&art, old, 10, 15);
-        art.drain();
-        art.drain();
+        frame(&art);
+        frame(&art);
         for i in 0..SLOTS_MAX {
             art.probe(0, &format!("https://img.example/{i}.jpg"), 250, 375, false);
             for k in std::mem::take(&mut *started.lock().unwrap()).into_iter().map(|(_, k, _)| k) {
@@ -1114,8 +1149,8 @@ mod tests {
         assert_eq!(art.take_freed(), vec![PosterKey(old)], "the oldest READY key leaves, and its texture with it");
         assert!(art.inner.borrow().slots.len() <= SLOTS_MAX + 1);
         // a screenful drawn THIS frame is never a victim, even past the bound
-        art.drain();
-        art.drain();
+        frame(&art);
+        frame(&art);
         let screen: Vec<String> = (0..8).map(|i| format!("https://img.example/screen{i}.jpg")).collect();
         for u in &screen {
             art.probe(0, u, 250, 375, false);

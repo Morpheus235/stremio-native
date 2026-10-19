@@ -621,7 +621,13 @@ impl Shelf {
     fn want<H: Host, S: CardSource<H>>(&mut self, cx: &Cx<'_, H>, src: &S) -> Option<CardEvent<H::Elem>> {
         let pitch = self.style.w + self.style.gap;
         let window = ((self.row.scroll_x() + SCR_W - self.style.margin_x) / pitch).ceil().max(0.0) as usize;
-        let focus = super::focused_index(&cx.focus, self.entry, src).map_or(0, |i| i + 1);
+        let focused = super::focused_index(&cx.focus, self.entry, src);
+        // Resting on the See all tile pages nothing: a landing carries the tile (and the row) past
+        // the new cards to the end again, which would ask again, page after page.
+        if focused.is_some_and(|i| src.see_all_at(i)) {
+            return None;
+        }
+        let focus = focused.map_or(0, |i| i + 1);
         let end = window.max(focus).saturating_add(LOOK_AHEAD);
         let retry = self.in_flight == Some(PageEdge::After) && self.retry.due();
         let was = self.asked;

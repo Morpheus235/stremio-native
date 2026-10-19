@@ -9,7 +9,8 @@
 //! * `play` / `stop` — start the `stremionative-playurl` stream / end the playback and leave the
 //!   player, as BACK would;
 //! * `sub=<i>` — show the file's `i`-th subtitle track (`sub=off`: none);
-//! * `up` `down` `left` `right` `ok` `back` — one synthetic press of that key.
+//! * `up` `down` `left` `right` `ok` `back` — one synthetic press of that key; a suffix `+`, `*`
+//!   or `-` sends only its press, an auto-repeat or its release (a held key: `right+ right* … right-`).
 //!
 //! It exists because measuring "after N playbacks" needs N playbacks in ONE process, with no
 //! remote in the loop. Compiled out without `devtriggers`.
@@ -29,6 +30,13 @@ pub fn poll(app: &mut App, tick: Tick) -> Vec<InputEvent<u32>> {
     let Some(text) = sn_base::devtrig::read(NAME) else { return inputs };
     let _ = std::fs::remove_file(sn_base::devtrig::path(NAME));
     for cmd in text.split_whitespace() {
+        // SDL's packed key state (`input::edge_of`): 1 pressed, 0x101 auto-repeat, 0 released
+        let (cmd, states): (&str, &[u32]) = match cmd.as_bytes().last() {
+            Some(b'+') => (&cmd[..cmd.len() - 1], &[1]),
+            Some(b'*') => (&cmd[..cmd.len() - 1], &[0x101]),
+            Some(b'-') => (&cmd[..cmd.len() - 1], &[0]),
+            _ => (cmd, &[1, 0]),
+        };
         let sym = match cmd {
             "mem" => {
                 log(&mem_line(app));
@@ -67,9 +75,7 @@ pub fn poll(app: &mut App, tick: Tick) -> Vec<InputEvent<u32>> {
                 continue;
             }
         };
-        // SDL's key state: 1 = pressed, 0 = released (`input::edge_of`)
-        inputs.push(key_input(sym, 0, 1, tick));
-        inputs.push(key_input(sym, 0, 0, tick));
+        inputs.extend(states.iter().map(|&state| key_input(sym, 0, state, tick)));
     }
     inputs
 }

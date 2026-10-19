@@ -15,8 +15,8 @@
 //! `Residency` one, which takes a frame to itself. The pixels are an owned render resource handed
 //! over once: they never enter logical state, and the recorder writes only `(key, ok)`.
 //!
-//! **Residency is bounded by BYTES, not only by the [`CACHE_CAP`] slot count.** The source's 64
-//! `Pslot`s cap how many DISTINCT items the cache can be asked to hold, but a poster (≈375 KB), a
+//! **Residency is bounded by BYTES, not only by the [`CACHE_CAP`] slot count.** The source's 160
+//! slots (`app/art.rs` `SLOTS_MAX`) cap how many DISTINCT items the cache can be asked to hold, but a poster (≈375 KB), a
 //! hero logo (≈1.44 MB) and a backdrop (≈3.7 MB) are not the same weight, so a cache holding 64
 //! slots of the heavier two costs tens of megabytes more than 64 posters — ordinary browsing (ten
 //! detail pages, each warming a backdrop and a logo, then a shelf of posters) reached ≈68 MB
@@ -143,9 +143,10 @@ fn mutate_cache<R>(f: impl FnOnce(&mut TexCache<PosterKey>) -> R) -> R {
 
 /// One entry per source slot: the source's own eviction policy (`free` on recycle) is the one
 /// LRU, so the cache never evicts on its own below this — **but see [`TEX_RESIDENT_BYTES_MAX`]**,
-/// the second ceiling that fires long before 64 slots do whenever the resident mix skews toward
-/// backdrops and hero logos rather than posters.
-const CACHE_CAP: usize = 64;
+/// the second ceiling (≈117 posters) that fires before the slot count does. Matches the source's
+/// `SLOTS_MAX` (`app/art.rs`): a smaller cap evicted ready posters the source still held, so a row
+/// scrolled back re-read every one from disk and re-uploaded it.
+pub const CACHE_CAP: usize = 160;
 
 /// **The cache's own residency ceiling — the tex pool's share of `RenderSet` rule (c)'s
 /// `RENDER_BYTES_MAX` (§8.3, `ui/frame/render_set.rs`).** Here is the arithmetic, so a future

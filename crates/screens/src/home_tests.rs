@@ -524,6 +524,38 @@ fn right_past_the_last_card_reaches_see_all_and_ok_opens_the_catalog() {
     assert!(focus(&app).is_some_and(|e| e < sn_ui::geom::NAMESPACE_FLOOR), "LEFT from the tile is the last card");
 }
 
+/// Focus resting on a row's See all tile does not page the row on. A page landing while focus is
+/// on the tile moved the tile (and the row with it) past the new cards, and the tile at the end
+/// again asked for the next page: every page in turn replaced the cards on screen until the
+/// catalog ran out.
+#[test]
+fn a_row_resting_on_its_see_all_tile_asks_for_no_more_pages() {
+    let _g = sn_base::testlock::serial();
+    let mut app = one_addon_home(3);
+    for _ in 0..3 {
+        app.press(Key::Right);
+    }
+    assert_eq!(focus(&app), Some(crate::home::more_elem(row(0))));
+    app.frames(5);
+    app.take_effects();
+    // a page that was on its way lands
+    let id = app.rig.catalog.rows()[0].id;
+    app.rig.catalog.want_more(id);
+    for job in app.rig.catalog.take_jobs() {
+        if let Job::Page { row, .. } = job {
+            app.rig.catalog.land(Landing::Page { row, result: Ok(page("tt-next-", 20)) });
+        }
+    }
+    let gen = app.rig.catalog.gen();
+    app.notify(StoreId::Catalog, gen);
+    app.frames(30);
+    let effects = app.take_effects();
+    assert!(
+        !effects.iter().any(|fx| matches!(fx, AppFx::Catalog(CatalogCmd::More(_)))),
+        "resting on the tile asks for nothing more: {effects:?}"
+    );
+}
+
 /// The pointer clicks a See all tile through the same hit map: a card's click, which commits on
 /// the button's release (`app::pointer`'s OK up).
 #[test]

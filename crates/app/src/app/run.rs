@@ -226,6 +226,7 @@ pub unsafe fn run(app: &mut App) {
                 SDL_GL_SwapWindow(app.win);
             }
             legs = Some(((logic_ms, draw_ms, ms_since(swap_start)), sn_base::diag::spans::take()));
+            app.bridge.art_drawn();
             watchdog.presented();
             // per DRAWN frame, so a profiler's once-per-N-frames line paces off frames that ran
             sn_ui::profile::frame_end();

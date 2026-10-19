@@ -349,6 +349,13 @@ impl Bridge {
         }
     }
 
+    /// A frame was drawn: the art source ages its draws by drawn frames ([`Art::drawn_frame`]).
+    pub fn art_drawn(&self) {
+        if let Some(art) = self.art {
+            art.drawn_frame();
+        }
+    }
+
     /// Fold every worker outcome in, then start what the landings made possible. `true` when a
     /// store changed.
     pub fn land(&mut self) -> bool {
@@ -1178,6 +1185,7 @@ mod tests {
             sn_machine::idle::frame_begin(1.0 / 60.0);
             let report = self.pages.frame_with(&mut self.bridge, Tick { ms: self.ms, dt_us: 16_000 }, inputs, Vec::new(), &mut NoTap, false);
             self.pages.draw(&mut self.bridge, true);
+            self.bridge.art_drawn();
             self.pages.prune(&report.unmounted);
             self.bridge.notify(&mut self.pages);
         }

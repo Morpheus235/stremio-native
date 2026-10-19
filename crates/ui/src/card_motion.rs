@@ -220,30 +220,53 @@ fn declines_in(dump: bool, verdict: Option<Verdict>, moving_declines: bool) -> b
 /// ([`declines_request`]).
 pub fn flying() -> bool { !sn_gfx::dump::armed() && dpad_held() }
 
-/// D-pad presses (or auto-repeats) inside [`HOLD_WINDOW_MS`] that make a HELD key: a hold walks
-/// the page at the remote's repeat rate, every card it passes on screen for a moment, and the page
-/// flies past all of them ([`flying`]) until the key has been let go.
+/// D-pad presses inside [`HOLD_WINDOW_MS`] that make a HELD key when the remote sends no
+/// auto-repeat (a burst of taps); a hold walks the page, every card it passes on screen for a
+/// moment, and the page flies past all of them ([`flying`]) until the key has been let go.
 const HOLD_PRESSES: usize = 3;
 const HOLD_WINDOW_MS: u32 = 600;
+/// A repeating key whose release never arrived counts as let go after this long without a repeat.
+const REPEAT_LOST_MS: u32 = 1500;
 thread_local! {
     static DPAD_AT: Cell<[Option<u32>; HOLD_PRESSES]> = const { Cell::new([None; HOLD_PRESSES]) };
+    /// The remote is auto-repeating a D-pad key: held until that key's release (`Edge::Up`).
+    static REPEATING: Cell<bool> = const { Cell::new(false) };
     static DPAD_HELD: Cell<bool> = const { Cell::new(false) };
 }
 
-/// A D-pad key went down or repeated at `ms` (the dispatcher's ingest).
-pub fn note_dpad(ms: u32) {
-    DPAD_AT.with(|c| {
-        let mut at = c.get();
-        at.rotate_right(1);
-        at[0] = Some(ms);
-        c.set(at);
-    });
+/// A D-pad key went down, repeated or was released at `ms` (the dispatcher's ingest). The
+/// remote's own repeat/release decide a hold exactly: timing between repeats varies (a long frame,
+/// the remote's repeat rate) and once flipped a hold to "let go" mid-row, loading what it passed.
+pub fn note_dpad(ms: u32, edge: sn_machine::machine::Edge) {
+    use sn_machine::machine::Edge;
+    match edge {
+        Edge::Up => REPEATING.with(|r| r.set(false)),
+        Edge::Down | Edge::Repeat => {
+            if edge == Edge::Repeat {
+                REPEATING.with(|r| r.set(true));
+            }
+            DPAD_AT.with(|c| {
+                let mut at = c.get();
+                at.rotate_right(1);
+                at[0] = Some(ms);
+                c.set(at);
+            });
+        }
+    }
 }
 
 /// Once a frame, before the draw: is a D-pad key held at `ms`? When a hold ends the page is
 /// woken, so the cards it stopped on ask for their art even on an otherwise idle frame.
 pub fn begin_dpad_frame(ms: u32) {
-    let held = held_at(DPAD_AT.with(Cell::get), ms);
+    let at = DPAD_AT.with(Cell::get);
+    let repeating = REPEATING.with(|r| {
+        let lost = at[0].is_none_or(|last| ms.wrapping_sub(last) > REPEAT_LOST_MS);
+        if lost {
+            r.set(false);
+        }
+        r.get()
+    });
+    let held = repeating || held_at(at, ms);
     let was = DPAD_HELD.with(|h| h.replace(held));
     if was != held {
         #[cfg(feature = "devtriggers")]
@@ -309,6 +332,26 @@ mod tests {
         assert!(!held_at(at([900, 450, 0]), 900), "slow steps are not a hold");
         assert!(held_at(at([200, 100, 0]), 500), "still held just after the last repeat");
         assert!(!held_at(at([200, 100, 0]), 501), "let go: the cards load");
+    }
+    #[test]
+    fn a_repeating_key_stays_held_through_slow_repeats_until_its_release() {
+        use sn_machine::machine::Edge;
+        note_dpad(10_000, Edge::Down);
+        begin_dpad_frame(10_000);
+        assert!(!dpad_held(), "one press is a step");
+        for ms in [10_500, 10_900, 11_300, 11_700] {
+            note_dpad(ms, Edge::Repeat);
+            begin_dpad_frame(ms);
+            assert!(dpad_held(), "a repeat at {ms}");
+            begin_dpad_frame(ms + 390);
+            assert!(dpad_held(), "between repeats 400 ms apart the hold does not drop");
+        }
+        note_dpad(11_800, Edge::Up);
+        begin_dpad_frame(12_200);
+        assert!(!dpad_held(), "the release ends it");
+        note_dpad(20_000, Edge::Repeat);
+        begin_dpad_frame(20_000 + REPEAT_LOST_MS + 1);
+        assert!(!dpad_held(), "a release that never arrived times out");
     }
     #[test]
     fn limit_parsing_accepts_positive_numbers_and_rejects_everything_else() {
