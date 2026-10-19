@@ -213,25 +213,16 @@ fn declines_in(dump: bool, verdict: Option<Verdict>, moving_declines: bool) -> b
     }
 }
 
-thread_local! { static FLY_BY: Cell<bool> = const { Cell::new(false) }; }
+/// Is the page being FLOWN PAST: a D-pad key held ([`dpad_held`])? An art source then shows what
+/// is already resident and starts no work, so a hold across a row, a grid or a list does not fetch
+/// every poster it walks over; the ones it stops on load once the key is let go. Never in a frame
+/// dump, which draws one deterministic frame at a time and waits for every placeholder
+/// ([`declines_request`]).
+pub fn flying() -> bool { !sn_gfx::dump::armed() && dpad_held() }
 
-/// While the guard lives, the cards drawn are being FLOWN PAST: a row whose scroll still has far
-/// to go to the focus (a held key, a burst of presses). A source shows what is already resident
-/// for them and starts no work ([`flying`]); the cards the scroll settles on ask as usual, so
-/// the row does not fetch every poster between where it was and where the focus went.
-pub struct FlyBy(bool);
-pub fn fly_by(on: bool) -> FlyBy { FlyBy(FLY_BY.with(|c| c.replace(on))) }
-impl Drop for FlyBy {
-    fn drop(&mut self) { FLY_BY.with(|c| c.set(self.0)); }
-}
-
-/// Is the card being drawn flown past ([`fly_by`])? Never in a frame dump, which draws one
-/// deterministic frame at a time and waits for every placeholder ([`declines_request`]).
-pub fn flying() -> bool { !sn_gfx::dump::armed() && FLY_BY.with(Cell::get) }
-
-/// D-pad presses (or auto-repeats) inside [`HOLD_WINDOW_MS`] that make a HELD key: a hold walks a
-/// row at the remote's repeat rate, every card of it on screen for a moment, and a row flies past
-/// all of them ([`dpad_held`]) until the key has been let go for the window.
+/// D-pad presses (or auto-repeats) inside [`HOLD_WINDOW_MS`] that make a HELD key: a hold walks
+/// the page at the remote's repeat rate, every card it passes on screen for a moment, and the page
+/// flies past all of them ([`flying`]) until the key has been let go.
 const HOLD_PRESSES: usize = 3;
 const HOLD_WINDOW_MS: u32 = 600;
 thread_local! {
@@ -253,8 +244,13 @@ pub fn note_dpad(ms: u32) {
 /// woken, so the cards it stopped on ask for their art even on an otherwise idle frame.
 pub fn begin_dpad_frame(ms: u32) {
     let held = held_at(DPAD_AT.with(Cell::get), ms);
-    if DPAD_HELD.with(|h| h.replace(held)) && !held {
-        sn_machine::idle::invalidate();
+    let was = DPAD_HELD.with(|h| h.replace(held));
+    if was != held {
+        #[cfg(feature = "devtriggers")]
+        sn_base::eventlog::log(if held { "dpad: held, rows fly past" } else { "dpad: let go, rows load" });
+        if !held {
+            sn_machine::idle::invalidate();
+        }
     }
 }
 

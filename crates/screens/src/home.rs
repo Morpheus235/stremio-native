@@ -33,7 +33,7 @@
 //!
 //! - the row's **See all tile** after its last loaded card (`CardSource::see_all`, the shared
 //!   shelf's tile): RIGHT from the last card reaches it, OK opens the row. A row still paging draws
-//!   its skeletons after the tile, and the page that lands goes in before it;
+//!   nothing past the tile; the page that lands goes in before it;
 //! - **LEFT on the row's first card** (the shelf's left edge is `EdgeRule::Screen`, and the page
 //!   takes the re-delivered key on its DOWN edge only, so a held LEFT walking back stops there);
 //! - the remote's **YELLOW** key on any card of the row (Settings lists it);

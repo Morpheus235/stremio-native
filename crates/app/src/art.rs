@@ -674,7 +674,7 @@ impl Art {
         Some((key, true))
     }
 
-    /// A card flown past (`card_motion::fly_by`): its texture if it is already here, and nothing
+    /// A card flown past (`card_motion::flying`, a held D-pad key): its texture if it is already here, and nothing
     /// asked, started or stamped as wanted otherwise.
     fn peek(&self, path: &str, w: i32, h: i32) -> Option<PosterKey> {
         let mut inner = self.inner.borrow_mut();
@@ -878,13 +878,16 @@ mod tests {
         let here = keys(&started)[0];
         ready(&art, here, 500, 750);
         art.drain();
-        {
-            let _fly = sn_ui::card_motion::fly_by(true);
-            for i in 0..20 {
-                assert_eq!(art.probe(0, &format!("https://img.example/{i}.jpg"), 250, 375, false), None);
-            }
-            assert_eq!(art.probe(0, "https://img.example/here.jpg", 250, 375, false), Some(PosterKey(here)), "a resident poster still draws");
+        // a held key: three presses inside the window
+        for ms in [1000, 1100, 1200] {
+            sn_ui::card_motion::note_dpad(ms);
         }
+        sn_ui::card_motion::begin_dpad_frame(1200);
+        for i in 0..20 {
+            assert_eq!(art.probe(0, &format!("https://img.example/{i}.jpg"), 250, 375, false), None);
+        }
+        assert_eq!(art.probe(0, "https://img.example/here.jpg", 250, 375, false), Some(PosterKey(here)), "a resident poster still draws");
+        sn_ui::card_motion::begin_dpad_frame(5000); // let go
         assert_eq!(keys(&started).len(), 1, "nothing flown past was asked for");
         assert_eq!(art.probe(0, "https://img.example/19.jpg", 250, 375, false), None);
         assert_eq!(keys(&started).len(), 2, "the card the scroll stops on asks as usual");
