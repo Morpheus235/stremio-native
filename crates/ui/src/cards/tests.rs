@@ -1528,7 +1528,7 @@ fn a_grid_takes_its_columns_style_and_left_edge_from_its_spec() {
     let pitch = EXT_STYLE.h + crate::card_row::LABEL_BAND_COLLAPSED + crate::consts::UNDER_LABEL_AIR;
     assert!(((r2.y + r2.h / 2.0) - (r1.y + r1.h / 2.0) - pitch).abs() < 0.01, "rows are one style pitch apart");
     assert!(matches!(r.sect.grid.neighbour(&r.src, r.key(100), Dir::Down), Step::Move(k) if k == r.key(104)));
-    assert!(matches!(r.sect.grid.neighbour(&r.src, r.key(103), Dir::Right), Step::Edge), "the last column is the fourth");
+    assert!(matches!(r.sect.grid.neighbour(&r.src, r.key(103), Dir::Right), Step::Move(k) if k == r.key(104)), "the last column is the fourth, and Right runs on into the next row");
     match r.sect.grid.group_spec(sn_machine::machine::GroupId(1), 600).kind {
         crate::screen::GroupKind::Grid { cols, .. } => assert_eq!(cols, 4),
         _ => panic!("a grid registers a Grid group"),

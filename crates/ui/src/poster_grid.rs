@@ -303,14 +303,15 @@ pub fn snap_row_in(g: &Geom, current: f32, row: usize, len: usize, top: f32, edg
         .unwrap_or(focused_top - edge)
 }
 
-/// The D-pad neighbour of card `index` in a `len`-card grid of `cols` columns. Down from above a
-/// short last row lands on its last card rather than stopping where no card sits directly below.
+/// The D-pad neighbour of card `index` in a `len`-card grid of `cols` columns. Left and Right
+/// run on through the row ends into the previous/next row, so a held key walks the whole grid.
+/// Down from above a short last row lands on its last card rather than stopping where no card sits directly below.
 pub fn neighbour(index: usize, len: usize, cols: usize, dir: crate::screen::Dir) -> Option<usize> {
     use crate::screen::Dir;
     let (row, col) = (index / cols, index % cols);
     match dir {
-        Dir::Left => col.checked_sub(1).map(|c| row * cols + c),
-        Dir::Right => (col + 1 < cols).then_some(index + 1),
+        Dir::Left => index.checked_sub(1),
+        Dir::Right => Some(index + 1),
         Dir::Up => row.checked_sub(1).map(|r| r * cols + col),
         Dir::Down => ((row + 1) * cols < len).then(|| ((row + 1) * cols + col).min(len - 1)),
     }
@@ -335,6 +336,15 @@ pub fn visible_in(g: &Geom, len: usize, top: f32, scroll: f32) -> std::ops::Rang
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn left_and_right_run_on_into_the_neighbouring_rows() {
+        use crate::screen::Dir;
+        assert_eq!(neighbour(5, 14, 6, Dir::Right), Some(6), "the last column steps to the next row's first");
+        assert_eq!(neighbour(6, 14, 6, Dir::Left), Some(5), "the first column steps back to the row above's last");
+        assert_eq!(neighbour(0, 14, 6, Dir::Left), None, "the first card is the edge");
+        assert_eq!(neighbour(13, 14, 6, Dir::Right), None, "and so is the last loaded one");
+    }
 
     #[test]
     fn six_portraits_keep_existing_card_size_and_share_one_pitch() {
