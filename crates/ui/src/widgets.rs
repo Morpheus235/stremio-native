@@ -8154,9 +8154,15 @@ pub fn badge(
             p.rrect(r, 7.0, 7.0, theme::BADGE_FILL);
             theme::TEXT_HEADING
         }
-        BadgeStyle::OverArt | BadgeStyle::Link { focused: false } => {
+        BadgeStyle::OverArt => {
             let rad = r.h * 0.5;
             p.rrect(r, rad, rad, theme::CONTROL_IDLE_FILL());
+            theme::CONTROL_IDLE_INK
+        }
+        // a link chip is a control: the plate with its rim, which a ground as dark as the fill
+        // (OLED black) would otherwise swallow
+        BadgeStyle::Link { focused: false } => {
+            draw_control_face(p, r, theme::CONTROL_IDLE_FILL(), false, ControlGround::Keyed);
             theme::CONTROL_IDLE_INK
         }
         BadgeStyle::Link { focused: true } => {
