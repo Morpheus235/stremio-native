@@ -1262,5 +1262,55 @@
   "app.player.audio_sync": {
     "value": "Audio-Sync",
     "description": "Player audio menu: the row (and the steps' title) moving the sound earlier or later against the picture, for streams whose sound is out of sync."
+  },
+  "app.settings.tv_guide": {
+    "value": "TV-Programm",
+    "description": "Settings: row and picker title — the programme guide Live TV channels show now / next from."
+  },
+  "app.settings.tv_guide_copy": {
+    "value": "Zeigt bei Live-TV-Sendern, was gerade und als Nächstes läuft – aus einem öffentlichen Programm für die Region. Sender werden über ihren Namen zugeordnet.",
+    "description": "TV guide picker: the line under the title."
+  },
+  "app.settings.tv_guide_de": {
+    "value": "Deutschland",
+    "description": "TV guide picker: a region whose public programme guide is loaded (a country name)."
+  },
+  "app.settings.tv_guide_at": {
+    "value": "Österreich",
+    "description": "TV guide picker: a region whose public programme guide is loaded (a country name)."
+  },
+  "app.settings.tv_guide_ch": {
+    "value": "Schweiz",
+    "description": "TV guide picker: a region whose public programme guide is loaded (a country name)."
+  },
+  "app.settings.tv_guide_uk": {
+    "value": "Vereinigtes Königreich",
+    "description": "TV guide picker: a region whose public programme guide is loaded (a country name)."
+  },
+  "app.settings.tv_guide_fr": {
+    "value": "Frankreich",
+    "description": "TV guide picker: a region whose public programme guide is loaded (a country name)."
+  },
+  "app.settings.tv_guide_it": {
+    "value": "Italien",
+    "description": "TV guide picker: a region whose public programme guide is loaded (a country name)."
+  },
+  "app.settings.tv_guide_es": {
+    "value": "Spanien",
+    "description": "TV guide picker: a region whose public programme guide is loaded (a country name)."
+  },
+  "app.live.now": {
+    "value": "Jetzt: {title}",
+    "description": "Live TV: the programme on air on a channel (its card's caption, the player's line above the title).",
+    "args": {
+      "title": "str"
+    }
+  },
+  "app.live.next": {
+    "value": "Danach: {title}",
+    "description": "Live TV: the programme after the one on air (the player's caption under the title).",
+    "args": {
+      "title": "str"
+    }
   }
 }

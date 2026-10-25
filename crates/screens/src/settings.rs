@@ -136,6 +136,8 @@ pub enum RootRow {
     Language,
     /// Multichannel audio: Automatic, Dolby Digital, PCM, Stereo, Pro Logic II (the picker).
     MultichannelAudio,
+    /// TV guide: Off or a region (the picker).
+    TvGuide,
 }
 
 impl FormId for RootRow {
@@ -196,6 +198,7 @@ fn pref_copy(pref: Pref) -> &'static str {
         Pref::UpNextAt => msg::app_settings_up_next_at_copy(),
         Pref::Language => msg::app_settings_language_copy(),
         Pref::MultichannelAudio => msg::app_settings_multichannel_audio_copy(),
+        Pref::TvGuide => msg::app_settings_tv_guide_copy(),
     }
 }
 
@@ -287,6 +290,7 @@ pub fn root_form(settings: &SettingsStore, account: &AccountStore, stats: bool) 
     let audio = pick(audio, RootRow::SubtitleOpacity, Pref::SubtitleOpacity);
     let audio = pick(audio, RootRow::AssStyling, Pref::AssStyling);
     let streams = langs(FormSection::new(msg::app_settings_streams()), RootRow::StreamLanguages, LangList::Streams);
+    let live = pick(FormSection::new(msg::app_tab_live_tv()), RootRow::TvGuide, Pref::TvGuide);
     Form::new()
         .section(account_section(account).item(
             RootRow::Addons,
@@ -297,6 +301,7 @@ pub fn root_form(settings: &SettingsStore, account: &AccountStore, stats: bool) 
         .section(playback)
         .section(audio)
         .section(streams)
+        .section(live)
         .section(
             pick(FormSection::new(msg::app_settings_interface()), RootRow::Language, Pref::Language)
                 .item(
@@ -1077,6 +1082,7 @@ mod tests {
                     msg::app_settings_playback(),
                     msg::app_settings_audio_subtitles(),
                     msg::app_settings_streams(),
+                    msg::app_tab_live_tv(),
                     msg::app_settings_interface(),
                     msg::app_settings_about_section(),
                 ]
@@ -1111,6 +1117,7 @@ mod tests {
                         AssStyling,
                     ],
                     vec![StreamLanguages],
+                    vec![TvGuide],
                     vec![Language, Stats, RemoteKeys],
                     vec![About, Legal, Privacy],
                 ]
@@ -1230,6 +1237,7 @@ mod tests {
                 SettingsPage::Picker(Pref::SubtitleOpacity),
                 SettingsPage::Picker(Pref::AssStyling),
                 SettingsPage::Languages(LangList::Streams),
+                SettingsPage::Picker(Pref::TvGuide),
                 SettingsPage::Picker(Pref::Language),
                 SettingsPage::Doc(Doc::Remote),
                 SettingsPage::Doc(Doc::About),

@@ -104,6 +104,9 @@ struct File {
     /// The audio sync per stream source (a live channel's id, else the item's), in ms, oldest first.
     #[serde(default)]
     audio_offsets: Vec<(String, i64)>,
+    /// `Pref::TvGuide` by region name (`de`, `uk`, …; absent, empty or unknown: off).
+    #[serde(default)]
+    tv_guide: String,
 }
 
 fn yes() -> bool {
@@ -204,6 +207,7 @@ fn of(file: File) -> Loaded {
         .seeded(Pref::AutoPlay, u8::from(file.auto_play))
         .seeded(Pref::UpNextAt, file.up_next_at)
         .seeded(Pref::Language, language_rung(&file.language))
+        .seeded(Pref::TvGuide, sn_screens::stores::settings::tv_guide_rung(&file.tv_guide))
         .with_audio_offsets(file.audio_offsets),
         search: SearchStore::new(file.recent_searches),
     }
@@ -241,6 +245,7 @@ pub fn snapshot(settings: &SettingsStore, search: &SearchStore) -> Vec<u8> {
         library_sort: settings.library_sort().name().to_string(),
         language: language_of(settings.get(Pref::Language)).tag().to_string(),
         audio_offsets: settings.audio_offsets().to_vec(),
+        tv_guide: sn_screens::stores::settings::tv_guide_name(settings.get(Pref::TvGuide)).to_string(),
     };
     serde_json::to_vec_pretty(&file).unwrap_or_default()
 }
@@ -422,6 +427,22 @@ mod tests {
         let mut s = SettingsStore::default();
         s.set(Pref::MultichannelAudio, MULTI_STEREO);
         assert!(String::from_utf8(snapshot(&s, &SearchStore::new(Vec::new()))).unwrap().contains(r#""multichannel_audio": "stereo""#));
+    }
+
+    /// The TV guide is kept by its region's name; absent or unknown is off.
+    #[test]
+    fn the_tv_guide_is_kept_by_its_region_name() {
+        let dir = sn_base::testscratch::process_dir("settings-tv-guide");
+        let path = dir.join("settings.json");
+        let mut s = SettingsStore::default();
+        assert_eq!(s.get(Pref::TvGuide), 0, "off on a fresh install");
+        assert!(s.set(Pref::TvGuide, sn_screens::stores::settings::tv_guide_rung("uk")));
+        write_atomic(&path, &snapshot(&s, &SearchStore::new(Vec::new()))).unwrap();
+        assert!(std::fs::read_to_string(&path).unwrap().contains(r#""tv_guide": "uk""#));
+        let back = load(&path).settings.get(Pref::TvGuide);
+        assert_eq!(sn_screens::stores::settings::tv_guide_url(back), Some("https://epgshare01.online/epgshare01/epg_ripper_UK1.xml.gz"));
+        std::fs::write(&path, br#"{"tv_guide":"xx"}"#).unwrap();
+        assert_eq!(load(&path).settings.get(Pref::TvGuide), 0, "an unknown region is off");
     }
 
     /// The interface language is kept by its tag, and boot reads it on its own (before the locale

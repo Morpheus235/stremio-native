@@ -287,5 +287,55 @@
   "app.player.tab_timing": "Sincronía",
   "app.player.tab_style": "Estilo",
   "app.player.style_note": "También tus valores por defecto",
-  "app.player.audio_sync": "Sincronía de audio"
+  "app.player.audio_sync": "Sincronía de audio",
+  "app.settings.tv_guide": {
+    "value": "Guía de TV",
+    "description": "Settings: row and picker title — the programme guide Live TV channels show now / next from."
+  },
+  "app.settings.tv_guide_copy": {
+    "value": "Muestra qué se emite ahora y a continuación en los canales de TV en directo, a partir de una guía pública de la región. Los canales se emparejan por su nombre.",
+    "description": "TV guide picker: the line under the title."
+  },
+  "app.settings.tv_guide_de": {
+    "value": "Alemania",
+    "description": "TV guide picker: a region whose public programme guide is loaded (a country name)."
+  },
+  "app.settings.tv_guide_at": {
+    "value": "Austria",
+    "description": "TV guide picker: a region whose public programme guide is loaded (a country name)."
+  },
+  "app.settings.tv_guide_ch": {
+    "value": "Suiza",
+    "description": "TV guide picker: a region whose public programme guide is loaded (a country name)."
+  },
+  "app.settings.tv_guide_uk": {
+    "value": "Reino Unido",
+    "description": "TV guide picker: a region whose public programme guide is loaded (a country name)."
+  },
+  "app.settings.tv_guide_fr": {
+    "value": "Francia",
+    "description": "TV guide picker: a region whose public programme guide is loaded (a country name)."
+  },
+  "app.settings.tv_guide_it": {
+    "value": "Italia",
+    "description": "TV guide picker: a region whose public programme guide is loaded (a country name)."
+  },
+  "app.settings.tv_guide_es": {
+    "value": "España",
+    "description": "TV guide picker: a region whose public programme guide is loaded (a country name)."
+  },
+  "app.live.now": {
+    "value": "Ahora: {title}",
+    "description": "Live TV: the programme on air on a channel (its card's caption, the player's line above the title).",
+    "args": {
+      "title": "str"
+    }
+  },
+  "app.live.next": {
+    "value": "A continuación: {title}",
+    "description": "Live TV: the programme after the one on air (the player's caption under the title).",
+    "args": {
+      "title": "str"
+    }
+  }
 }

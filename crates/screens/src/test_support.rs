@@ -38,6 +38,7 @@ pub struct TestRig {
     pub search: SearchStore,
     pub grid: GridStore,
     pub settings: SettingsStore,
+    pub epg: crate::stores::epg::EpgStore,
     pub chrome: ChromeBar,
     /// Every application effect the screens emitted, in order.
     pub effects: Vec<AppFx>,
@@ -69,6 +70,7 @@ impl TestRig {
             search: SearchStore::default(),
             grid: GridStore::new(),
             settings: SettingsStore::default(),
+            epg: crate::stores::epg::EpgStore::new(),
             chrome: ChromeBar::new(),
             effects: Vec::new(),
             search_jobs: Vec::new(),
@@ -159,6 +161,7 @@ impl Rig<Bundle> for TestRig {
                 search: &self.search,
                 grid: &self.grid,
                 settings: &self.settings,
+                epg: &self.epg,
                 session: SessionView { signed_in: self.account.account().is_some() },
             },
             measure: &self.measure,

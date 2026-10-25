@@ -661,6 +661,7 @@ impl PlayerScreen {
         (v.phase as u8).hash(&mut h);
         v.caption.hash(&mut h);
         self.fail_focus.hash(&mut h);
+        cx.views.epg.gen().hash(&mut h);
         n.start_over.hash(&mut h);
         self.stalled(n.ms).hash(&mut h);
         v.clock.seeking.hash(&mut h);
@@ -971,6 +972,14 @@ impl PlayerScreen {
 
     // ---- drawing ------------------------------------------------------------------------------
 
+    /// A live channel's TV guide lines: what is on air (over the title) and what follows (over the
+    /// control row); `None` each for anything else or what the guide does not know.
+    fn guide_lines(&self, cx: &Cx<'_, Bundle>) -> (Option<String>, Option<String>) {
+        let Some(item) = self.arg.item.as_ref().filter(|i| matches!(i.kind.as_str(), "tv" | "channel")) else { return (None, None) };
+        let Some(nn) = cx.views.epg.now_next(&item.name) else { return (None, None) };
+        (nn.now.map(|p| msg::app_live_now(&p.title)), nn.next.map(|p| msg::app_live_next(&p.title)))
+    }
+
     fn draw_hud(&self, p: Painter, n: &Now, cx: &Cx<'_, Bundle>, measure: &dyn Measure) {
         let env = Env::inert();
         // front-loaded: dark enough under the title block and the Up Next line by a third of the
@@ -980,6 +989,7 @@ impl PlayerScreen {
         p.rect(Rect::new(0.0, top, SCR_W, knee - top), 0.0, theme::scrim_black(0.0), theme::scrim_black(SCRIM_KNEE_A), 0.0);
         p.rect(Rect::new(0.0, knee, SCR_W, SCR_H - knee), 0.0, theme::scrim_black(SCRIM_KNEE_A), theme::scrim_black(SCRIM_FOOT_A), 0.0);
         let focus = self.ctl.hud.focus;
+        let guide = self.guide_lines(cx);
         // the control row: the discs, or the Up Next pair standing in for them
         let row_left = if n.offered {
             let rects = up_next_rects(measure);
@@ -1021,9 +1031,13 @@ impl PlayerScreen {
             } else {
                 disc_rect(0).x
             };
-            // an episode picked in the Episodes panel, waiting on its addon's streams
-            if let Some(to) = &self.advancing {
-                let line = format!("{} \u{b7} {}", msg::app_player_up_next(), to.title);
+            // an episode picked in the Episodes panel, waiting on its addon's streams; a live
+            // channel's next programme in the same place
+            let line = match &self.advancing {
+                Some(to) => Some(format!("{} \u{b7} {}", msg::app_player_up_next(), to.title)),
+                None => guide.1.clone(),
+            };
+            if let Some(line) = line {
                 let fitted = measure.fit_line(&line, CTRL_RIGHT - left, theme::size::CAPTION, false);
                 p.text(fitted.as_ptr(), CTRL_RIGHT, UP_NEXT_CAPTION_Y, theme::size::CAPTION, theme::TEXT_SECONDARY, 2, 0);
             }
@@ -1031,8 +1045,9 @@ impl PlayerScreen {
         };
         // the title block, clear of the row
         let budget = (row_left - TITLE_GAP - SB_X).max(0.0);
-        if !self.kicker.is_empty() {
-            let k = measure.fit_line(&self.kicker, budget, theme::size::CAPTION, true);
+        let kicker = if self.kicker.is_empty() { guide.0.unwrap_or_default() } else { self.kicker.clone() };
+        if !kicker.is_empty() {
+            let k = measure.fit_line(&kicker, budget, theme::size::CAPTION, true);
             p.text(k.as_ptr(), SB_X, KICKER_Y, theme::size::CAPTION, theme::TEXT_PRIMARY, 0, 1);
         }
         let t = measure.fit_line(&self.title, budget, HUD_TITLE_SZ, true);
@@ -1386,7 +1401,7 @@ impl Machine<Bundle> for PlayerScreen {
                 Handled::Yes
             }
             ScreenEvent::StoreChanged(o, _) => {
-                if *o == StoreId::Playback.ord() || *o == StoreId::Detail.ord() {
+                if *o == StoreId::Playback.ord() || *o == StoreId::Detail.ord() || *o == StoreId::Epg.ord() {
                     fx.invalidate(Provenance::Landing(fx.from()));
                 }
                 Handled::No

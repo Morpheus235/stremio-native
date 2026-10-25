@@ -56,7 +56,8 @@ The packages (ipk + sha256) are on the [download page](https://morpheus235.githu
 
 ## Features
 
-- Stremio sign-in, your account's addons, Continue Watching, Library, Search, Live TV
+- Stremio sign-in, your account's addons, Continue Watching, Library, Search, Live TV with an
+  optional TV guide (now / next from a public XMLTV guide)
 - Hardware playback with probing before load; HLS; Dolby Vision Profile 7 played as 8.1
 - Audio the TV can't decode (TrueHD, DTS, FLAC, PCM…) converted in software. Under
   **Settings → Multichannel audio**, 5.1 is sent as Dolby Digital (optical/ARC), as PCM (eARC),

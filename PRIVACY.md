@@ -13,6 +13,7 @@ What leaves the TV, and where it goes:
 | Subtitle file downloads | the hosts in a subtitles addon's links | when you pick an addon's subtitle, or your subtitle languages pick one |
 | Media requests, with any headers an addon asked for | the hosts that serve the stream | while you play |
 | Artwork requests | the hosts in the addon's image URLs | while you browse |
+| A request for your region's programme guide (no data of yours beyond the request itself) | `epgshare01.online` | at most once a day, only while Settings > TV guide names a region (Off by default) |
 | The ID of the episode or film you play (an IMDb, MyAnimeList or Kitsu ID) | `api.introdb.app`; for anime `api.aniskip.com`, `kitsu.io` to turn a Kitsu ID into a MyAnimeList one, and `arm.haglund.dev` to turn an IMDb ID and season into one when introdb.app has nothing | once per playback, to find its intro, recap and credits — never while Settings > Skip intros is Off |
 
 Each addon is run by its own operator under its own terms; an addon's URL can carry your

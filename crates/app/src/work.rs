@@ -45,6 +45,8 @@ pub enum Done {
     Skips { gen: u32, source: &'static str, result: Result<sn_stremio::skip::Skips, FetchError> },
     /// One subtitles addon's answer for a playback (`gen` names it), by the addon's name.
     Subtitles { gen: u32, addon: String, result: Result<Vec<sn_stremio::types::Subtitle>, FetchError> },
+    /// The TV guide (`crate::guide`).
+    Epg(sn_screens::stores::epg::EpgLanding),
 }
 
 /// The mailbox: workers post, the frame thread drains.
@@ -219,6 +221,21 @@ impl Work {
                 Done::Grid(fail),
             );
         }
+    }
+
+    /// Load the TV guide (`crate::guide::load`), cached in `files`.
+    pub fn epg(&self, runner: &dyn Runner, files: std::sync::Arc<dyn crate::account::Files>, job: sn_screens::stores::epg::EpgJob) {
+        use sn_screens::stores::epg::EpgLanding;
+        let url = job.url;
+        runner.run(
+            "tv-guide",
+            Box::new(move |off| {
+                let fetch = NetFetch::new(off, Profile::Guide);
+                Done::Epg(EpgLanding { url, result: crate::guide::load(&fetch, &*files, &job) })
+            }),
+            self.tx.clone(),
+            Done::Epg(EpgLanding { url, result: Err(sn_screens::stores::fetch_reason(&refused())) }),
+        );
     }
 
     /// Look up one playback's skip markers.

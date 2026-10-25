@@ -17,6 +17,7 @@
 //! * [`meta`] — which addons a meta request goes to, first answer in addon order wins.
 //! * [`streams`] — per-addon stream lookup for one video.
 //! * [`subtitles`] — per-addon subtitle lookup for the file that plays.
+//! * [`epg`] — XMLTV programme guides: what a live channel shows now and next.
 //! * [`skip`] — intro/recap/credits markers from introdb.app and AniSkip, validated per stream.
 //! * [`sched`] — the viewport-first request queue: what is on screen loads first, and work for
 //!   rows scrolled past is cancelled rather than drained top-down.
@@ -25,6 +26,7 @@
 
 pub mod account;
 pub mod catalog;
+pub mod epg;
 pub mod library;
 pub mod links;
 pub mod manifest;

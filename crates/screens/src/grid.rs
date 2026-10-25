@@ -111,7 +111,7 @@ impl StackPage<Bundle> for Page {
     type Cards<'a> = ItemCards<'a>;
 
     fn revision(&self, cx: &Cx<'_, Bundle>) -> u64 {
-        (u64::from(cx.views.grid.gen()) << 32) | cx.views.grid.items(&self.key).len() as u64 | (u64::from(self.list) << 31)
+        (u64::from(cx.views.grid.gen()) << 32) | cx.views.grid.items(&self.key).len() as u64 | (u64::from(self.list) << 31) ^ (u64::from(cx.views.epg.gen()) << 48)
     }
     fn sections(&self, cx: &Cx<'_, Bundle>, out: &mut Vec<SectionSpec<Sec>>) {
         out.push(SectionSpec::new(Sec::Head, Kind::Custom { height: HEAD_H, focusable: true }, HEAD_GROUP).ranked(2));
@@ -141,6 +141,7 @@ impl StackPage<Bundle> for Page {
             base: CARD_BASE,
             more: matches!(self.state(cx.views.grid), GridState::Ready { more: true }),
             watched: Some(cx.views.library),
+            guide: Some(cx.views.epg),
         })
     }
     fn elem_of(&self, k: Sec) -> Option<u32> {
@@ -183,7 +184,7 @@ impl StackPage<Bundle> for Page {
             Sec::Row(i) => {
                 let Some(item) = f.cx.views.grid.items(&self.key).get(i) else { return };
                 let focused = f.focus.current.is_some_and(|key| key.elem == CARD_BASE + i as u32);
-                item_list::draw(f, r, &ListRow::of_meta(item, None), focused);
+                item_list::draw(f, r, &ListRow::of_meta(item, None).on_air(crate::cards::on_air(item, Some(f.cx.views.epg))), focused);
             }
             Sec::Status => {
                 let state = self.state(f.cx.views.grid);
@@ -291,7 +292,7 @@ impl Machine<Bundle> for GridScreen {
                 }
                 Handled::Yes
             }
-            ScreenEvent::StoreChanged(ord, _) if *ord == StoreId::Grid.ord() || *ord == StoreId::Settings.ord() => {
+            ScreenEvent::StoreChanged(ord, _) if *ord == StoreId::Grid.ord() || *ord == StoreId::Settings.ord() || *ord == StoreId::Epg.ord() => {
                 fx.invalidate(Provenance::Landing(fx.from()));
                 Handled::Yes
             }
@@ -300,14 +301,14 @@ impl Machine<Bundle> for GridScreen {
                     (Some(StackEvent::Card(_, CardEvent::Activate(elem))), _) | (_, ScreenEvent::Activate(elem))
                         if *elem >= CARD_BASE && *elem < RETRY_ELEM =>
                     {
-                        let items = ItemCards { items: cx.views.grid.items(&self.page.key), base: CARD_BASE, more: false, watched: None };
+                        let items = ItemCards { items: cx.views.grid.items(&self.page.key), base: CARD_BASE, more: false, watched: None, guide: None };
                         if let Some(item) = items.item(*elem) {
                             fx.push(Fx::Nav(NavOp::Push(AppArg::Detail(item_ref(item, &self.page.title)))));
                         }
                     }
                     // a list row's OK: the Stack reports no press for a plain element, focus names it
                     (None, ScreenEvent::PressCommit(_)) if self.page.list => {
-                        let items = ItemCards { items: cx.views.grid.items(&self.page.key), base: CARD_BASE, more: false, watched: None };
+                        let items = ItemCards { items: cx.views.grid.items(&self.page.key), base: CARD_BASE, more: false, watched: None, guide: None };
                         if let Some(item) = cx.focus.current.filter(|k| k.entry == self.entry).and_then(|k| items.item(k.elem)) {
                             fx.push(Fx::Nav(NavOp::Push(AppArg::Detail(item_ref(item, &self.page.title)))));
                         }
@@ -333,7 +334,7 @@ impl Machine<Bundle> for GridScreen {
                     }),
                 };
                 if let Some((elem, at)) = held {
-                    let items = ItemCards { items: cx.views.grid.items(&self.page.key), base: CARD_BASE, more: false, watched: None };
+                    let items = ItemCards { items: cx.views.grid.items(&self.page.key), base: CARD_BASE, more: false, watched: None, guide: None };
                     if let Some(item) = items.item(elem) {
                         let anchor = at.unwrap_or_else(crate::menu::fallback_anchor);
                         fx.push(Fx::Nav(NavOp::Present(AppArg::Menu(MenuArg {

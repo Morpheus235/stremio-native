@@ -45,7 +45,7 @@ use crate::art::Art;
 use crate::work::{Done, Runner, Threads, Work};
 
 /// The stores the tree hears about, in [`Bridge::notify`]'s order.
-const TOLD: [StoreId; 8] = [
+const TOLD: [StoreId; 9] = [
     StoreId::Catalog,
     StoreId::Detail,
     StoreId::Search,
@@ -54,6 +54,7 @@ const TOLD: [StoreId; 8] = [
     StoreId::Account,
     StoreId::Addons,
     StoreId::Library,
+    StoreId::Epg,
 ];
 
 pub struct Bridge {
@@ -67,6 +68,8 @@ pub struct Bridge {
     pub search: SearchStore,
     pub grid: GridStore,
     pub settings: SettingsStore,
+    /// The TV guide Live TV's cards and the player read now / next from.
+    pub epg: sn_screens::stores::epg::EpgStore,
     pub chrome: ChromeBar,
     pub playback: Playback,
     measure: Box<dyn sn_machine::machine::Measure>,
@@ -75,7 +78,7 @@ pub struct Bridge {
     services: Services,
     art: Option<&'static Art>,
     /// The generation each store last announced to the tree ([`TOLD`]'s order).
-    told: [Option<u32>; 8],
+    told: [Option<u32>; 9],
     /// The playback view changed since the tree was last told.
     playback_moved: bool,
     /// The last stream started, for the failure read-out's *Try again*.
@@ -121,6 +124,7 @@ impl Bridge {
             search: SearchStore::default(),
             grid: GridStore::new(),
             settings: SettingsStore::default(),
+            epg: sn_screens::stores::epg::EpgStore::new(),
             chrome: ChromeBar::new(),
             playback,
             measure,
@@ -128,7 +132,7 @@ impl Bridge {
             runner,
             services: Services::device(),
             art,
-            told: [None; 8],
+            told: [None; 9],
             playback_moved: false,
             last_play: None,
             built_epoch: 0,
@@ -185,6 +189,13 @@ impl Bridge {
         let jobs = self.search.tick(now_ms, self.catalog.addons(), self.addons.filter());
         if !jobs.is_empty() {
             self.work.search(&*self.runner, jobs);
+        }
+        // the guide reads the wall clock; a set whose clock is not yet set asks nothing
+        if let Some(now_s) = wall_clock_s() {
+            let source = sn_screens::stores::settings::tv_guide_url(self.settings.get(sn_screens::stores::settings::Pref::TvGuide));
+            if let Some(job) = self.epg.tick(source, now_s) {
+                self.work.epg(&*self.runner, self.services.files.clone(), job);
+            }
         }
         self.persist();
     }
@@ -384,6 +395,7 @@ impl Bridge {
                 }
                 Done::Search(l) => self.search.land(l),
                 Done::Grid(l) => self.grid.land(l),
+                Done::Epg(l) => self.epg.land(l),
                 Done::Skips { gen, source, result } => {
                     // one line per lookup: the service and what it knew, never the URL
                     match &result {
@@ -489,6 +501,7 @@ impl Bridge {
             self.account.gen(),
             self.addons.gen(),
             self.library.gen(),
+            self.epg.gen(),
         ];
         for (i, (id, gen)) in TOLD.into_iter().zip(gens).enumerate() {
             if self.told[i] != Some(gen) {
@@ -628,6 +641,12 @@ pub fn audio_key(req: &sn_screens::registry::PlayRequest) -> String {
     req.item.as_ref().map(|i| i.id.clone()).unwrap_or_default()
 }
 
+/// The wall clock in Unix seconds; `None` while the set's clock is not set yet (before 2024).
+fn wall_clock_s() -> Option<i64> {
+    let s = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.as_secs() as i64;
+    (s >= 1_704_067_200).then_some(s)
+}
+
 impl Rig<Bundle> for Bridge {
     fn split(&mut self) -> Split<'_, Bundle> {
         Split {
@@ -642,6 +661,7 @@ impl Rig<Bundle> for Bridge {
                 search: &self.search,
                 grid: &self.grid,
                 settings: &self.settings,
+                epg: &self.epg,
                 session: SessionView { signed_in: self.account.account().is_some() },
             },
             measure: &*self.measure,
@@ -984,7 +1004,7 @@ mod tests {
                         };
                         bridge.detail.land(crate::work::run_detail_with(&net, job));
                     }
-                    Done::Account(_) | Done::Addons(_) | Done::Library(_) | Done::Skips { .. } | Done::Subtitles { .. } => {}
+                    Done::Account(_) | Done::Addons(_) | Done::Library(_) | Done::Skips { .. } | Done::Subtitles { .. } | Done::Epg(_) => {}
                     Done::Search(sn_screens::stores::search::SearchLanding { qgen, row, .. }) => {
                         let url = bridge.search.rows()[row].pager.next_url().unwrap();
                         let result = sn_stremio::get_json(&net, &url, &[]);

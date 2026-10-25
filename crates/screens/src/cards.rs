@@ -65,6 +65,18 @@ pub struct ItemCards<'a> {
     /// The library whose watched items wear the tick (stremio-web's Discover: an item the account
     /// holds with `timesWatched > 0`); `None`: no ticks.
     pub watched: Option<&'a crate::stores::library::LibraryStore>,
+    /// The TV guide a live channel's caption reads what is on air from; `None`: no guide line.
+    pub guide: Option<&'a crate::stores::epg::EpgStore>,
+}
+
+/// A live channel's "Now: …" line from the TV guide; `None` for anything else, with no guide, or
+/// when the guide does not know the channel or has nothing on air.
+pub fn on_air(item: &MetaPreview, guide: Option<&crate::stores::epg::EpgStore>) -> Option<String> {
+    if !matches!(item.kind.as_str(), "tv" | "channel") {
+        return None;
+    }
+    let now = guide?.now_next(&item.name)?.now?;
+    Some(sn_platform::i18n::msg::app_live_now(&now.title))
 }
 
 impl ItemCards<'_> {
@@ -92,7 +104,10 @@ impl CardSource<Bundle> for ItemCards<'_> {
     }
     fn label(&self, i: usize) -> TileLabel {
         match self.items.get(i) {
-            Some(item) => TileLabel::titled(&item.name, item.release_info.as_deref().unwrap_or("")),
+            Some(item) => match on_air(item, self.guide) {
+                Some(now) => TileLabel::titled(&item.name, &now),
+                None => TileLabel::titled(&item.name, item.release_info.as_deref().unwrap_or("")),
+            },
             None => TileLabel::default(),
         }
     }
@@ -126,5 +141,32 @@ mod tests {
         assert_eq!(art_url(Some("HTTPS://img.example/x.jpg")), Some("HTTPS://img.example/x.jpg"));
         assert_eq!(art_url(Some("")), None);
         assert_eq!(art_url(None), None);
+    }
+
+    /// A live channel's caption is what the TV guide has on air; a film, a channel the guide does
+    /// not know, or no guide at all keeps the year line.
+    #[test]
+    fn a_live_channels_caption_is_what_is_on_air() {
+        use crate::stores::epg::{EpgLanding, EpgStore};
+        let _l = sn_platform::i18n::language_on_this_thread_for_test(sn_platform::i18n::Preference::En);
+        const URL: &str = "https://example.test/g.xml";
+        let t0 = 1_792_929_600; // 2026-10-25 12:00 UTC
+        let doc = r#"<tv><programme start="20261025120000 +0000" stop="20261025130000 +0000" channel="Das.Erste.de"><title>Tagesschau</title></programme></tv>"#;
+        let mut guide = EpgStore::new();
+        guide.tick(Some(URL), t0 + 60);
+        guide.land(EpgLanding { url: URL, result: sn_stremio::epg::parse(doc.as_bytes(), t0 - 3600, t0 + 86_400) });
+        let items = [
+            meta(r#"{"id":"vavoo_1","type":"tv","name":"DAS ERSTE HD","releaseInfo":"DE"}"#),
+            meta(r#"{"id":"vavoo_2","type":"tv","name":"Unknown TV","releaseInfo":"DE"}"#),
+            meta(r#"{"id":"tt1","type":"movie","name":"Das Erste","releaseInfo":"2001"}"#),
+        ];
+        let caption = |g: Option<&EpgStore>, i: usize| {
+            let cards = ItemCards { items: &items, base: 0, more: false, watched: None, guide: g };
+            cards.label(i).caption.map(|c| c.into_string().unwrap())
+        };
+        assert_eq!(caption(Some(&guide), 0).as_deref(), Some("Now: Tagesschau"));
+        assert_eq!(caption(Some(&guide), 1).as_deref(), Some("DE"), "a channel the guide does not know");
+        assert_eq!(caption(Some(&guide), 2).as_deref(), Some("2001"), "a film is never matched");
+        assert_eq!(caption(None, 0).as_deref(), Some("DE"), "no guide");
     }
 }

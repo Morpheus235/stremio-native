@@ -547,7 +547,7 @@ impl StackPage<Bundle> for Page {
             return None;
         }
         let row = Self::rows(cx).get(r)?;
-        Some(ItemCards { items: row.preview(), base: self.base(r), more: false, watched: None })
+        Some(ItemCards { items: row.preview(), base: self.base(r), more: false, watched: None, guide: None })
     }
 
     fn elem_of(&self, k: Sec) -> Option<u32> {

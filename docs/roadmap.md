@@ -20,6 +20,8 @@
     loading/empty/error state per row and recent searches.
   - Detail: episodes by season, and each addon's streams with its own loading state.
   - Top-bar and colour-key shortcuts.
+  - Live TV's TV guide (Settings → TV guide): now / next on channel cards and in the player,
+    from a region's public XMLTV guide matched by channel name (`crates/stremio/src/epg.rs`).
 - **Player.**
   - Probe before Load: the bundled demuxer reads the container first, so the Load names the
     real codecs.

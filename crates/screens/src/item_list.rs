@@ -80,6 +80,14 @@ impl<'a> ListRow<'a> {
         }
     }
 
+    /// A live channel's on-air line (`cards::on_air`) in place of the year · type · source line.
+    pub fn on_air(mut self, now: Option<String>) -> Self {
+        if let Some(now) = now {
+            self.meta = now;
+        }
+        self
+    }
+
     /// A library item: its type and, for a series in progress, the episode it stopped on; in
     /// progress, the time left trails ("42 min left") and the thumbnail wears the resume bar.
     pub fn of_library(item: &'a LibraryItem) -> Self {

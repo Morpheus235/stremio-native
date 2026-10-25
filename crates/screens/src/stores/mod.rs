@@ -8,6 +8,7 @@ pub mod account; // the session: restore, sign in (password or device link), sig
 pub mod addons; // THE addons in use (`AddonsStore::in_use`): defaults, or the account's collection
 pub mod catalog;
 pub mod detail;
+pub mod epg; // the TV guide: what Live TV's channels show now and next
 pub mod library; // the account's library: Continue Watching and the Library page
 pub mod grid;
 pub mod search;
@@ -28,6 +29,8 @@ pub enum StoreId {
     Search,
     Grid,
     Settings,
+    /// The TV guide (`epg::EpgStore`).
+    Epg,
 }
 
 impl StoreId {
@@ -42,6 +45,7 @@ impl StoreId {
             StoreId::Search => 3,
             StoreId::Grid => 4,
             StoreId::Settings => 5,
+            StoreId::Epg => 9,
         })
     }
 }

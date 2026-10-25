@@ -21,6 +21,7 @@ pub mod app;
 pub mod art;
 pub mod crash;
 pub mod fetch;
+pub mod guide;
 pub mod port;
 pub mod system;
 pub mod textinput;

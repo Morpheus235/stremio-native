@@ -289,5 +289,55 @@
   "app.player.tab_timing": "Сінхранізацыя",
   "app.player.tab_style": "Стыль",
   "app.player.style_note": "Таксама вашы налады па змаўчанні",
-  "app.player.audio_sync": "Сінхранізацыя гуку"
+  "app.player.audio_sync": "Сінхранізацыя гуку",
+  "app.settings.tv_guide": {
+    "value": "Тэлепраграма",
+    "description": "Settings: row and picker title — the programme guide Live TV channels show now / next from."
+  },
+  "app.settings.tv_guide_copy": {
+    "value": "Паказвае, што ідзе зараз і далей на каналах жывога ТБ, з публічнай праграмы для рэгіёна. Каналы супастаўляюцца па назве.",
+    "description": "TV guide picker: the line under the title."
+  },
+  "app.settings.tv_guide_de": {
+    "value": "Германія",
+    "description": "TV guide picker: a region whose public programme guide is loaded (a country name)."
+  },
+  "app.settings.tv_guide_at": {
+    "value": "Аўстрыя",
+    "description": "TV guide picker: a region whose public programme guide is loaded (a country name)."
+  },
+  "app.settings.tv_guide_ch": {
+    "value": "Швейцарыя",
+    "description": "TV guide picker: a region whose public programme guide is loaded (a country name)."
+  },
+  "app.settings.tv_guide_uk": {
+    "value": "Вялікабрытанія",
+    "description": "TV guide picker: a region whose public programme guide is loaded (a country name)."
+  },
+  "app.settings.tv_guide_fr": {
+    "value": "Францыя",
+    "description": "TV guide picker: a region whose public programme guide is loaded (a country name)."
+  },
+  "app.settings.tv_guide_it": {
+    "value": "Італія",
+    "description": "TV guide picker: a region whose public programme guide is loaded (a country name)."
+  },
+  "app.settings.tv_guide_es": {
+    "value": "Іспанія",
+    "description": "TV guide picker: a region whose public programme guide is loaded (a country name)."
+  },
+  "app.live.now": {
+    "value": "Зараз: {title}",
+    "description": "Live TV: the programme on air on a channel (its card's caption, the player's line above the title).",
+    "args": {
+      "title": "str"
+    }
+  },
+  "app.live.next": {
+    "value": "Далей: {title}",
+    "description": "Live TV: the programme after the one on air (the player's caption under the title).",
+    "args": {
+      "title": "str"
+    }
+  }
 }

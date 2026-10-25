@@ -49,6 +49,34 @@ pub enum Pref {
     /// (`sn_media::prefs::MultichannelAudio`): [`MULTI_AUTO`] (the default), [`MULTI_DOLBY_DIGITAL`],
     /// [`MULTI_PCM`], [`MULTI_STEREO`], [`MULTI_DPLII`].
     MultichannelAudio = 15,
+    /// The programme guide Live TV shows now / next from: Off (rung 0) or a region's public XMLTV
+    /// guide, rungs 1… in [`TV_GUIDES`] order.
+    TvGuide = 16,
+}
+
+/// [`Pref::TvGuide`]'s regions, rungs 1… in order: the settings file's name for each and its
+/// public XMLTV guide (epgshare01, rebuilt daily from the broadcasters' own listings).
+pub const TV_GUIDES: [(&str, &str); 7] = [
+    ("de", "https://epgshare01.online/epgshare01/epg_ripper_DE1.xml.gz"),
+    ("at", "https://epgshare01.online/epgshare01/epg_ripper_AT1.xml.gz"),
+    ("ch", "https://epgshare01.online/epgshare01/epg_ripper_CH1.xml.gz"),
+    ("uk", "https://epgshare01.online/epgshare01/epg_ripper_UK1.xml.gz"),
+    ("fr", "https://epgshare01.online/epgshare01/epg_ripper_FR1.xml.gz"),
+    ("it", "https://epgshare01.online/epgshare01/epg_ripper_IT1.xml.gz"),
+    ("es", "https://epgshare01.online/epgshare01/epg_ripper_ES1.xml.gz"),
+];
+
+/// The guide [`Pref::TvGuide`]'s `rung` loads; `None` for Off.
+pub fn tv_guide_url(rung: u8) -> Option<&'static str> {
+    TV_GUIDES.get(usize::from(rung).checked_sub(1)?).map(|g| g.1)
+}
+
+/// The settings file's name for [`Pref::TvGuide`]'s `rung` (empty for Off), and back.
+pub fn tv_guide_name(rung: u8) -> &'static str {
+    usize::from(rung).checked_sub(1).and_then(|i| TV_GUIDES.get(i)).map_or("", |g| g.0)
+}
+pub fn tv_guide_rung(name: &str) -> u8 {
+    TV_GUIDES.iter().position(|g| g.0 == name).map_or(0, |i| i as u8 + 1)
 }
 
 /// [`Pref::MultichannelAudio`]'s rungs (`sn_media::prefs::MultichannelAudio::LADDER` order).
@@ -202,6 +230,7 @@ impl Pref {
         Pref::UpNextAt,
         Pref::Language,
         Pref::MultichannelAudio,
+        Pref::TvGuide,
     ];
 
     /// How many rungs the ladder has (`sn_media::prefs`'s `LADDER.len()`).
@@ -223,6 +252,7 @@ impl Pref {
             Pref::UpNextAt => 1 + UP_NEXT_LEADS_S.len() as u8,
             Pref::Language => sn_platform::i18n::Preference::ALL.len() as u8,
             Pref::MultichannelAudio => 5,
+            Pref::TvGuide => 1 + TV_GUIDES.len() as u8,
         }
     }
 
@@ -246,6 +276,7 @@ impl Pref {
             Pref::UpNextAt => msg::app_settings_up_next_at(),
             Pref::Language => msg::app_settings_language(),
             Pref::MultichannelAudio => msg::app_settings_multichannel_audio(),
+            Pref::TvGuide => msg::app_settings_tv_guide(),
         }
     }
 
@@ -301,6 +332,14 @@ impl Pref {
             (Pref::MultichannelAudio, MULTI_PCM) => msg::app_settings_multichannel_pcm(),
             (Pref::MultichannelAudio, MULTI_STEREO) => msg::app_settings_multichannel_stereo(),
             (Pref::MultichannelAudio, _) => msg::app_settings_multichannel_dplii(),
+            (Pref::TvGuide, 0) => msg::app_settings_switch_off(),
+            (Pref::TvGuide, 1) => msg::app_settings_tv_guide_de(),
+            (Pref::TvGuide, 2) => msg::app_settings_tv_guide_at(),
+            (Pref::TvGuide, 3) => msg::app_settings_tv_guide_ch(),
+            (Pref::TvGuide, 4) => msg::app_settings_tv_guide_uk(),
+            (Pref::TvGuide, 5) => msg::app_settings_tv_guide_fr(),
+            (Pref::TvGuide, 6) => msg::app_settings_tv_guide_it(),
+            (Pref::TvGuide, _) => msg::app_settings_tv_guide_es(),
             (Pref::Language, r) => sn_platform::i18n::Preference::ALL[usize::from(r).min(sn_platform::i18n::Preference::ALL.len() - 1)].native_name(),
         }
     }
@@ -321,12 +360,13 @@ impl Pref {
             Pref::UpNextAt => UP_NEXT_CREDITS,
             Pref::Language => 0,
             Pref::MultichannelAudio => MULTI_AUTO,
+            Pref::TvGuide => 0,
         }
     }
 }
 
 /// How many preferences [`Pref::ALL`] holds.
-pub const PREFS: usize = 16;
+pub const PREFS: usize = 17;
 
 /// The pages that show their items as posters or as a list, each remembering its own choice.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -940,6 +940,8 @@ pub struct Views<'a> {
     pub search: &'a SearchStore,
     pub grid: &'a GridStore,
     pub settings: &'a SettingsStore,
+    /// The TV guide: Live TV's now / next.
+    pub epg: &'a crate::stores::epg::EpgStore,
     /// Signed in or not (the item menu's Add to library reads it); the account is `account`.
     pub session: SessionView,
 }

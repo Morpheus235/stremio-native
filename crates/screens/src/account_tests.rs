@@ -269,6 +269,7 @@ fn views<'a>(catalog: &'a CatalogStore, detail: &'a DetailStore, account: &'a Ac
         search: Box::leak(Box::default()),
         grid: Box::leak(Box::new(crate::stores::grid::GridStore::new())),
         settings: Box::leak(Box::default()),
+        epg: Box::leak(Box::default()),
         session: crate::registry::SessionView { signed_in: account.account().is_some() },
     }
 }

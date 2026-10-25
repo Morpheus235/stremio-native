@@ -392,6 +392,7 @@ impl StackPage<Bundle> for Page {
             ^ (u64::from(self.list) << 63)
             ^ ((self.items(cx).len() as u64) << 48)
             ^ (u64::from(cx.views.catalog.gen()) << 56)
+            ^ (u64::from(cx.views.epg.gen()) << 24)
     }
     fn sections(&self, cx: &Cx<'_, Bundle>, out: &mut Vec<SectionSpec<Sec>>) {
         out.push(SectionSpec::new(Sec::Top, Kind::Custom { height: CONTENT_TOP, focusable: false }, TOP_GROUP));
@@ -427,6 +428,7 @@ impl StackPage<Bundle> for Page {
                 base: self.base(),
                 more: matches!(self.state(cx), Some(GridState::Ready { more: true })),
                 watched: Some(cx.views.library),
+                guide: Some(cx.views.epg),
             }),
             _ => None,
         }
@@ -499,7 +501,7 @@ impl StackPage<Bundle> for Page {
             Sec::Row(i) => {
                 let Some(item) = self.items(f.cx).get(i) else { return };
                 let focused = f.focus.current.is_some_and(|key| key.elem == self.base() + i as u32);
-                item_list::draw(f, r, &ListRow::of_meta(item, None), focused);
+                item_list::draw(f, r, &ListRow::of_meta(item, None).on_air(crate::cards::on_air(item, Some(f.cx.views.epg))), focused);
             }
             Sec::Status => {
                 if let Some(o) = self.readout(f.cx) {
@@ -708,7 +710,7 @@ impl DiscoverScreen {
     }
 
     fn item_at(&self, elem: u32, cx: &Cx<'_, Bundle>) -> Option<MetaPreview> {
-        ItemCards { items: self.page.items(cx), base: self.page.base(), more: false, watched: None }.item(elem).cloned()
+        ItemCards { items: self.page.items(cx), base: self.page.base(), more: false, watched: None, guide: None }.item(elem).cloned()
     }
 
     fn press(&mut self, elem: u32, cx: &Cx<'_, Bundle>, fx: &mut Effects<'_, Bundle>) {
@@ -819,7 +821,7 @@ impl Machine<Bundle> for DiscoverScreen {
                 }
                 Handled::Yes
             }
-            ScreenEvent::StoreChanged(ord, _) if [StoreId::Grid, StoreId::Catalog, StoreId::Settings].iter().any(|s| s.ord() == *ord) => {
+            ScreenEvent::StoreChanged(ord, _) if [StoreId::Grid, StoreId::Catalog, StoreId::Settings, StoreId::Epg].iter().any(|s| s.ord() == *ord) => {
                 fx.invalidate(Provenance::Landing(fx.from()));
                 Handled::Yes
             }

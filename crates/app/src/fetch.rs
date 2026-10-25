@@ -26,25 +26,30 @@ use sn_stremio::{Fetch, FetchError};
 pub const API_BODY_MAX: usize = 8 << 20;
 /// The largest artwork body accepted (a poster or a backdrop JPEG/PNG).
 pub const ART_BODY_MAX: usize = 6 << 20;
+/// The largest TV guide accepted: a national XMLTV guide is 3–6 MB gzipped, ~20 MB plain.
+pub const GUIDE_BODY_MAX: usize = 32 << 20;
 
 /// Which deadlines and body cap a request runs under.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Profile {
     Api,
     Art,
+    /// A TV guide (`crate::guide`): bulk deadlines, a large body.
+    Guide,
 }
 
 impl Profile {
     fn timeouts(self) -> sn_net::net::Timeouts {
         match self {
             Profile::Api => sn_net::net::API,
-            Profile::Art => sn_net::net::BULK,
+            Profile::Art | Profile::Guide => sn_net::net::BULK,
         }
     }
     fn body_max(self) -> usize {
         match self {
             Profile::Api => API_BODY_MAX,
             Profile::Art => ART_BODY_MAX,
+            Profile::Guide => GUIDE_BODY_MAX,
         }
     }
 }
