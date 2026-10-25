@@ -7,7 +7,7 @@
 #   make check                           host tests + the packaging selftests (no NDK)
 #   make selftest                        the packaging selftests alone
 #   make icons                           redraw pkg/*.png (ci/make-icons.py, needs Pillow)
-#   make sim [STREMIO_THEME=ocean]       the app in a desktop window (SDL2 + GL), no television
+#   make sim                             the app in a desktop window (SDL2 + GL), no television
 #
 # FLAVOR picks the install (ci/flavor.py): `debug` (the default, a developer build beside the
 # others), `beta` (the prerelease channel: its own app id, tile "StremioNative Beta", version
@@ -257,7 +257,6 @@ check: selftest
 # The app in a desktop window over SDL2 + desktop GL, signed out (Cinemeta), for looking at UI work.
 # SIM_DIR is the instance root: triggers, the event log, `shot-<n>.png`. Drive it by writing
 # commands (`up down left right ok back shot`) into $(SIM_DIR)/stremionative-memcmd.
-# STREMIO_THEME=<name> builds another palette (gfx::tokens::PALETTES).
 SIM_DIR ?= /tmp/stremionative-sim
 sim:
 	CARGO_INCREMENTAL=0 cargo build -p stremionative-app --features hostsim --bin stremionative-sim

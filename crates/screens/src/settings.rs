@@ -140,6 +140,8 @@ pub enum RootRow {
     TvGuide,
     /// Stream order: the addon's, languages first, quality first (the picker).
     StreamOrder,
+    /// The colour theme (the picker; applies at once).
+    Theme,
 }
 
 impl FormId for RootRow {
@@ -202,6 +204,7 @@ fn pref_copy(pref: Pref) -> &'static str {
         Pref::MultichannelAudio => msg::app_settings_multichannel_audio_copy(),
         Pref::TvGuide => msg::app_settings_tv_guide_copy(),
         Pref::StreamOrder => msg::app_settings_stream_order_copy(),
+        Pref::Theme => msg::app_settings_theme_copy(),
     }
 }
 
@@ -307,7 +310,7 @@ pub fn root_form(settings: &SettingsStore, account: &AccountStore, stats: bool) 
         .section(streams)
         .section(live)
         .section(
-            pick(FormSection::new(msg::app_settings_interface()), RootRow::Language, Pref::Language)
+            pick(pick(FormSection::new(msg::app_settings_interface()), RootRow::Theme, Pref::Theme), RootRow::Language, Pref::Language)
                 .item(
                     RootRow::Stats,
                     RowKind::Button,
@@ -947,7 +950,7 @@ impl Screen<Bundle> for SettingsScreen {
     }
     fn prepare(&mut self, _b: &mut sn_ui::frame::Budget, _cx: &Cx<'_, Bundle>) {}
     fn draw(&mut self, f: &mut DrawFrame<'_, '_, Bundle>) {
-        sn_gfx::gfx::frame_clear(theme::CLEAR_RGB.0, theme::CLEAR_RGB.1, theme::CLEAR_RGB.2);
+        sn_gfx::gfx::frame_clear(theme::CLEAR_RGB().0, theme::CLEAR_RGB().1, theme::CLEAR_RGB().2);
         let layout = self.layout();
         let crumb = self.crumb();
         let title = self.title();
@@ -1122,7 +1125,7 @@ mod tests {
                     ],
                     vec![StreamOrder, StreamLanguages],
                     vec![TvGuide],
-                    vec![Language, Stats, RemoteKeys],
+                    vec![Theme, Language, Stats, RemoteKeys],
                     vec![About, Legal, Privacy],
                 ]
                 .into_iter()
@@ -1243,6 +1246,7 @@ mod tests {
                 SettingsPage::Picker(Pref::StreamOrder),
                 SettingsPage::Languages(LangList::Streams),
                 SettingsPage::Picker(Pref::TvGuide),
+                SettingsPage::Picker(Pref::Theme),
                 SettingsPage::Picker(Pref::Language),
                 SettingsPage::Doc(Doc::Remote),
                 SettingsPage::Doc(Doc::About),

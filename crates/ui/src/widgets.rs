@@ -172,7 +172,7 @@ pub fn panel_ground(
     let (top, bot) = if drew {
         panel_frost()
     } else {
-        (theme::PANEL_TOP, theme::PANEL_BOT)
+        (theme::PANEL_TOP(), theme::PANEL_BOT())
     };
     crate::profile::phase("panel.frost", || {
         p.rect_rimmed(r, radius, top, bot, theme::GLASS_RIM, boost);
@@ -215,8 +215,8 @@ fn panel_material() -> theme::Material {
 fn panel_frost() -> ([f32; 4], [f32; 4]) {
     let a = frost_sweep().unwrap_or(panel_material().frost());
     (
-        theme::with_a(theme::PANEL_FROST_TOP, a),
-        theme::with_a(theme::PANEL_FROST_BOT, a),
+        theme::with_a(theme::PANEL_FROST_TOP(), a),
+        theme::with_a(theme::PANEL_FROST_BOT(), a),
     )
 }
 
@@ -1991,9 +1991,9 @@ impl<'a> Scrubber<'a> {
         }
         if g.played.w > 0.5 {
             // the glow first, under the fill: a soft accent halo, brighter as the bar is engaged
-            let glow = theme::with_a(theme::SCRUB_GLOW, theme::SCRUB_GLOW[3] * (0.45 + 0.55 * self.focus.max(self.scrub)));
+            let glow = theme::with_a(theme::SCRUB_GLOW(), theme::SCRUB_GLOW()[3] * (0.45 + 0.55 * self.focus.max(self.scrub)));
             p.shadow_outside(g.played, rad, 10.0, 0.0, glow);
-            p.rrect(g.played, rad, rad.min(g.played.w * 0.5), theme::SCRUB_PLAYED);
+            p.rrect(g.played, rad, rad.min(g.played.w * 0.5), theme::SCRUB_PLAYED());
         }
         for c in self.chapters.iter().filter(|c| **c > 0.0 && **c < 1.0) {
             let cx = self.rail.x + self.rail.w * c;
@@ -2006,7 +2006,7 @@ impl<'a> Scrubber<'a> {
         // an accent core while engaged: the knob reads as the bar's own, not a stray white dot
         let core = kr * 0.42 * self.focus.max(self.scrub);
         if core > 0.5 {
-            p.rect(Rect::new(kx - core, ky - core, 2.0 * core, 2.0 * core), core, theme::SCRUB_PLAYED, theme::SCRUB_PLAYED, 0.0);
+            p.rect(Rect::new(kx - core, ky - core, 2.0 * core, 2.0 * core), core, theme::SCRUB_PLAYED(), theme::SCRUB_PLAYED(), 0.0);
         }
         if let Some(text) = self.bubble {
             let w = measure.width_str(text, Self::BUBBLE_SZ, true);
@@ -2844,11 +2844,11 @@ pub fn profile_chip_with(p: Painter, data: ProfileChipRead<'_>, chip_expand: f32
         // the strip's two marks, on the chip's capsule: the current page's plate (the chip's own
         // page is up), and over it the focus capsule's accent
         if data.current {
-            let plate = if data.bar_focused { theme::TAB_CURRENT_UNDER_FOCUS } else { theme::TAB_CURRENT };
+            let plate = if data.bar_focused { theme::TAB_CURRENT_UNDER_FOCUS } else { theme::TAB_CURRENT() };
             p.rect_sheened(cap, cap.h * 0.5, plate, plate);
         }
         if e > 0.004 {
-            p.alpha(e).rect_sheened(cap, cap.h * 0.5, theme::ACCENT, theme::ACCENT);
+            p.alpha(e).rect_sheened(cap, cap.h * 0.5, theme::ACCENT(), theme::ACCENT());
         }
         // the name rides in on the TAIL of the widening, so the glyphs land in a capsule that has
         // already made room for them instead of smearing across the grow
@@ -2861,7 +2861,7 @@ pub fn profile_chip_with(p: Painter, data: ProfileChipRead<'_>, chip_expand: f32
                 r.x + d + CHIP_NAME_GAP,
                 ty,
                 theme::size::BODY,
-                theme::cross(theme::TEXT_PRIMARY, theme::ACCENT_INK, lit),
+                theme::cross(theme::TEXT_PRIMARY, theme::ACCENT_INK(), lit),
                 0,
                 1,
             );
@@ -2905,7 +2905,7 @@ pub fn profile_chip_with(p: Painter, data: ProfileChipRead<'_>, chip_expand: f32
                 r.x + d * 0.5,
                 ty,
                 theme::size::HEADLINE,
-                theme::ACCENT_INK,
+                theme::ACCENT_INK(),
                 1,
                 1,
             );
@@ -3588,7 +3588,7 @@ impl AmbientWash {
     /// ground on every page **by construction** — `w = 0` returns exactly the surface. Colours that
     /// came from ARTWORK go through [`keyed`](Self::keyed), which caps them first.
     pub fn target(src: [[f32; 4]; 4], w: [f32; 4]) -> [[f32; 4]; 4] {
-        std::array::from_fn(|i| theme::mix(theme::SURFACE_APP, src[i], w[i]))
+        std::array::from_fn(|i| theme::mix(theme::SURFACE_APP(), src[i], w[i]))
     }
 
     /// [`target`](Self::target) for corners taken from an item's `UltraBlurColors` envelope
@@ -3608,7 +3608,7 @@ impl AmbientWash {
     /// the legibility contract `widgets_ambient_ground_tests.rs` grades; nothing may reach them by
     /// re-writing this line.
     pub fn keyed_one(c: [f32; 3], w: f32) -> [f32; 4] {
-        theme::mix(theme::SURFACE_APP, ground_capped(c), w)
+        theme::mix(theme::SURFACE_APP(), ground_capped(c), w)
     }
 
     /// A wash resting flat on one colour — what a page opens as before any item keys it.
@@ -3914,10 +3914,10 @@ impl PageGround {
 
     /// A ground resting on the app's own surface — what a screen mounts with, and what it stays
     /// until something focused hands it colours.
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         PageGround {
-            wash: AmbientWash::flat(theme::SURFACE_APP),
-            target: [theme::SURFACE_APP; 4],
+            wash: AmbientWash::flat(theme::SURFACE_APP()),
+            target: [theme::SURFACE_APP(); 4],
         }
     }
 
@@ -3960,7 +3960,7 @@ impl PageGround {
     /// this type DOES keep is the one above it: a ground that has resolved to the clear colour is
     /// not drawn at all, so the frames it costs nothing are the frames it shows nothing.
     pub fn draw(&self, p: Painter, r: Rect) {
-        if self.wash.is_flat(theme::SURFACE_APP, AmbientWash::FLAT_EPS) {
+        if self.wash.is_flat(theme::SURFACE_APP(), AmbientWash::FLAT_EPS) {
             return;
         }
         self.wash.draw(p, r);
@@ -3970,7 +3970,7 @@ impl PageGround {
     /// path asks it for itself.
     #[cfg(any(test, feature = "test-support"))]
     pub fn is_flat(&self) -> bool {
-        self.wash.is_flat(theme::SURFACE_APP, AmbientWash::FLAT_EPS)
+        self.wash.is_flat(theme::SURFACE_APP(), AmbientWash::FLAT_EPS)
     }
 
     /// The ground's live corners, for a test that wants to see WHERE it got to.
@@ -5231,7 +5231,7 @@ impl TabPill {
                 theme::TEXT_PRIMARY,
                 selected.clamp(0.0, 1.0),
             ),
-            crate::ACCENT_INK,
+            crate::ACCENT_INK(),
             focus.clamp(0.0, 1.0),
         )
     }
@@ -5279,7 +5279,7 @@ impl TabPill {
             }
             None => match self.style {
                 TabStyle::Button if self.focused => {
-                    (Some(crate::ACCENT), crate::ACCENT_INK, 1.0)
+                    (Some(crate::ACCENT()), crate::ACCENT_INK(), 1.0)
                 }
                 TabStyle::Button if self.selected => {
                     // Both standalone neighbours already have a resting plate. Use the shared
@@ -5291,7 +5291,7 @@ impl TabPill {
                 // [`ControlGround`], and the rim it is drawn with below.
                 TabStyle::Button => (Some(self.ground.idle_fill()), theme::CONTROL_IDLE_INK, 1.0),
                 TabStyle::Segment { .. } if self.focused => {
-                    (Some(crate::ACCENT), crate::ACCENT_INK, 1.0)
+                    (Some(crate::ACCENT()), crate::ACCENT_INK(), 1.0)
                 }
                 TabStyle::Segment { selected: true } if self.plated => {
                     (Some(theme::TAB_PLATE_SELECTED), theme::TEXT_PRIMARY, 1.0)
@@ -5831,9 +5831,9 @@ impl TabStrip {
         // and it had the identical defect for the identical reason, so `cast: true` below.
         match ground {
             TabGround::Plated { pop } => {
-                cap(&self.foc, crate::ACCENT, Some(theme::CARD_SHEEN), pop, true)
+                cap(&self.foc, crate::ACCENT(), Some(theme::CARD_SHEEN), pop, true)
             }
-            TabGround::Tracked { .. } => cap(&self.foc, crate::ACCENT, None, 1.0, false),
+            TabGround::Tracked { .. } => cap(&self.foc, crate::ACCENT(), None, 1.0, false),
         }
     }
     /// The `(focus, selected)` mixes pill `pill` (content-space `(x, w)`) should ink itself with —
@@ -5847,7 +5847,7 @@ impl TabStrip {
     pub fn selection_colour(&self, ground: TabGround) -> [f32; 4] {
         match ground {
             TabGround::Plated { .. } => theme::TAB_PLATE_SELECTED_OVER,
-            TabGround::Tracked { .. } => theme::cross(theme::TAB_CURRENT, theme::TAB_CURRENT_UNDER_FOCUS, self.foc.alpha()),
+            TabGround::Tracked { .. } => theme::cross(theme::TAB_CURRENT(), theme::TAB_CURRENT_UNDER_FOCUS, self.foc.alpha()),
         }
     }
     /// [`mixes`](Self::mixes) for the top bar: the current pill's ink follows its plate to
@@ -6985,7 +6985,7 @@ impl StripRender {
         // …and FASTER while a polarity is being decided: the decision is gated on two independent
         // readings, so the sampler's rate is the decision's rate, and every frame of it is spent
         // showing the material the bar is about to stop being.
-        let (cr, cg, cb) = theme::CLEAR_RGB; // the app ground, as the token that names it
+        let (cr, cg, cb) = theme::CLEAR_RGB(); // the app ground, as the token that names it
         let flat_ground = [cr, cg, cb];
         let ground = if glass_on || groundlog {
             sn_gfx::gfx::sample_ground([track.x, track.y, track.w, track.h], settled)
@@ -7283,9 +7283,9 @@ pub struct ControlPalette {
 impl Default for ControlPalette {
     fn default() -> Self {
         Self::ambient([
-            theme::SURFACE_APP[0],
-            theme::SURFACE_APP[1],
-            theme::SURFACE_APP[2],
+            theme::SURFACE_APP()[0],
+            theme::SURFACE_APP()[1],
+            theme::SURFACE_APP()[2],
         ])
     }
 }
@@ -7307,8 +7307,8 @@ impl ControlPalette {
         };
         // Focus is the fixed ACCENT violet on every page (the Stremio palette sync); the key reaches
         // only the idle face. The body is the same hue and chroma one lightness step down.
-        let focus_top = theme::ACCENT;
-        let accent = srgb_to_oklab(theme::ACCENT);
+        let focus_top = theme::ACCENT();
+        let accent = srgb_to_oklab(theme::ACCENT());
         let focus_body = oklab_to_srgb(
             [accent[0] - theme::CONTROL_FOCUS_BODY_STEP, accent[1], accent[2]],
             1.0,
@@ -7320,7 +7320,7 @@ impl ControlPalette {
         );
         let spent = theme::mix(
             focus_top,
-            theme::SURFACE_APP,
+            theme::SURFACE_APP(),
             1.0 - theme::CONTROL_SPENT_FOCUS_W,
         );
         Self {
@@ -7402,7 +7402,7 @@ impl ControlGround {
     /// widget can never hand-pick the wrong one.
     fn idle_fill(self) -> [f32; 4] {
         match self {
-            ControlGround::Keyed => theme::CONTROL_IDLE_FILL,
+            ControlGround::Keyed => theme::CONTROL_IDLE_FILL(),
             ControlGround::Unkeyed => theme::CONTROL_IDLE_FILL_UNKEYED,
         }
     }
@@ -7570,34 +7570,34 @@ impl ControlStyle {
         };
         match self {
             ControlStyle::Accent if ground == ControlGround::Unkeyed && focused => {
-                flat(theme::ACCENT, theme::ACCENT_INK, theme::CONTROL_SPENT_FILL)
+                flat(theme::ACCENT(), theme::ACCENT_INK(), theme::CONTROL_SPENT_FILL())
             }
             ControlStyle::Accent if ground == ControlGround::Unkeyed => flat(
                 theme::CONTROL_IDLE_FILL_UNKEYED,
                 theme::CONTROL_IDLE_INK,
-                theme::CONTROL_SPENT_FILL,
+                theme::CONTROL_SPENT_FILL(),
             ),
             ControlStyle::Accent if focused => ControlFace {
                 top: palette.focus_top,
                 body: palette.focus_body,
-                ink: theme::ACCENT_INK,
+                ink: theme::ACCENT_INK(),
                 spent: palette.spent,
             },
             ControlStyle::Accent => flat(palette.idle, theme::CONTROL_IDLE_INK, palette.spent),
-            ControlStyle::Custom { fill, ink } => flat(fill, ink, theme::CONTROL_SPENT_FILL),
+            ControlStyle::Custom { fill, ink } => flat(fill, ink, theme::CONTROL_SPENT_FILL()),
             ControlStyle::Keyline if focused && ground == ControlGround::Keyed => ControlFace {
                 top: palette.focus_top,
                 body: palette.focus_body,
-                ink: theme::ACCENT_INK,
+                ink: theme::ACCENT_INK(),
                 spent: palette.spent,
             },
             ControlStyle::Keyline if focused => {
-                flat(theme::ACCENT, theme::ACCENT_INK, theme::CONTROL_SPENT_FILL)
+                flat(theme::ACCENT(), theme::ACCENT_INK(), theme::CONTROL_SPENT_FILL())
             }
             ControlStyle::Keyline => flat(
                 theme::PILL_KEYLINE_BG,
                 theme::TEXT_HEADING,
-                theme::CONTROL_SPENT_FILL,
+                theme::CONTROL_SPENT_FILL(),
             ),
             ControlStyle::Danger if focused => {
                 flat(theme::DANGER, theme::TEXT_PRIMARY, theme::DANGER)
@@ -7606,7 +7606,7 @@ impl ControlStyle {
                 let idle = if ground == ControlGround::Keyed {
                     theme::mix(palette.idle, theme::DANGER, theme::DANGER_IDLE_TINT)
                 } else {
-                    theme::CONTROL_DANGER_IDLE_FILL
+                    theme::CONTROL_DANGER_IDLE_FILL()
                 };
                 flat(idle, theme::CONTROL_DANGER_IDLE_INK, theme::DANGER)
             }
@@ -8156,13 +8156,13 @@ pub fn badge(
         }
         BadgeStyle::OverArt | BadgeStyle::Link { focused: false } => {
             let rad = r.h * 0.5;
-            p.rrect(r, rad, rad, theme::CONTROL_IDLE_FILL);
+            p.rrect(r, rad, rad, theme::CONTROL_IDLE_FILL());
             theme::CONTROL_IDLE_INK
         }
         BadgeStyle::Link { focused: true } => {
             let rad = r.h * 0.5;
-            p.rrect(r, rad, rad, crate::ACCENT);
-            crate::ACCENT_INK
+            p.rrect(r, rad, rad, crate::ACCENT());
+            crate::ACCENT_INK()
         }
         BadgeStyle::Bare { col } => col,
     };

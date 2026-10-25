@@ -391,10 +391,10 @@ impl Page {
         let Some(term) = self.suggest.get(i) else { return };
         let focused = self.focused(f, SUGGEST_BASE + i as u32);
         if focused {
-            p.rect(r, r.h * 0.5, theme::ACCENT, theme::ACCENT, 0.0);
+            p.rect(r, r.h * 0.5, theme::ACCENT(), theme::ACCENT(), 0.0);
         }
         let (lead_ink, hit_ink, rest_ink) = if focused {
-            (theme::ACCENT_INK, theme::ACCENT_INK, theme::ACCENT_INK)
+            (theme::ACCENT_INK(), theme::ACCENT_INK(), theme::ACCENT_INK())
         } else {
             (theme::TEXT_TERTIARY, theme::TEXT_PRIMARY, theme::TEXT_SECONDARY)
         };
@@ -762,12 +762,12 @@ impl Page {
         let boxr = rect.scaled(1.0 + FIELD_FOCUS_GROW * hot);
         let rad = boxr.h * 0.5;
         if hot > 0.01 {
-            let g = theme::SEARCH_FIELD_GLOW;
+            let g = theme::SEARCH_FIELD_GLOW();
             p.shadow_outside(boxr, rad, FIELD_GLOW_BLUR * hot, 0.0, theme::with_a(g, g[3] * hot));
         }
         let fill = theme::cross(theme::SEARCH_FIELD_FILL, theme::SEARCH_FIELD_FILL_FOCUS, hot);
         p.rect(boxr, rad, fill, fill, 0.0);
-        let rim = theme::cross(theme::SEARCH_FIELD_RIM, theme::SEARCH_FIELD_RIM_FOCUS, hot);
+        let rim = theme::cross(theme::SEARCH_FIELD_RIM, theme::SEARCH_FIELD_RIM_FOCUS(), hot);
         p.rring(boxr, rad, FIELD_RIM_W + (FIELD_RIM_FOCUS_W - FIELD_RIM_W) * hot, rim);
         let mark = theme::cross(theme::TEXT_SECONDARY, theme::TEXT_PRIMARY, hot);
         let ix = boxr.x + FIELD_PAD + rad * 0.25;
@@ -795,7 +795,7 @@ impl Page {
         label.draw(p, Rect::new(text.x + run_dx, text.y, text.w, text.h));
         if caret && (!self.editing || (self.blink_ms / BLINK_MS) % 2 == 0) {
             let text_y = sn_gfx::text::text_vcenter_y(FIELD_TEXT, 1, text.cy());
-            let ink = if self.editing { theme::TEXT_PRIMARY } else { theme::SEARCH_FIELD_RIM_FOCUS };
+            let ink = if self.editing { theme::TEXT_PRIMARY } else { theme::SEARCH_FIELD_RIM_FOCUS() };
             p.rect(Rect::new(text.x + caret_dx, text_y + cap_top, CARET_W, cap_base - cap_top), 0.0, ink, ink, 0.0);
         }
     }
@@ -1278,7 +1278,7 @@ impl Screen<Bundle> for SearchScreen {
     }
     fn prepare(&mut self, _b: &mut sn_ui::frame::Budget, _cx: &Cx<'_, Bundle>) {}
     fn draw(&mut self, f: &mut DrawFrame<'_, '_, Bundle>) {
-        sn_gfx::gfx::frame_clear(theme::CLEAR_RGB.0, theme::CLEAR_RGB.1, theme::CLEAR_RGB.2);
+        sn_gfx::gfx::frame_clear(theme::CLEAR_RGB().0, theme::CLEAR_RGB().1, theme::CLEAR_RGB().2);
         self.stack.view(&self.page).paint(f);
         self.stack.draw_hold_hint(f.painter.alpha(f.page_alpha), f.measure);
     }

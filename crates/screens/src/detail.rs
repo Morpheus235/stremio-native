@@ -873,7 +873,7 @@ fn draw_stream_panel(p: sn_ui::Painter) {
     let (x, y) = (stream_panel_x(), theme::space::LG);
     let rad = theme::DETAIL_STREAM_PANEL_RAD;
     let r = Rect::new(x, y, sn_ui::consts::SCR_W - x + rad, sn_ui::consts::SCR_H - y + rad);
-    p.rect(r, rad, theme::DETAIL_STREAM_PANEL, theme::DETAIL_STREAM_PANEL, 0.0);
+    p.rect(r, rad, theme::DETAIL_STREAM_PANEL(), theme::DETAIL_STREAM_PANEL(), 0.0);
 }
 
 /// The synopsis wraps to at most this many lines (fewer when the column is short), then elides.
@@ -2614,7 +2614,7 @@ impl Screen<Bundle> for DetailScreen {
     }
     fn prepare(&mut self, _b: &mut sn_ui::frame::Budget, _cx: &Cx<'_, Bundle>) {}
     fn draw(&mut self, f: &mut DrawFrame<'_, '_, Bundle>) {
-        sn_gfx::gfx::frame_clear(theme::CLEAR_RGB.0, theme::CLEAR_RGB.1, theme::CLEAR_RGB.2);
+        sn_gfx::gfx::frame_clear(theme::CLEAR_RGB().0, theme::CLEAR_RGB().1, theme::CLEAR_RGB().2);
         if let Some(url) = self.info.backdrop.as_deref() {
             draw_backdrop(f.painter, url);
         }

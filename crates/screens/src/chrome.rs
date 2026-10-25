@@ -74,7 +74,7 @@ pub fn short_name(email: &str) -> Option<&str> {
 /// The account's avatar face: a stable pick from [`theme::AVATAR_FILLS`] by a hash of its id.
 pub fn avatar_fill(user_id: &str) -> [f32; 4] {
     let h = sn_base::sha256::sha256(user_id.as_bytes());
-    theme::AVATAR_FILLS[usize::from(h[0]) % theme::AVATAR_FILLS.len()]
+    theme::AVATAR_FILLS()[usize::from(h[0]) % theme::AVATAR_FILLS().len()]
 }
 
 impl ChromeBar {
@@ -87,7 +87,7 @@ impl ChromeBar {
             selected: Tab::Home,
             focus: TopFocus::Away,
             shown: false,
-            account: AccountFace { said: Default::default(), initial: CString::default(), name: CString::default(), name_w: 0.0, fill: theme::CONTROL_IDLE_FILL },
+            account: AccountFace { said: Default::default(), initial: CString::default(), name: CString::default(), name_w: 0.0, fill: theme::CONTROL_IDLE_FILL() },
         }
     }
 
@@ -138,7 +138,7 @@ impl ChromeBar {
                 let initial = name.chars().next().map(|c| c.to_uppercase().collect::<String>()).unwrap_or_default();
                 (initial, name, avatar_fill(&a.user_id))
             }
-            None => (String::new(), msg::app_addons_sign_in().to_string(), theme::CONTROL_IDLE_FILL),
+            None => (String::new(), msg::app_addons_sign_in().to_string(), theme::CONTROL_IDLE_FILL()),
         };
         self.account.fill = fill;
         if self.account.said.0 == label && self.account.said.1 == initial {
@@ -284,12 +284,12 @@ mod tests {
         bar.vocabulary(&m);
         bar.face(&AccountStore::signed_out(true), &m);
         assert_eq!(bar.account_text(), ("", msg::app_addons_sign_in()), "signed out: the person glyph and Sign in");
-        assert_eq!(bar.account_fill(), theme::CONTROL_IDLE_FILL);
+        assert_eq!(bar.account_fill(), theme::CONTROL_IDLE_FILL());
         let store = signed_in("u1", "viewer.name@example.com");
         bar.face(&store, &m);
         assert_eq!(bar.account_text(), ("V", "viewer.name"), "the initial and the email's local part");
         assert!(!bar.account_text().1.contains('@'), "the address is never drawn on the bar");
-        assert!(theme::AVATAR_FILLS.contains(&bar.account_fill()));
+        assert!(theme::AVATAR_FILLS().contains(&bar.account_fill()));
         assert_eq!(bar.account_fill(), avatar_fill("u1"), "the face is the account id's");
         assert_eq!(avatar_fill("u1"), avatar_fill("u1"), "and stable");
         assert!((0..32).map(|i| avatar_fill(&format!("user{i}"))).collect::<Vec<_>>().windows(2).any(|w| w[0] != w[1]), "accounts differ");

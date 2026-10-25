@@ -137,10 +137,10 @@ pub fn draw(f: &mut DrawFrame<'_, '_, Bundle>, section: Rect, row: &ListRow<'_>,
     let p = f.painter.alpha(f.page_alpha);
     let face = face_rect(section);
     if focused {
-        p.rrect(face, sn_ui::table::PILL_RAD, sn_ui::table::PILL_RAD, theme::FOCUS_FILL);
+        p.rrect(face, sn_ui::table::PILL_RAD, sn_ui::table::PILL_RAD, theme::FOCUS_FILL());
     }
     let (ink, sub) = if focused {
-        (sn_ui::ACCENT_INK, theme::INK_ON_ACCENT_SECONDARY)
+        (sn_ui::ACCENT_INK(), theme::INK_ON_ACCENT_SECONDARY())
     } else {
         (theme::TEXT_PRIMARY, theme::TEXT_SECONDARY)
     };
@@ -178,9 +178,9 @@ pub fn draw_see_all(f: &mut DrawFrame<'_, '_, Bundle>, section: Rect, focused: b
     let p = f.painter.alpha(f.page_alpha);
     let face = face_rect(section);
     if focused {
-        p.rrect(face, sn_ui::table::PILL_RAD, sn_ui::table::PILL_RAD, sn_ui::ACCENT);
+        p.rrect(face, sn_ui::table::PILL_RAD, sn_ui::table::PILL_RAD, sn_ui::ACCENT());
     }
-    let ink = if focused { sn_ui::ACCENT_INK } else { theme::TEXT_SECONDARY };
+    let ink = if focused { sn_ui::ACCENT_INK() } else { theme::TEXT_SECONDARY };
     let x = face.x + PAD + THUMB_W + PAD;
     let text = msg::widgets_cards_see_all_c();
     Label::new(text.as_ptr(), TITLE_SIZE, ink).bold().v(VAlign::Middle).draw(p, Rect::new(x, face.y, face.x + face.w - PAD - x, face.h));

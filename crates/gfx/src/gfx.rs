@@ -5506,7 +5506,7 @@ pub fn blur_snapshot_direct(reg: [f32; 4], draw_scene: &mut dyn FnMut()) -> bool
             // is the tap chain's ping-pong target, so a scene that paints nothing under the
             // region (the dip's capture frames) would publish the previous source's blur as this
             // one's. Scissored and first in the pass: free on a tiler.
-            let (cr, cg, cb) = tokens::CLEAR_RGB;
+            let (cr, cg, cb) = tokens::CLEAR_RGB();
             glClearColor(cr, cg, cb, 1.0);
             glClear(GL_COLOR_BUFFER_BIT);
             // The same triple the viewport just took, so `Painter::clip` lands on the same pixels.
@@ -5738,7 +5738,7 @@ pub fn draw_blur_backdrop(
         let source_alpha = if retained.as_ref().is_some_and(|image| image.alpha_invariant) {
             live.and_then(|request| backdrop::source_alpha(request.z)).unwrap_or(1.0)
         } else { 1.0 };
-        let ground = tokens::CLEAR_RGB;
+        let ground = tokens::CLEAR_RGB();
         glUniform1f(GL_SOURCE_ALPHA, source_alpha);
         glUniform3f(GL_SOURCE_GROUND, ground.0, ground.1, ground.2);
         // A BLUR is the slowest field the app produces, so the policy is the area test, per draw

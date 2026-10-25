@@ -362,5 +362,41 @@
   "app.settings.stream_order_quality": {
     "value": "Calidad primero",
     "description": "Stream order option: playable at once first, then the highest resolution."
+  },
+  "app.settings.theme": {
+    "value": "Tema",
+    "description": "Settings: row and picker title — the app's colour theme."
+  },
+  "app.settings.theme_copy": {
+    "value": "Los colores de la aplicación: el tono del fondo y el color de acento. Negro OLED apaga los píxeles del fondo en una pantalla OLED.",
+    "description": "Theme picker: the line under the title."
+  },
+  "app.settings.theme_stremio": {
+    "value": "Stremio",
+    "description": "Theme option: Stremio's own violet (the default)."
+  },
+  "app.settings.theme_graphite": {
+    "value": "Grafito",
+    "description": "Theme option: neutral grey with a white accent."
+  },
+  "app.settings.theme_ocean": {
+    "value": "Océano",
+    "description": "Theme option: deep blue."
+  },
+  "app.settings.theme_crimson": {
+    "value": "Carmesí",
+    "description": "Theme option: deep red."
+  },
+  "app.settings.theme_emerald": {
+    "value": "Esmeralda",
+    "description": "Theme option: deep green."
+  },
+  "app.settings.theme_gold": {
+    "value": "Oro",
+    "description": "Theme option: warm dark with a gold accent."
+  },
+  "app.settings.theme_oled": {
+    "value": "Negro OLED",
+    "description": "Theme option: a true black background for OLED screens."
   }
 }
