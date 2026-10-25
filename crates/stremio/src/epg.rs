@@ -92,11 +92,22 @@ fn id_name(id: &str) -> &str {
     }
 }
 
+/// The most of a document read (decompressed): a week of a national guide is ~25 MB, so this only
+/// stops a corrupt or hostile gzip from inflating without end. A longer document is cut there.
+const DOC_MAX: u64 = 256 << 20;
+/// The most kept of one title, sub-title or channel name (the rest is dropped).
+const FIELD_MAX: usize = 256;
+/// The most programmes kept in all, and display names per channel: well past a real guide's
+/// window (~10k programmes, 1–3 names), so memory stays bounded whatever a document holds.
+const PROGRAMMES_MAX: usize = 200_000;
+const NAMES_MAX: usize = 8;
+const CHANNELS_MAX: usize = 20_000;
+
 /// Parse an XMLTV document (plain or gzipped), keeping the programmes that overlap `from..to`
 /// (Unix seconds).
 pub fn parse(body: &[u8], from: i64, to: i64) -> Result<Guide, String> {
     if body.starts_with(&[0x1f, 0x8b]) {
-        parse_reader(flate2::read::GzDecoder::new(body), from, to)
+        parse_reader(flate2::read::GzDecoder::new(body).take(DOC_MAX), from, to)
     } else {
         parse_reader(body, from, to)
     }
@@ -121,6 +132,7 @@ fn parse_reader(r: impl Read, from: i64, to: i64) -> Result<Guide, String> {
     let mut text_for: Option<&'static str> = None; // which child's text is being collected
     let mut text = String::new();
     let mut saw_tv = false;
+    let mut kept = 0usize;
 
     while let Some(ev) = tok.next()? {
         match ev {
@@ -144,13 +156,13 @@ fn parse_reader(r: impl Read, from: i64, to: i64) -> Result<Guide, String> {
                 text.clear();
             }
             Event::Text(t) => {
-                if text_for.is_some() {
+                if text_for.is_some() && text.len() < FIELD_MAX {
                     text.push_str(&t);
                 }
             }
             Event::End(name) => match name.as_str() {
                 "display-name" | "title" | "sub-title" if text_for == Some(leak(&name)) => {
-                    let value = text.trim().to_string();
+                    let value = clip(text.trim(), FIELD_MAX).to_string();
                     text_for = None;
                     if value.is_empty() {
                         continue;
@@ -158,7 +170,12 @@ fn parse_reader(r: impl Read, from: i64, to: i64) -> Result<Guide, String> {
                     match name.as_str() {
                         "display-name" => {
                             if let Some(id) = &channel {
-                                names.entry(id.clone()).or_default().push(value);
+                                if names.len() < CHANNELS_MAX || names.contains_key(id) {
+                                    let list = names.entry(id.clone()).or_default();
+                                    if list.len() < NAMES_MAX {
+                                        list.push(value);
+                                    }
+                                }
                             }
                         }
                         "title" => {
@@ -177,7 +194,8 @@ fn parse_reader(r: impl Read, from: i64, to: i64) -> Result<Guide, String> {
                 "programme" => {
                     if let Some(p) = prog.take() {
                         if let (Some(start), Some(stop), Some(title)) = (p.start, p.stop, p.title) {
-                            if stop > from && start < to && stop > start {
+                            if stop > from && start < to && stop > start && kept < PROGRAMMES_MAX {
+                                kept += 1;
                                 progs.entry(p.channel).or_default().push(Programme { start, stop, title, subtitle: p.subtitle });
                             }
                         }
@@ -204,6 +222,15 @@ fn parse_reader(r: impl Read, from: i64, to: i64) -> Result<Guide, String> {
         }
     }
     Ok(guide)
+}
+
+/// `s` cut to at most `max` bytes, on a character boundary.
+fn clip(s: &str, max: usize) -> &str {
+    let mut end = s.len().min(max);
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 /// The static name of a collected child element (so `text_for` can stay `&'static str`).
@@ -537,6 +564,20 @@ mod tests {
         }
         let g = parse_reader(Trickle(DOC.as_bytes()), from, from + 86_400).unwrap();
         assert_eq!(g.now_next("Das Erste", t("20261025123000 +0000")).unwrap().next.unwrap().title, "Mittagsmagazin");
+    }
+
+    #[test]
+    fn a_huge_title_is_clipped_and_a_channel_keeps_only_a_few_names() {
+        let long = "Ä".repeat(10_000);
+        let names: String = (0..50).map(|i| format!("<display-name>Name {i}</display-name>")).collect();
+        let doc = format!(
+            r#"<tv><channel id="X.de">{names}</channel><programme start="20261025120000 +0000" stop="20261025130000 +0000" channel="X.de"><title>{long}</title></programme></tv>"#
+        );
+        let from = t("20261025110000 +0000");
+        let g = parse(doc.as_bytes(), from, from + 86_400).unwrap();
+        let title = &g.now_next("X", t("20261025123000 +0000")).unwrap().now.unwrap().title;
+        assert!(title.len() <= FIELD_MAX && title.starts_with('Ä'), "clipped on a character boundary");
+        assert!(g.now_next("Name 7", from).is_some() && g.now_next("Name 8", from).is_none(), "the first names only");
     }
 
     #[test]
