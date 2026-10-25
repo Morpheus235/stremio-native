@@ -342,5 +342,25 @@
   "app.discover.recently_watched": {
     "value": "Regardées récemment",
     "description": "Discover, Live TV: the catalog dropdown's first choice — the channels the account watched most recently."
+  },
+  "app.settings.stream_order": {
+    "value": "Ordre des flux",
+    "description": "Settings: row and picker title — how each addon's streams are ordered in a stream list."
+  },
+  "app.settings.stream_order_copy": {
+    "value": "Comment les flux de chaque extension sont listés : dans l'ordre de l'extension, ou d'abord ceux lisibles tout de suite, puis selon vos langues de tri ou par résolution.",
+    "description": "Stream order picker: the line under the title."
+  },
+  "app.settings.stream_order_addon": {
+    "value": "Ordre de l'extension",
+    "description": "Stream order option: keep the order the addon sent."
+  },
+  "app.settings.stream_order_language": {
+    "value": "Langues d'abord",
+    "description": "Stream order option: playable at once first, then the preferred stream languages."
+  },
+  "app.settings.stream_order_quality": {
+    "value": "Qualité d'abord",
+    "description": "Stream order option: playable at once first, then the highest resolution."
   }
 }

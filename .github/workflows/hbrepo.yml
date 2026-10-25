@@ -10,9 +10,9 @@
 # out, so the URL can be added on the TV before the first build (it lists nothing until then).
 # Pages replaces the whole site on every deploy, so every run regenerates both entries.
 # One-time setup: Settings > Pages > Source: "GitHub Actions".
-# The download page deploys on every push to main that changes it. The Homebrew Channel listing
-# (repo.json) is on hold: only a manual run on main with "homebrew" ticked builds it
-# (Actions > Homebrew Channel repository > Run workflow); without it the page links the releases.
+# It runs on every push to main that changes it, and by hand on main (Actions > Homebrew Channel
+# repository > Run workflow). A release no longer runs it (a tag may not deploy to github-pages):
+# run it by hand after a release so repo.json lists it.
 name: Homebrew Channel repository
 
 on:
@@ -20,11 +20,6 @@ on:
     branches: [main]
     paths: [ci/hbrepo.py, .github/workflows/hbrepo.yml, site/**, docs/screenshots/**]
   workflow_dispatch:
-    inputs:
-      homebrew:
-        description: Also publish the Homebrew Channel listing (repo.json)
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -44,7 +39,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Generate both channels
-        if: inputs.homebrew
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

@@ -61,8 +61,8 @@
 
 `ci/hbrepo.py` turns a built ipk into a Homebrew Channel repository: `repo.json`, the package
 manifest with sha256 and size, and the ipk URL. `.github/workflows/hbrepo.yml` publishes it on
-GitHub Pages only on a manual run with "homebrew" ticked while it is on hold (a release no longer
-refreshes it; the download page still deploys on its own). A TV adds `https://morpheus235.github.io/stremio-native/repo.json`
+GitHub Pages on every change to it on `main`; a release no longer refreshes it, so it is run by
+hand after one. A TV adds `https://morpheus235.github.io/stremio-native/repo.json`
 under Settings → Add repository and gets updates as releases appear.
 
 The package itself is built by `make ipk` (`ci/mkipk.py`). It is reproducible and read back with

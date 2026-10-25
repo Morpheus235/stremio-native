@@ -107,6 +107,9 @@ struct File {
     /// `Pref::TvGuide` by region name (`de`, `uk`, …; absent, empty or unknown: off).
     #[serde(default)]
     tv_guide: String,
+    /// `Pref::StreamOrder`'s rung (absent: the addon's order).
+    #[serde(default)]
+    stream_order: u8,
 }
 
 fn yes() -> bool {
@@ -208,6 +211,7 @@ fn of(file: File) -> Loaded {
         .seeded(Pref::UpNextAt, file.up_next_at)
         .seeded(Pref::Language, language_rung(&file.language))
         .seeded(Pref::TvGuide, sn_screens::stores::settings::tv_guide_rung(&file.tv_guide))
+        .seeded(Pref::StreamOrder, file.stream_order)
         .with_audio_offsets(file.audio_offsets),
         search: SearchStore::new(file.recent_searches),
     }
@@ -246,6 +250,7 @@ pub fn snapshot(settings: &SettingsStore, search: &SearchStore) -> Vec<u8> {
         language: language_of(settings.get(Pref::Language)).tag().to_string(),
         audio_offsets: settings.audio_offsets().to_vec(),
         tv_guide: sn_screens::stores::settings::tv_guide_name(settings.get(Pref::TvGuide)).to_string(),
+        stream_order: settings.get(Pref::StreamOrder),
     };
     serde_json::to_vec_pretty(&file).unwrap_or_default()
 }

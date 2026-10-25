@@ -27,9 +27,10 @@
 //! source, size, languages, seeders
 //! ([`stream_chips`], from `sn_stremio::stream_facts`, the one parser of addon stream text). An
 //! uncached debrid stream says "Not cached — starts a download" (it plays the service's
-//! placeholder clip until the download lands) and is listed below the ones that play at once;
-//! within those, the Stream sorting languages (Settings > Playback, `SettingsStore::stream_languages`)
-//! order the streams ([`stream_order`]).
+//! placeholder clip until the download lands). Settings > Stream order picks how each addon's
+//! streams are listed ([`stream_order`]): as the addon sent them (the default), or the ones that
+//! play at once first and then the Stream sorting languages (`SettingsStore::stream_languages`)
+//! or the highest resolution.
 //! An addon's header counts its streams; an upstream failure AIOStreams sends as a stream
 //! ("[❌] Comet p2p", `stream_facts::error_note`) is a muted note after them, not counted, as is
 //! its optional scrape summary ("🟢 [Comet] Scrape Summary", `stream_facts::statistic_note`, after
@@ -320,7 +321,7 @@ pub fn build(mode: &Mode, meta: Option<&MetaState>, streams: Option<&[StreamGrou
 }
 
 /// [`build`], with each addon's streams ordered for the `prefer`red audio languages
-/// ([`stream_order`]; `Facts::languages` codes, first preferred first).
+/// ([`stream_order`] with `ORDER_LANGUAGE`; `Facts::languages` codes, first preferred first).
 pub fn build_preferring(
     mode: &Mode,
     meta: Option<&MetaState>,
@@ -329,7 +330,8 @@ pub fn build_preferring(
     today: &str,
     prefer: &[&str],
 ) -> Built {
-    build_marked(mode, meta, streams, season, today, prefer, None, &StreamView::default())
+    let view = StreamView { order: crate::stores::settings::ORDER_LANGUAGE, ..StreamView::default() };
+    build_marked(mode, meta, streams, season, today, prefer, None, &view)
 }
 
 /// [`build_preferring`], the episode rows wearing the library's watched marks (`watched`).
@@ -430,6 +432,8 @@ fn play_item(mode: &Mode) -> Option<crate::registry::PlayItem> {
 pub struct StreamView {
     /// The closing row shows each addon that found nothing, and why.
     pub quiet_open: bool,
+    /// `Pref::StreamOrder`'s rung (`settings::ORDER_*`).
+    pub order: u8,
 }
 
 /// The closing row's key (*N addons without streams*), clear of every stream key.
@@ -518,7 +522,7 @@ fn stream_sections(out: &mut Built, groups: &[StreamGroup], mode: &Mode, prefer:
         let live_item = mode.kind() == "tv";
         let facts: Vec<Facts> = streams.iter().map(stream_facts::facts).map(|f| Facts { live: f.live || live_item, ..f }).collect();
         let playable: Vec<Option<Playable>> = streams.iter().map(sn_stremio::types::Stream::playable).collect();
-        let mut order: Vec<usize> = stream_order(&facts, prefer).into_iter().filter(|si| !is_note(*si)).collect();
+        let mut order: Vec<usize> = stream_order(&facts, prefer, view.order).into_iter().filter(|si| !is_note(*si)).collect();
         // what plays here before what cannot (a torrent with no debrid, a link elsewhere)
         order.sort_by_key(|si| !matches!(playable[*si], Some(Playable::Http { .. })));
         for si in order {
@@ -587,21 +591,33 @@ fn stream_sections(out: &mut Built, groups: &[StreamGroup], mode: &Mode, prefer:
     out.sections.push(s);
 }
 
-/// The order one addon's streams are listed in: those that play at once (cached, or with no
-/// cache to speak of) before those the debrid service must first download; within each, the
-/// streams in the first `prefer`red language, then the second, …, then a multi-audio release, then
-/// the rest. The addon's own order breaks every tie.
-pub fn stream_order(facts: &[Facts], prefer: &[&str]) -> Vec<usize> {
+/// The order one addon's streams are listed in, for `Pref::StreamOrder`'s rung `by`:
+/// - `ORDER_ADDON`: as the addon sent them.
+/// - `ORDER_LANGUAGE`: those that play at once (cached, or with no cache to speak of) before those
+///   the debrid service must first download; within each, the streams in the first `prefer`red
+///   language, then the second, …, then a multi-audio release, then the rest.
+/// - `ORDER_QUALITY`: the same split, then the highest resolution first (none named: last).
+///
+/// The addon's own order breaks every tie.
+pub fn stream_order(facts: &[Facts], prefer: &[&str], by: u8) -> Vec<usize> {
+    use crate::stores::settings::{ORDER_ADDON, ORDER_LANGUAGE};
+    const RESOLUTIONS: [&str; 6] = ["4K", "1440p", "1080p", "720p", "576p", "480p"];
     let rank = |f: &Facts| {
         let download = f.cached == Some(false);
-        let lang = prefer
-            .iter()
-            .position(|p| f.languages.contains(p))
-            .unwrap_or(if f.languages.contains(&"MULTI") { prefer.len() } else { prefer.len() + 1 });
-        (download, lang)
+        let then = if by == ORDER_LANGUAGE {
+            prefer
+                .iter()
+                .position(|p| f.languages.contains(p))
+                .unwrap_or(if f.languages.contains(&"MULTI") { prefer.len() } else { prefer.len() + 1 })
+        } else {
+            f.resolution.and_then(|r| RESOLUTIONS.iter().position(|x| *x == r)).unwrap_or(RESOLUTIONS.len())
+        };
+        (download, then)
     };
     let mut order: Vec<usize> = (0..facts.len()).collect();
-    order.sort_by_key(|i| rank(&facts[*i])); // stable: the addon's order breaks ties
+    if by != ORDER_ADDON {
+        order.sort_by_key(|i| rank(&facts[*i])); // stable: the addon's order breaks ties
+    }
     order
 }
 
@@ -2307,7 +2323,8 @@ impl DetailScreen {
             Some(MetaState::Ready(m)) => Some(self.watched_marks(cx, m)),
             _ => None,
         };
-        let built = build_marked(&self.mode, meta, streams, self.season, &today(), &prefer, marks.as_ref(), &self.stream_view);
+        let view = StreamView { order: cx.views.settings.get(crate::stores::settings::Pref::StreamOrder), ..self.stream_view.clone() };
+        let built = build_marked(&self.mode, meta, streams, self.season, &today(), &prefer, marks.as_ref(), &view);
         let moved = std::mem::take(&mut self.season_moved);
         let mut want = self.sel.or_else(|| self.focus_episode.map(RowKey));
         // until the viewer moves, a stream list that grows re-seats on its first row: a slower
@@ -2684,7 +2701,7 @@ mod tests {
         let facts: Vec<Facts> = tb_streams().iter().map(stream_facts::facts).collect();
         let order = |s: &SettingsStore| {
             let l = s.stream_languages();
-            stream_order(&facts, &l.iter().map(String::as_str).collect::<Vec<_>>())
+            stream_order(&facts, &l.iter().map(String::as_str).collect::<Vec<_>>(), crate::stores::settings::ORDER_LANGUAGE)
         };
         let mut s = SettingsStore::default();
         s.edit(LangList::Audio, LangOp::Add("en"));
@@ -2698,9 +2715,16 @@ mod tests {
     #[test]
     fn cached_streams_come_first_then_the_preferred_languages_in_order() {
         let facts: Vec<Facts> = tb_streams().iter().map(stream_facts::facts).collect();
-        assert_eq!(stream_order(&facts, &["DE", "EN"]), [2, 1, 3, 4, 0], "cached German, English, multi, the rest; the download last");
-        assert_eq!(stream_order(&facts, &["EN"]), [1, 3, 2, 4, 0]);
-        assert_eq!(stream_order(&facts, &[]), [3, 1, 2, 4, 0], "no preference: multi-audio first, else the addon's order");
+        use crate::stores::settings::{ORDER_ADDON, ORDER_LANGUAGE as LANG, ORDER_QUALITY};
+        assert_eq!(stream_order(&facts, &["DE", "EN"], LANG), [2, 1, 3, 4, 0], "cached German, English, multi, the rest; the download last");
+        assert_eq!(stream_order(&facts, &["EN"], LANG), [1, 3, 2, 4, 0]);
+        assert_eq!(stream_order(&facts, &[], LANG), [3, 1, 2, 4, 0], "no preference: multi-audio first, else the addon's order");
+        assert_eq!(stream_order(&facts, &["DE", "EN"], ORDER_ADDON), [0, 1, 2, 3, 4], "the addon's order, untouched");
+        let res: Vec<_> = facts.iter().map(|f| f.resolution).collect();
+        let by_quality = stream_order(&facts, &[], ORDER_QUALITY);
+        assert_eq!(by_quality.last(), Some(&0), "the download still last: {res:?}");
+        let ranks: Vec<_> = by_quality[..4].iter().map(|i| ["4K", "1440p", "1080p", "720p", "576p", "480p"].iter().position(|r| Some(*r) == res[*i]).unwrap_or(6)).collect();
+        assert!(ranks.windows(2).all(|w| w[0] <= w[1]), "highest resolution first: {ranks:?} {res:?}");
         let b = build_preferring(&movie(), None, Some(&[group("AIO", GroupState::Ready(tb_streams()))]), None, "", &["DE", "EN"]);
         let last = b.sections[0].rows.last().unwrap();
         assert_eq!(last.chips[0].text, msg::app_detail_stream_uncached(), "the download says so, first");

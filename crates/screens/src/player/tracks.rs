@@ -261,7 +261,8 @@ pub fn pref_menu(settings: &SettingsStore, pref: Pref) -> MenuKind {
             | Pref::UpNextAt
             | Pref::Language
             | Pref::MultichannelAudio
-            | Pref::TvGuide => ChoiceTarget::PlayerMore,
+            | Pref::TvGuide
+            | Pref::StreamOrder => ChoiceTarget::PlayerMore,
         },
     }
 }

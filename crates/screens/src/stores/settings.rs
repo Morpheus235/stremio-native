@@ -52,7 +52,16 @@ pub enum Pref {
     /// The programme guide Live TV shows now / next from: Off (rung 0) or a region's public XMLTV
     /// guide, rungs 1… in [`TV_GUIDES`] order.
     TvGuide = 16,
+    /// How each addon's streams are listed: [`ORDER_ADDON`] (as the addon sent them, the
+    /// default), [`ORDER_LANGUAGE`] (cached first, then the Stream sorting languages) or
+    /// [`ORDER_QUALITY`] (cached first, then the highest resolution).
+    StreamOrder = 17,
 }
+
+/// [`Pref::StreamOrder`]'s rungs.
+pub const ORDER_ADDON: u8 = 0;
+pub const ORDER_LANGUAGE: u8 = 1;
+pub const ORDER_QUALITY: u8 = 2;
 
 /// [`Pref::TvGuide`]'s regions, rungs 1… in order: the settings file's name for each and its
 /// public XMLTV guide (epgshare01, rebuilt daily from the broadcasters' own listings).
@@ -232,6 +241,7 @@ impl Pref {
         Pref::Language,
         Pref::MultichannelAudio,
         Pref::TvGuide,
+        Pref::StreamOrder,
     ];
 
     /// How many rungs the ladder has (`sn_media::prefs`'s `LADDER.len()`).
@@ -254,6 +264,7 @@ impl Pref {
             Pref::Language => sn_platform::i18n::Preference::ALL.len() as u8,
             Pref::MultichannelAudio => 6,
             Pref::TvGuide => 1 + TV_GUIDES.len() as u8,
+            Pref::StreamOrder => 3,
         }
     }
 
@@ -278,6 +289,7 @@ impl Pref {
             Pref::Language => msg::app_settings_language(),
             Pref::MultichannelAudio => msg::app_settings_multichannel_audio(),
             Pref::TvGuide => msg::app_settings_tv_guide(),
+            Pref::StreamOrder => msg::app_settings_stream_order(),
         }
     }
 
@@ -342,6 +354,9 @@ impl Pref {
             (Pref::TvGuide, 5) => msg::app_settings_tv_guide_fr(),
             (Pref::TvGuide, 6) => msg::app_settings_tv_guide_it(),
             (Pref::TvGuide, _) => msg::app_settings_tv_guide_es(),
+            (Pref::StreamOrder, ORDER_ADDON) => msg::app_settings_stream_order_addon(),
+            (Pref::StreamOrder, ORDER_LANGUAGE) => msg::app_settings_stream_order_language(),
+            (Pref::StreamOrder, _) => msg::app_settings_stream_order_quality(),
             (Pref::Language, r) => sn_platform::i18n::Preference::ALL[usize::from(r).min(sn_platform::i18n::Preference::ALL.len() - 1)].native_name(),
         }
     }
@@ -363,12 +378,13 @@ impl Pref {
             Pref::Language => 0,
             Pref::MultichannelAudio => MULTI_AUTO,
             Pref::TvGuide => 0,
+            Pref::StreamOrder => ORDER_ADDON,
         }
     }
 }
 
 /// How many preferences [`Pref::ALL`] holds.
-pub const PREFS: usize = 17;
+pub const PREFS: usize = 18;
 
 /// The pages that show their items as posters or as a list, each remembering its own choice.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
