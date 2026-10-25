@@ -7,8 +7,8 @@
 # (FLAVOR=beta: its own app id, version X.Y.YYMMDDHHm: the UTC cut time, to ten minutes).
 # webOS versions are numeric, so the cut time is what orders betas: one per ten minutes.
 #
-# The Homebrew Channel repository (hbrepo.yml) is on hold: a release no longer publishes it; run
-# that workflow by hand on main, with "homebrew" ticked, when it should list the newest releases.
+# A release no longer refreshes the Homebrew Channel repository (hbrepo.yml): run that workflow by
+# hand on main when it should list the newest releases.
 name: Release
 
 on:
