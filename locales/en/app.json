@@ -1312,5 +1312,9 @@
     "args": {
       "title": "str"
     }
+  },
+  "app.discover.recently_watched": {
+    "value": "Recently watched",
+    "description": "Discover, Live TV: the catalog dropdown's first choice — the channels the account watched most recently."
   }
 }

@@ -67,6 +67,9 @@ use crate::type_filter::{self, ALL};
 
 /// The Live TV sub-tab's key: the `tv` and the `channel` catalogs together.
 pub const LIVE: &str = "tv";
+/// Live TV's *Recently watched*, first in its catalog dropdown while the account played any
+/// channel (`LibraryStore::recent_channels`): not an addon catalog, so no grid is opened for it.
+pub const RECENT: &str = "\u{1f}recent";
 /// How many grid views the page keeps held, most recent first; an older one is let go.
 // ponytail: a fixed count of views (a few pages of previews each); a byte budget if one grows large
 pub const HELD_VIEWS: usize = 8;
@@ -260,9 +263,16 @@ struct Page {
     view: u32,
     /// The items show as a list (the setting, as of the last event).
     list: bool,
+    /// The account has recently watched channels: Live TV offers [`RECENT`].
+    recent: bool,
 }
 
 impl Page {
+    /// Live TV's *Recently watched* is the choice shown.
+    fn recent_shown(&self) -> bool {
+        self.row.kind() == Some(RECENT)
+    }
+
     fn tab(&self) -> Option<&str> {
         self.types.kind()
     }
@@ -278,7 +288,10 @@ impl Page {
         self.types.sync_named(tabs.iter().map(|t| (t.clone(), sub_tab_label(t))).collect());
         let tab = self.tab().unwrap_or_default().to_string();
         let row = in_tab(&self.catalogs, &tab);
-        let chips = row.iter().map(|c| c.ident()).zip(catalog_labels(&row)).collect();
+        let mut chips: Vec<(String, String)> = row.iter().map(|c| c.ident()).zip(catalog_labels(&row)).collect();
+        if tab == LIVE && self.recent {
+            chips.insert(0, (RECENT.to_string(), msg::app_discover_recently_watched().to_string()));
+        }
         let chosen = MEMORY.with(|m| m.borrow().catalog.get(&tab).cloned()).unwrap_or_default();
         self.row.set_chosen(&chosen);
         self.row.sync_named(chips);
@@ -338,6 +351,9 @@ impl Page {
         if self.catalogs.is_empty() {
             return None;
         }
+        if self.recent_shown() {
+            return Some(GridState::Ready { more: false });
+        }
         Some(self.key.as_ref().and_then(|k| cx.views.grid.state(k)).unwrap_or(GridState::Loading))
     }
 
@@ -357,6 +373,9 @@ impl Page {
     }
 
     fn items<'a>(&self, cx: &Cx<'a, Bundle>) -> &'a [MetaPreview] {
+        if self.recent_shown() {
+            return cx.views.library.recent_channels();
+        }
         self.key.as_ref().map_or(&[], |k| cx.views.grid.items(k))
     }
 
@@ -393,6 +412,7 @@ impl StackPage<Bundle> for Page {
             ^ ((self.items(cx).len() as u64) << 48)
             ^ (u64::from(cx.views.catalog.gen()) << 56)
             ^ (u64::from(cx.views.epg.gen()) << 24)
+            ^ (u64::from(cx.views.library.gen()) << 12)
     }
     fn sections(&self, cx: &Cx<'_, Bundle>, out: &mut Vec<SectionSpec<Sec>>) {
         out.push(SectionSpec::new(Sec::Top, Kind::Custom { height: CONTENT_TOP, focusable: false }, TOP_GROUP));
@@ -557,6 +577,7 @@ impl DiscoverScreen {
                 key: None,
                 view: 0,
                 list: false,
+                recent: false,
             },
             stack: Stack::new(entry).hold_hint(sn_ui::hold_hint::Kind::Library),
             read: None,
@@ -632,10 +653,13 @@ impl DiscoverScreen {
 
     /// Re-read the catalogs when the install moved; the choices are kept by identity.
     fn sync(&mut self, cx: &Cx<'_, Bundle>, fx: &mut Effects<'_, Bundle>) {
-        if self.read == Some(cx.views.catalog.gen()) {
+        // signed out the library is empty, so there is nothing recent
+        let recent = !cx.views.library.recent_channels().is_empty();
+        if self.read == Some(cx.views.catalog.gen()) && recent == self.page.recent {
             return;
         }
         self.read = Some(cx.views.catalog.gen());
+        self.page.recent = recent;
         self.page.catalogs = catalogs(cx.views.addons());
         self.apply_link(cx.views.addons());
         self.page.arrange();

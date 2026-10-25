@@ -22,6 +22,9 @@
   - Top-bar and colour-key shortcuts.
   - Live TV's TV guide (Settings → TV guide): now / next on channel cards and in the player,
     from a region's public XMLTV guide matched by channel name (`crates/stremio/src/epg.rs`).
+  - Live TV's Recently watched: the channels the account played, newest first, as the first
+    choice of the Live TV catalog picker (a channel has no position, so Continue Watching never
+    lists it).
 - **Player.**
   - Probe before Load: the bundled demuxer reads the container first, so the Load names the
     real codecs.

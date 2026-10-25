@@ -421,6 +421,37 @@ fn a_loaded_selection_is_not_asked_again_and_the_choices_outlive_the_page() {
     assert_eq!(opened(&mut app), [action], "the session's choice");
 }
 
+/// Live TV opens on *Recently watched* once the account has played a channel: the channels from
+/// the library, no addon catalog asked; the catalogs follow it in the dropdown.
+#[test]
+fn live_tv_opens_on_the_recently_watched_channels_when_there_are_any() {
+    let _g = sn_base::testlock::serial();
+    let _l = language_on_this_thread_for_test(Preference::En);
+    let mut app = boot();
+    app.rig.library.sign_in("u1", &crate::stores::account::Secret::new("k"));
+    let played = |id: &str, at: &str| -> sn_stremio::library::LibraryItem {
+        serde_json::from_str(&format!(r#"{{"_id":"{id}","type":"tv","name":"{id}","removed":true,"temp":true,"state":{{"lastWatched":"{at}"}}}}"#)).unwrap()
+    };
+    let items = vec![played("vavoo_a", "2026-10-20T00:00:00Z"), played("vavoo_b", "2026-10-25T00:00:00Z")];
+    app.rig.library.land(crate::stores::library::LibraryLanding::Fetched { user_id: "u1".into(), result: Ok(items) });
+    app.notify(StoreId::Library, app.rig.library.gen());
+    app.take_effects();
+    app.d.request(MachineId::Nav, NavOp::SelectTab(AppArg::LiveTv));
+    app.frames(4);
+    assert_eq!(screen(&app).value(ChoiceTarget::DiscoverCatalog).as_deref(), Some("Recently watched"));
+    assert_eq!(opened(&mut app), [], "no addon catalog is asked for it");
+    app.press(Key::Down);
+    app.press(Key::Ok);
+    assert_eq!(app.top_name(), "detail", "the most recent channel opens its streams page");
+    app.press(Key::Back);
+    app.frames(3);
+    app.press(Key::Up);
+    app.press(Key::Right);
+    app.press(Key::Ok);
+    pick(&mut app, 1); // the first addon catalog, after Recently watched
+    assert_eq!(opened(&mut app), [key("tv", "vavoo_tv_it", None)]);
+}
+
 /// Live TV is Discover on its Live TV sub-tab: the channel catalogs, their genres, their cards.
 #[test]
 fn live_tv_opens_discover_on_its_live_tv_sub_tab() {

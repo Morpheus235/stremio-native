@@ -156,8 +156,13 @@ pub struct LibraryStore {
     pending: Vec<Pending>,
     /// Refused writes the application has not told the viewer about yet.
     refused: Vec<Refused>,
+    /// [`LibraryStore::recent_channels`], rebuilt whenever the store moves.
+    recent: Vec<sn_stremio::types::MetaPreview>,
     gen: u32,
 }
+
+/// How many channels Live TV's Recently watched lists.
+pub const RECENT_CHANNELS: usize = 20;
 
 impl Default for LibraryStore {
     fn default() -> Self {
@@ -167,7 +172,7 @@ impl Default for LibraryStore {
 
 impl LibraryStore {
     pub fn new() -> Self {
-        LibraryStore { state: LibraryState::None, user: None, pending: Vec::new(), refused: Vec::new(), gen: 0 }
+        LibraryStore { state: LibraryState::None, user: None, pending: Vec::new(), refused: Vec::new(), recent: Vec::new(), gen: 0 }
     }
 
     pub fn gen(&self) -> u32 {
@@ -180,6 +185,22 @@ impl LibraryStore {
 
     fn bump(&mut self) {
         self.gen = self.gen.wrapping_add(1);
+        let mut played: Vec<&LibraryItem> =
+            self.items().iter().filter(|i| matches!(i.kind.as_str(), "tv" | "channel") && i.state.last_watched.as_deref().is_some_and(|w| !w.is_empty())).collect();
+        played.sort_by(|a, b| b.recency().cmp(a.recency()));
+        self.recent = played
+            .into_iter()
+            .take(RECENT_CHANNELS)
+            .map(|i| sn_stremio::types::MetaPreview { id: i.id.clone(), kind: i.kind.clone(), name: i.name.clone(), poster: i.poster.clone(), ..Default::default() })
+            .collect();
+    }
+
+    /// Live TV's Recently watched: the channels the account played, most recent first (at most
+    /// [`RECENT_CHANNELS`]), as catalog items. A channel's play leaves no position, so Continue
+    /// Watching never lists it (stremio-core's rule); its last play is kept all the same, and
+    /// this reads only that — nothing is written for it.
+    pub fn recent_channels(&self) -> &[sn_stremio::types::MetaPreview] {
+        &self.recent
     }
 
     pub fn sign_in(&mut self, user_id: &str, auth_key: &Secret) -> Vec<LibraryJob> {
@@ -452,6 +473,26 @@ mod tests {
         ];
         assert!(s.land(LibraryLanding::Fetched { user_id: "u1".into(), result: Ok(items) }).0);
         s
+    }
+
+    #[test]
+    fn recently_watched_channels_are_the_played_ones_most_recent_first() {
+        let mut s = LibraryStore::new();
+        s.sign_in("u1", &Secret::new("k"));
+        let items = vec![
+            item(r#"{"_id":"ch_old","type":"tv","name":"Old","removed":true,"temp":true,"state":{"lastWatched":"2026-10-01T00:00:00Z"}}"#),
+            item(r#"{"_id":"ch_new","type":"tv","name":"New","poster":"https://img.example/p.png","state":{"lastWatched":"2026-10-24T00:00:00Z"}}"#),
+            item(r#"{"_id":"ch_never","type":"tv","name":"Never played"}"#),
+            item(r#"{"_id":"tt1","type":"movie","name":"Film","state":{"timeOffset":5,"lastWatched":"2026-10-25T00:00:00Z"}}"#),
+        ];
+        s.land(LibraryLanding::Fetched { user_id: "u1".into(), result: Ok(items) });
+        let ids: Vec<&str> = s.recent_channels().iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["ch_new", "ch_old"], "played channels only, a temporary entry too, newest first");
+        assert_eq!(s.recent_channels()[0].poster.as_deref(), Some("https://img.example/p.png"));
+        assert_eq!(s.recent_channels()[0].kind, "tv");
+        assert!(s.continue_watching().iter().all(|i| i.kind != "tv"), "and still none in Continue Watching");
+        s.sign_out();
+        assert!(s.recent_channels().is_empty(), "signed out: none");
     }
 
     #[test]
