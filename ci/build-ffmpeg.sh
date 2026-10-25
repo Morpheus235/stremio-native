@@ -197,8 +197,9 @@ fi
 #              FLAC, LPCM, ...) are converted to float planar in Rust (`transcode::to_planar_f32`),
 #              not by libswresample. Channel order needs no resampler either: the
 #              transcoder hands the encoder the decoder's own native layout (or picks planes out
-#              by channel id when it has to reduce one to 5.1). Kept in RELEASE builds: it is
-#              playback, not a dev tool.
+#              by channel id when it has to reduce one to 5.1). `eac3` is the same encoder core
+#              writing E-AC-3 (Settings → Multichannel audio → Dolby Digital Plus). Kept in RELEASE
+#              builds: they are playback, not dev tools.
 #   encoder/   mpeg1video + mpegts are the DEV capture stream only, dropped by RELEASE=1 along
 #   muxer      with swscale, which nothing else uses.
 #
@@ -254,13 +255,13 @@ set -- "$@" \
   --enable-decoder=pgssub,dvdsub,dvbsub,ass,srt,subrip,text,mov_text,webvtt,dca \
   --enable-decoder=opus,vorbis,flac,truehd,mlp,mp3float,mp2float,alac,wmav1,wmav2,wmapro \
   --enable-decoder=pcm_s16le,pcm_s16be,pcm_s24le,pcm_s24be,pcm_s32le,pcm_f32le,pcm_bluray,pcm_dvd \
-  --enable-encoder=ac3 \
+  --enable-encoder=ac3,eac3 \
   --enable-protocol=file
 
 if [ "${RELEASE:-}" = "1" ]; then
   set -- "$@" --disable-swscale
 else
-  # `--enable-encoder` accumulates, so this adds mpeg1video to the ac3 above.
+  # `--enable-encoder` accumulates, so this adds mpeg1video to the ac3/eac3 above.
   set -- "$@" --enable-encoder=mpeg1video --enable-muxer=mpegts
 fi
 

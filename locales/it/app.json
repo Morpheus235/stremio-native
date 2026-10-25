@@ -484,11 +484,15 @@
   },
   "app.settings.multichannel_auto": {
     "value": "Automatico",
-    "description": "Multichannel audio picker: Dolby Digital, or PCM when the TV's sound output is HDMI eARC (the default)."
+    "description": "Multichannel audio picker: the default \u2014 Dolby Digital on every sound output (the TV mixes app PCM down to stereo, even over eARC)."
   },
   "app.settings.multichannel_dolby_digital": {
     "value": "Dolby Digital",
     "description": "Multichannel audio picker: always Dolby Digital 5.1. 'Dolby Digital' is a trademark, never translated."
+  },
+  "app.settings.multichannel_dolby_digital_plus": {
+    "value": "Dolby Digital Plus",
+    "description": "Multichannel audio picker: always Dolby Digital Plus (E-AC-3) 5.1, for HDMI ARC / eARC. 'Dolby Digital Plus' is a trademark, never translated."
   },
   "app.settings.multichannel_pcm": {
     "value": "PCM",
@@ -511,7 +515,7 @@
     "description": "Multichannel audio picker: the line under Pro Logic II — for a receiver that unfolds Pro Logic II, connected by a link that carries stereo only (optical with LG Sound Sync)."
   },
   "app.settings.multichannel_audio_copy": {
-    "value": "Come viene inviato l’audio 5.1 e 7.1 decodificato dall’app. Automatico: Dolby Digital su ottico e ARC, PCM su eARC.",
+    "value": "Come viene inviato l'audio 5.1 e 7.1 decodificato dall'app. Automatico è Dolby Digital su ogni uscita: il PCM spesso il televisore lo riduce a stereo.",
     "description": "Multichannel audio picker: the line under the title."
   },
   "app.player.undo": {
