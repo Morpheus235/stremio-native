@@ -249,6 +249,15 @@ fn title(name: &str, body: &str, file: &str) -> String {
     if let Some(f) = lines(file).next() {
         return f.to_string();
     }
+    // AIOStreams' templates end on a "📁 folder/filename" line: the release, whatever the
+    // lines above it say ("🎥 BluRay 🎞️ HEVC 🏷️ GRP" is facts, not a name)
+    if let Some(f) = lines(body).find_map(|l| l.strip_prefix('\u{1f4c1}')) {
+        let f = f.trim();
+        let f = f.rsplit('/').next().unwrap_or(f).trim();
+        if !f.is_empty() {
+            return f.to_string();
+        }
+    }
     // the first line that says anything: a run of marks alone ("⚡ ✓") is no name
     lines(body)
         .find(|l| l.chars().any(char::is_alphanumeric))
@@ -263,6 +272,44 @@ impl Facts {
         let named = self.name.to_lowercase();
         let says = RESOLUTIONS.iter().any(|(w, _)| w.iter().any(|w| has_word(&named, w)));
         if says { "" } else { self.resolution.unwrap_or("") }
+    }
+
+    /// [`Facts::title`] as a row reads it: a leading mark run dropped ("📄 Film" → "Film"; a
+    /// bracketed "[🛰️] SKY 1" stays), and a scene name (one dotted word, "Film.2024.2160p.DDP5.1.H.265-GRP.mkv")
+    /// spaced into words without its file extension: "Film 2024 2160p DDP5.1 H.265-GRP". A dot
+    /// between digits ("5.1") or in "H.264" stays, so the line wraps between words, not inside one.
+    pub fn label(&self) -> String {
+        let t = self.title.trim_start_matches(|c: char| c.is_whitespace() || !(c.is_ascii() || c.is_alphanumeric()));
+        if t.contains(char::is_whitespace) || !t.contains(['.', '_']) {
+            return t.to_string();
+        }
+        let t = t
+            .rsplit_once('.')
+            .filter(|(_, ext)| matches!(ext.to_ascii_lowercase().as_str(), "mkv" | "mp4" | "avi" | "ts" | "m4v" | "webm"))
+            .map_or(t, |(stem, _)| stem);
+        let c: Vec<char> = t.chars().collect();
+        c.iter()
+            .enumerate()
+            .map(|(i, &ch)| {
+                // "5.1": one digit each side ("S01E01.2160p" is two words)
+                let digit = |j: usize| c.get(j).is_some_and(char::is_ascii_digit);
+                let digits = i > 0 && digit(i - 1) && digit(i + 1) && !(i > 1 && digit(i - 2)) && !digit(i + 2);
+                let h26x = i > 0 && matches!(c[i - 1], 'h' | 'H') && c.get(i + 1).is_some_and(char::is_ascii_digit);
+                match ch {
+                    '_' => ' ',
+                    '.' if !digits && !h26x => ' ',
+                    _ => ch,
+                }
+            })
+            .collect()
+    }
+
+    /// The debrid service the stream's name marks ("[RD+] Torrentio", "[TB⚡] Comet",
+    /// "MediaFusion | ⚡️ TB 4K"): its short code, as the addons write it.
+    pub fn service(&self) -> Option<&'static str> {
+        const SERVICES: [&str; 8] = ["RD", "AD", "PM", "TB", "DL", "ED", "OC", "PKP"];
+        let name = self.name.to_ascii_uppercase();
+        SERVICES.into_iter().find(|s| has_word(&name, s))
     }
 }
 
@@ -459,6 +506,47 @@ mod tests {
         assert_eq!(f.seeders, Some(42));
         assert_eq!(f.languages, vec!["MULTI", "EN", "DE"]);
         assert_eq!(f.cached, Some(true));
+    }
+
+    #[test]
+    fn an_aiostreams_default_template_row() {
+        // the output of AIOStreams' stock name and description templates
+        let s = Stream {
+            url: Some("https://example.com/s".into()),
+            name: Some("🔑 [TB⚡] AIOStreams 2160p (Best)".into()),
+            description: Some(
+                "🎥 BluRay REMUX 🎞️ HEVC 🏷️ FGT 🏆 Extended\n📺 DV | HDR10 🎧 Atmos | TrueHD 🔊 7.1\n📦 58.3 GB (62 Mbps) ⏱️ 2h:43m 👥 41 🔍 Torrentio\n🌎 German | English📝 English | Greek\n📁 Film (2024)/Film.2024.2160p.BluRay.REMUX.DV.HEVC.TrueHD.Atmos.7.1-FGT.mkv"
+                    .into(),
+            ),
+            ..Default::default()
+        };
+        let f = facts(&s);
+        assert_eq!(f.title, "Film.2024.2160p.BluRay.REMUX.DV.HEVC.TrueHD.Atmos.7.1-FGT.mkv", "the 📁 line, without its folder");
+        assert_eq!(f.label(), "Film 2024 2160p BluRay REMUX DV HEVC TrueHD Atmos 7.1-FGT");
+        assert_eq!((f.resolution, f.range, f.codec, f.source), (Some("4K"), Some("DV"), Some("HEVC"), Some("REMUX")));
+        assert_eq!(f.audio.as_deref(), Some("TrueHD Atmos 7.1"));
+        assert_eq!(f.group.as_deref(), Some("FGT"));
+        assert_eq!(f.seeders, Some(41));
+        assert_eq!(f.languages, vec!["DE", "EN"], "audio only: the 📝 subtitles are not counted");
+        assert_eq!((f.cached, f.service()), (Some(true), Some("TB")));
+        let uncached = Stream { name: Some("[RD⏳] AIOStreams 1080p".into()), ..s };
+        assert_eq!((facts(&uncached).cached, facts(&uncached).service()), (Some(false), Some("RD")));
+    }
+
+    #[test]
+    fn a_row_reads_a_spaced_label_and_the_service() {
+        let label = |t: &str| Facts { title: t.into(), ..Default::default() }.label();
+        assert_eq!(label("Film.2024.2160p.WEB-DL.DDP5.1.Atmos.H.265-GRP.mkv"), "Film 2024 2160p WEB-DL DDP5.1 Atmos H.265-GRP");
+        assert_eq!(label("Film_2024_1080p_x264"), "Film 2024 1080p x264");
+        assert_eq!(label("Show.S01E01.2160p.TrueHD.7.1"), "Show S01E01 2160p TrueHD 7.1");
+        assert_eq!(label("📄 Film 2024 2160p WEB-DL"), "Film 2024 2160p WEB-DL", "a leading mark is dropped");
+        assert_eq!(label("[🛰️] SKY 1"), "[🛰️] SKY 1", "a bracketed mark stays");
+        assert_eq!(label("Mr. Robot S01E01 720p"), "Mr. Robot S01E01 720p", "spaced text is left alone");
+        let service = |n: &str| facts(&stream(n, "x")).service();
+        assert_eq!(service("[RD+] Torrentio\n4k"), Some("RD"));
+        assert_eq!(service("[TB⚡] Comet 2160p"), Some("TB"));
+        assert_eq!(service("MediaFusion | ⚡️ TB 4K"), Some("TB"));
+        assert_eq!(service("Torrentio\n720p"), None);
     }
 
     #[test]

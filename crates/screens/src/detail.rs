@@ -19,9 +19,11 @@
 //!   again (`AddonsStore::stream_filter`, persisted on the device, never the account). The popover
 //!   stays open while OK toggles, as Search's addon filter does; an addon switched off is not listed.
 //!
-//! A stream row is a `sn_ui::table` CHIP row: the stream's own `name` ("[TB⚡] Comet" over
-//! "1080p", TvVoo's "Proxy" / "Vavoo"; the addon's only when it sent none) in the side column, over
-//! the resolution when the name does not say one, as Stremio shows it; the release's name (two lines at most; the FOCUSED row grows to its whole name
+//! A stream row is a `sn_ui::table` CHIP row: in the side column the debrid service over the
+//! resolution ("TB" / "1080p", `Facts::service`; the addon's name is the section header), or for a
+//! live stream or one without a resolution its own `name` (TvVoo's "Proxy" / "Vavoo"; the addon's
+//! only when it sent none); the release's name spaced into words (`Facts::label`: "Film 2024 2160p
+//! DDP5.1 H.265-GRP", the folder and extension of AIOStreams' "📁" line dropped; two lines at most; the FOCUSED row grows to its whole name
 //! and every chip, wrapped, where at rest the chips that do not fit read "+N") and one line of chips under it — the
 //! live mark (`behaviorHints.isLive`, or a `tv` item), the debrid cache state, HDR, codec, audio,
 //! source, size, languages, seeders
@@ -527,10 +529,17 @@ fn stream_sections(out: &mut Built, groups: &[StreamGroup], mode: &Mode, prefer:
         order.sort_by_key(|si| !matches!(playable[*si], Some(Playable::Http { .. })));
         for si in order {
             let f = &facts[si];
-            let label = if f.title.is_empty() { group.addon_name.clone() } else { f.title.clone() };
-            // the stream's own name, as Stremio shows it; the addon's only when it sent none
-            let name = if f.name.is_empty() { group.addon_name.clone() } else { f.name.clone() };
-            let mut row = Row::new(label).server_label().side(name, f.side_tag());
+            let label = if f.title.is_empty() { group.addon_name.clone() } else { f.label() };
+            // the debrid service over the quality ("RD" / "4K", the quality in the side column's strong tag): the addon's name is the section's
+            // header already. A live stream, or one with no resolution, keeps its own name (TvVoo's "Proxy"),
+            // the addon's only when it sent none.
+            let mut row = match f.resolution.filter(|_| !f.live) {
+                Some(r) => Row::new(label).server_label().side(f.service().unwrap_or(""), r),
+                None => {
+                    let name = if f.name.is_empty() { group.addon_name.clone() } else { f.name.clone() };
+                    Row::new(label).server_label().side(name, f.side_tag())
+                }
+            };
             for c in stream_chips(f) {
                 row = row.chip(c);
             }
@@ -2654,7 +2663,7 @@ mod tests {
             ]
         );
         let row = &b.sections[0].rows[0];
-        assert_eq!(row.side, Some(("Fast\n4K".into(), String::new())), "the stream's own name, which says its quality");
+        assert_eq!(row.side, Some((String::new(), "4K".into())), "the quality; the addon is the header");
         assert_eq!(row.chips.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), ["12 seeders"]);
         assert_eq!(b.sections[0].accessory, "1", "the header counts the addon's streams");
         assert!(b.sections[1].rows[0].is_note(), "the wait is a note, never a focusable row");
@@ -2787,7 +2796,7 @@ mod tests {
         let aio = &b.sections[0];
         assert_eq!(aio.header, "AIOStreams", "the addon with a real stream first");
         assert_eq!(aio.accessory, "1", "the error is no stream");
-        assert_eq!(aio.rows[0].label, "Film.2024.1080p.WEB-DL");
+        assert_eq!(aio.rows[0].label, "Film 2024 1080p WEB-DL");
         assert!(aio.rows[1].is_note() && aio.rows[1].dim, "a muted note, after the streams");
         assert_eq!(aio.rows[1].label, "Comet p2p: The operation was aborted due to timeout");
         assert_eq!(b.actions.iter().filter(|a| matches!(a, Some(Action::Play(_)))).count(), 1, "the note plays nothing");
@@ -2824,7 +2833,7 @@ mod tests {
         assert_eq!(aio.accessory, "2", "neither summaries nor the failure count");
         let labels: Vec<&str> = aio.rows.iter().map(|r| r.label.as_str()).collect();
         let summary = |up: &str| format!("🟢 [{up}] Scrape Summary\n✔ Status : SUCCESS · 📦 Streams : 1 · 📋 Details : Successfully fetched streams. · ⏱️ Time : 3.2s");
-        assert_eq!(labels, ["Film.2024.1080p.WEB-DL", "Film.2024.2160p.BluRay", "Comet p2p: No results", &summary("Comet"), &summary("Torrentio")]);
+        assert_eq!(labels, ["Film 2024 1080p WEB-DL", "Film 2024 2160p BluRay", "Comet p2p: No results", &summary("Comet"), &summary("Torrentio")]);
         assert!(aio.rows[2..].iter().all(|r| r.is_note() && r.dim), "muted notes, never focusable");
         assert_eq!(aio.rows[2].note_max, 0, "a failure reads whole");
         assert!(aio.rows[3..].iter().all(|r| r.note_max == STAT_NOTE_LINES), "a summary is capped");
@@ -2837,8 +2846,8 @@ mod tests {
         assert_eq!(t.sections[0].rows[3].note_lines.get(), 2);
     }
 
-    /// AIOStreams/Comet and Torrentio keep their title and chips; the side column now reads the
-    /// stream's own name, and the quality tag only when the name does not already say it.
+    /// AIOStreams/Comet and Torrentio rows: the release spaced into words, the side column the
+    /// debrid service over the quality.
     #[test]
     fn aiostreams_and_torrentio_rows_read_their_own_names() {
         let _en = sn_platform::i18n::language_on_this_thread_for_test(sn_platform::i18n::Preference::En);
@@ -2848,13 +2857,13 @@ mod tests {
         let bare = http("", "Film.2024.720p.WEB", "https://example.com/b");
         let b = build(&movie(), None, Some(&[group("AIOStreams", GroupState::Ready(vec![comet, torrentio, bare]))]), None, "");
         let rows = &b.sections[0].rows;
-        assert_eq!(rows[0].label, "Film.2024.1080p.WEB-DL.HEVC.DD5.1-GRP.mkv", "the filename hint is the release");
-        assert_eq!(rows[0].side, Some(("[TB\u{26a1}] Comet\n1080p".into(), String::new())), "the name carries its quality");
+        assert_eq!(rows[0].label, "Film 2024 1080p WEB-DL HEVC DD5.1-GRP", "the filename hint is the release, spaced");
+        assert_eq!(rows[0].side, Some(("TB".into(), "1080p".into())), "the debrid service over the quality");
         let chips: Vec<&str> = rows[0].chips.iter().map(|c| c.text.as_str()).collect();
         assert_eq!(chips[..4], ["Cached", "HEVC", "DD 5.1", "WEB-DL \u{b7} GRP"], "the source carries the release group");
-        assert_eq!(rows[1].label, "Film.2024.2160p.BluRay.REMUX.HEVC-GRP");
-        assert_eq!(rows[1].side, Some(("[RD+] Torrentio\n4k".into(), String::new())));
-        assert_eq!(rows[2].side, Some(("AIOStreams".into(), "720p".into())), "no name: the addon, and the quality it does not say");
+        assert_eq!(rows[1].label, "Film 2024 2160p BluRay REMUX HEVC-GRP");
+        assert_eq!(rows[1].side, Some(("RD".into(), "4K".into())));
+        assert_eq!(rows[2].side, Some((String::new(), "720p".into())), "no service: the quality alone");
         assert_no_placeholder_text(&b);
     }
 
@@ -2912,7 +2921,7 @@ mod tests {
             t.set_sections(b.sections, 0, false);
             out.extend(t.app_fit_failures(w, language.tag()));
             t.fit_notes(w, &m);
-            let long = t.sections[0].rows.iter().find(|r| r.label.starts_with("A.Very")).unwrap();
+            let long = t.sections[0].rows.iter().find(|r| r.label.starts_with("A Very")).unwrap();
             assert_eq!(long.note_lines.get(), 2, "{}: the long release wraps to two lines", language.tag());
             let (shown, _) = sn_ui::table::chip_run(&long.chips, t.label_width(long, w, &m), &m);
             assert!(shown >= 2, "{}: the cache chip and at least one fact show", language.tag());
@@ -4102,7 +4111,7 @@ mod tests {
         let _en = sn_platform::i18n::language_on_this_thread_for_test(sn_platform::i18n::Preference::En);
         let mut app = two_addon_movie();
         let page = detail_page(&app);
-        assert_eq!(page.sections()[0].rows.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(), ["Film.One", "Film.Torrent"]);
+        assert_eq!(page.sections()[0].rows.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(), ["Film One", "Film Torrent"]);
         assert_eq!(app.d.focus().map(|k| k.elem), Some(STREAM_KEY + 1), "the stream that plays is the first seat");
         app.press(Key::Down);
         assert_eq!(app.d.focus().map(|k| k.elem), Some(STREAM_KEY), "the torrent is a stop");
