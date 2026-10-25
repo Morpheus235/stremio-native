@@ -19,9 +19,8 @@ crate-type = ["rlib"]
 default = []
 # Forwarded from the application crate, which is the only one that sets them. Each is named here
 # only because some code in this crate (or in `sn_base`, which it forwards to) has a `cfg` on it
-# (`net::post_pinned`, the `nowan` dev trigger).
+# (the `nowan` dev trigger).
 devtriggers = ["sn_base/devtriggers"]
-lab-diagnostics = ["sn_base/lab-diagnostics"]
 # The `cfg(test)` seams other crates' tests use (`net::roots`'s and `net::resolve`'s test hooks,
 # the loopback server fixtures, the canned-response helpers) plus the test-only CA-bundle override of
 # `net::request_result`. The fixtures mint certificates and run a TLS server, so this feature is

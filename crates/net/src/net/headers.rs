@@ -142,7 +142,7 @@ mod tests {
             "Authorization: Bearer t",
             "X-Client-Id: 0a1b-2c",
             "Accept: application/json",
-            "Content-Type: application/x-sentry-envelope",
+            "Content-Type: application/octet-stream",
             "Expect:",
             "Connection: close",
             "Range: bytes=1048576-",

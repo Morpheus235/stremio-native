@@ -133,23 +133,6 @@ pub fn flavour() -> Option<&'static str> {
     app_id().strip_prefix(STABLE_APP_ID)?.strip_prefix('.')
 }
 
-/// The closed-enum sandbox fact for every telemetry event — `devmode` / `homebrew` / `unknown` —
-/// derived from [`app_dir`]'s prefix rather than from a second read of `/proc/self/exe`. **Never
-/// the path itself**: the two real prefixes are `/media/developer/…` and `/media/cryptofs/…`, and
-/// a raw path is exactly the kind of value this app's telemetry never sends (see this module's own
-/// doc, and `diag::schema`'s "no field a caller can put a runtime string into"). `unknown` also
-/// covers the host build, where the binary sits under `target-sim/`.
-pub fn install_kind() -> &'static str {
-    let dir = app_dir();
-    if dir.starts_with("/media/developer") {
-        "devmode"
-    } else if dir.starts_with("/media/cryptofs") {
-        "homebrew"
-    } else {
-        "unknown"
-    }
-}
-
 /// The directory the running executable sits in — i.e. where the ipk's payload was installed.
 ///
 /// `std::env::current_exe` IS the `/proc/self/exe` read on Linux, so this is the same syscall the
@@ -598,25 +581,6 @@ pub fn session_candidates() -> Vec<PathBuf> {
     v
 }
 
-/// Candidate locations for the telemetry decision, best first — **the same tier as the session**,
-/// and that choice has a consequence worth stating rather than discovering.
-///
-/// It goes here, not in [`runtime_dir`], because the runtime root on a television is `/tmp` and
-/// `/tmp` is cleared by a reboot: a consent decision that evaporated overnight would re-ask a
-/// person who had already answered, which is both worse for them and the exact pattern that makes
-/// a consent prompt feel like nagging rather than a choice.
-///
-/// **So it outlives an uninstall** — webOS gives a native app no uninstall hook, so nothing can
-/// clear this on the way out — **but not a sign-out**: the decision belongs to the account that
-/// gave it, and `auth::forget_account` unlinks every candidate here (through `telemetry::forget`)
-/// when that account signs out, so a change of owner IS a fresh question. That is also why the
-/// file holds a DECISION and, only after opt-in, one random identifier PER CHANNEL (the
-/// crash-report id and the analytics id, each owned by its own switch) — and why withdrawing a
-/// channel DELETES its identifier rather than merely disabling it. Recorded in `PRIVACY.md`,
-/// because a user cannot audit a file they cannot reach.
-///
-/// Outside the `stremionative-` trigger namespace by construction, since it is not in the runtime root
-/// at all — so it cannot suppress the who's-watching picker the way anything in `/tmp` would.
 /// Where the image cache may live (`imgcache`), best first: the session file's search
 /// order, as DIRECTORIES. `/media/developer` under the Developer Mode jail, `/media/internal`
 /// under the production one, the app dir as a theory, and a steerable build's instance root
@@ -679,73 +643,6 @@ pub fn image_cache_dir_is_private(path: &Path) -> bool {
     path.parent() == Some(Path::new("/media/developer/temp"))
 }
 
-/// The spool, beside the decision that authorised it.
-///
-/// **Same directories, same search order, different file** — and not merged into
-/// `telemetry.json` for one reason: the decision is small, rewritten rarely and must survive
-/// anything, while the spool is up to half a megabyte rewritten after every flush. Sharing one file
-/// would put the consent record itself at risk on every single upload, which is the one piece of
-/// state whose loss changes what the app is allowed to do.
-pub fn telemetry_spool_candidates() -> Vec<PathBuf> {
-    telemetry_candidates()
-        .into_iter()
-        .map(|p| {
-            p.with_file_name(p.file_name().map_or_else(
-                || "telemetry-spool.bin".into(),
-                |n| {
-                    n.to_string_lossy()
-                        .replace("telemetry.json", "telemetry-spool.bin")
-                },
-            ))
-        })
-        .collect()
-}
-
-/// How much of the append-only crash log has already been reported, beside the spool.
-///
-/// **A watermark rather than a truncation, and that is the whole reason this file exists.**
-/// `stremionative-crash.log` is append-only and survives a relaunch BY DESIGN — `docs/agent-reference.md` names it the
-/// thing to read after a crash-and-restart and `tools/crash-report.sh` parses it — so the telemetry
-/// reader may not consume it. Recording a byte offset lets a human and this module read the same
-/// file without either disturbing the other.
-///
-/// Not in the runtime root with the log it points into, deliberately. The runtime root is `/tmp` on
-/// this television: a watermark that vanished with a reboot would re-report every crash still in
-/// the log, and the one thing worse than losing a crash report is sending it four times. It lives
-/// beside the decision that authorised sending it, which is also the directory that survives a
-/// reinstall.
-pub fn telemetry_crashmark_candidates() -> Vec<PathBuf> {
-    telemetry_candidates()
-        .into_iter()
-        .map(|p| {
-            p.with_file_name(p.file_name().map_or_else(
-                || "telemetry-crashmark.json".into(),
-                |n| {
-                    n.to_string_lossy()
-                        .replace("telemetry.json", "telemetry-crashmark.json")
-                },
-            ))
-        })
-        .collect()
-}
-
-pub fn telemetry_candidates() -> Vec<PathBuf> {
-    let mut v = Vec::new();
-    // A steerable build keeps its own, for exactly the reason the session file does: several
-    // simulators must not share one decision (or one identifier).
-    if ENV_STEERABLE {
-        v.push(in_runtime_dir("telemetry.json"));
-    }
-    let id = app_id();
-    v.extend([
-        PathBuf::from(format!("/media/developer/{id}-telemetry.json")),
-        PathBuf::from(format!("/media/internal/.{id}-telemetry.json")),
-        in_app_dir("telemetry.json"),
-    ]);
-    // No legacy/migration entry, and no `flavour().is_none()` arm: there is no older location, and
-    // the two installs are two devices — a decision taken in one is not a decision about the other.
-    v
-}
 
 /// Candidate locations of the retired **last place** bookmark (`coldstart`).
 ///

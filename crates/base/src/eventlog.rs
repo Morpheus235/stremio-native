@@ -7,15 +7,8 @@
 //! used to be `log` in `lib.rs`, and reaching the lab ring through `lab` from there put every
 //! caller above the whole app in the module graph.
 
-/// The redaction pass every line takes before the file write ([`scrub::scrub_local`]), and the
-/// stricter one a Cloud Lab upload takes ([`scrub::scrub`]). **Ungated**: its assertions must run in
-/// the default `make check`. See the module's doc for why there are two exits and why only the
-/// remote one may drop a line.
+/// The redaction pass every line takes before the file write ([`scrub::scrub_local`]).
 pub mod scrub;
-/// The bounded in-memory record ring, tapped by [`log`] one call below the redaction. Behind the
-/// lab feature: a build without it has nothing to put in a ring.
-#[cfg(feature = "lab-diagnostics")]
-pub mod ring;
 
 /// Strip a Stremio session key from a line bound for the event log.
 ///
@@ -253,11 +246,6 @@ pub fn log(m: &str) {
     // addresses are rewritten before anything reaches the disk. `scrub_local` never DROPS a line —
     // see its doc for why the network exit may and this one may not.
     let line = crate::eventlog::scrub::scrub_local(m);
-    // The lab ring taps the log HERE, one call below the redaction, so it is by construction a
-    // strict subset of the file every other tool reads and inherits the credential backstop above.
-    // Compiled out without the `lab-diagnostics` feature — see `lab`.
-    #[cfg(feature = "lab-diagnostics")]
-    crate::eventlog::ring::record(&line);
     let _ = append_record(&p, &line);
 }
 

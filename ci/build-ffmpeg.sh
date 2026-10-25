@@ -523,8 +523,8 @@ if [ -z "$HOST" ]; then
     [ -f "$elf" ] && [ ! -L "$elf" ] || continue
     target="$PREFIX/lib/$(basename "$elf")"
     # Keep the unstripped original beside the stripped one. It is the only copy that still has
-    # `.symtab` (the install above strips it, and so do the two lines below): `make symbols-libs`
-    # turns it into the `.debug` that lets Sentry name a frame inside libavformat & co. Same
+    # `.symtab` (the install above strips it, and so do the two lines below): it is what
+    # lets a local crash symbolication name a frame inside libavformat & co. Same
     # basename as the SONAME the Makefile stages, in a directory the library globs do not reach.
     mkdir -p "$PREFIX/lib/unstripped"
     cp "$elf" "$PREFIX/lib/unstripped/$(basename "$elf")"

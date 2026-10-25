@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::machine::{MachineId, TimerId};
 
-/// The ONE worker-side door (spec §4.4): a poster decode completing, the lab uploader — anything
+/// The ONE worker-side door (spec §4.4): a poster decode completing — anything
 /// off the main thread that needs the next frame to present. It is a flag, not an event: the
 /// main thread's `take` folds it into the frame's verdict as `Damage` with no provenance of its
 /// own, because a worker cannot say which machine it woke on behalf of. Nothing else touches

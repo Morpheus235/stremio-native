@@ -26,7 +26,6 @@ devtriggers = ["sn_base/devtriggers", "sn_machine/devtriggers", "sn_net/devtrigg
 # (Starfish/ACB) under it. `sim_video` is the one thing here that draws, so `sn_gfx` is a
 # dependency of this feature only.
 hostsim = ["dep:sn_gfx", "sn_base/hostsim", "sn_machine/hostsim", "sn_platform/hostsim", "sn_gfx/hostsim"]
-lab-diagnostics = []
 # The `cfg(test)` seams other crates' tests use (`player::preview::reset_for_test`, ...) plus the
 # test-mode arms `cfg(test)` alone cannot give a dependent. Enabled from the dependents'
 # `[dev-dependencies]`; never in a shipped build.

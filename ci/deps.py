@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """The one reader of ci/dependencies.json, and the one fetch-and-verify routine behind it.
 
-Every non-Rust third-party input of this repository (the FFmpeg and Sentry Native sources, the
-libass font stack, the webOS NDK, the nanosvg headers, the webosbrew toolbox packages) is declared
+Every non-Rust third-party input of this repository (the FFmpeg sources, the libass font
+stack, the webOS NDK, the nanosvg headers, the webosbrew toolbox packages) is declared
 once in ci/dependencies.json with the version, the upstream URL (plus transport-only mirrors) and
 the sha256 of the exact bytes. Nothing is copied into the repository, and no script carries a
 literal version or digest of its own: shell reads a field with
@@ -17,7 +17,7 @@ and gets the bytes with
     python3 ci/deps.py fetch-all --exclude webos-ndk             # everything a CI cache entry must hold
     python3 ci/deps.py cache-dir                                 # where fetched archives live
     (every fetch also reads and fills the machine-wide store under $SN_BUILD_CACHE/deps)
-    python3 ci/deps.py verify sentry-native                      # its patches still match their digests
+    python3 ci/deps.py verify libass                             # its patches still match their digests
     python3 ci/deps.py check                                     # schema + patch digests, no network
 
 The canonical upstream URL is tried first, then each mirror. Every source must yield the same

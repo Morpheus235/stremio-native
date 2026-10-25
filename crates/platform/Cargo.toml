@@ -20,7 +20,6 @@ default = []
 # only because some code in this crate has a `cfg` on it.
 devtriggers = ["sn_base/devtriggers", "sn_machine/devtriggers"]
 hostsim = ["sn_base/hostsim", "sn_machine/hostsim"]
-lab-diagnostics = ["sn_base/lab-diagnostics"]
 # The `cfg(test)` seams other crates' tests use (see lib.rs) plus the test-mode behaviour that
 # `cfg(test)` alone cannot give a dependent. Enabled from the dependents' `[dev-dependencies]`;
 # never in a shipped build. It enables the lower layers' own `test-support` because the seams here

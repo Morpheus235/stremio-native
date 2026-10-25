@@ -1,34 +1,10 @@
-//! **The redaction pass** — the one place a diagnostic line is made safe to leave the device.
+//! **The redaction pass** — what `crate::eventlog::log` applies to every line before the file
+//! write, so the on-device log a user may attach to a GitHub issue carries no credentials, hosts,
+//! addresses or viewing details. Nothing in this app sends the log anywhere.
 //!
-//! Lifted out of `lab/snapshot.rs` unchanged on 2026-08-29, for two reasons that are worth keeping
-//! written down.
-//!
-//! **It is no longer lab-only.** `crate::eventlog::log` applies [`scrub_local`] to every line before the file
-//! write, and the telemetry client applies the full [`scrub`] to everything that leaves. Both live
-//! in a build that has no `lab-diagnostics` feature, so this module is UNGATED — which also means
-//! its tests finally run in `make check`. They did not before: everything under `lab/` is
-//! `#[cfg(feature = "lab-diagnostics")]`, so the 31 assertions guarding the one function the whole
-//! privacy argument rests on were skipped by the default gate entirely.
-//!
-//! **There are two exits, and the difference is the whole design.**
-//!
-//! * [`scrub`] may return [`Scrubbed::Refuse`] — drop the line and count it. Correct for anything
-//!   crossing the network, where a line that cannot be made safe must not be sent.
-//! * [`scrub_local`] **rewrites only and never drops.** It is what the on-disk event log gets. A
-//!   line silently vanishing from `stremionative-events.log` is strictly worse for debugging than a
-//!   leaky one — that file is what `make run`, `tests/run.py`'s assertions and `crash-triage` all
-//!   read, and `docs/agent-reference.md` calls it "the primary debugging surface".
-//!
-//! So: rewrite locally, rewrite-or-refuse remotely, and never a second scrubber anywhere.
-
-/// What [`scrub`] decided about one record.
-#[cfg(feature = "lab-diagnostics")]
-pub enum Scrubbed {
-    /// keep it, in this (possibly rewritten) form
-    Keep(String),
-    /// drop it entirely and count it — used where a line cannot be made safe by rewriting
-    Refuse,
-}
+//! It **rewrites only and never drops**: a line silently vanishing from `stremionative-events.log`
+//! is worse for debugging than a leaky one — that file is what `make run`, `tests/run.py`'s
+//! assertions and `crash-triage` all read.
 
 /// Header names whose VALUE is a credential wherever it appears. Matched case-insensitively and
 /// followed to the end of the line: a header value has no in-line terminator to stop at, and half
@@ -53,26 +29,8 @@ const CREDENTIAL_PARAMS: [&str; 6] = [
     "api_key=",
 ];
 
-/// One record, made safe.
-///
-/// The rewrites, in order, each narrower than dropping the line: header values, query-parameter
-/// values, JSON secret fields, addon configuration and opaque keys in URL paths, and any remaining
-/// `scheme://host` authority. A record that still contains a credential
-/// header name after rewriting is refused outright rather than shipped — that can only happen if
-/// the rewrite failed to find the value it was sure was there.
-#[cfg(feature = "lab-diagnostics")]
-pub fn scrub(line: &str) -> Scrubbed {
-    scrub_with(line, &identities())
-}
-
-/// **The LOCAL exit — what `crate::eventlog::log` applies to every line before the file write.**
-///
-/// Same rewrites as [`scrub`], with one difference that is the entire reason it exists: it
-/// **never drops a line**. [`scrub`]'s `Refuse` arm is correct for the network, where a record
-/// that cannot be made safe must not be sent; it is wrong for `stremionative-events.log`, which is
-/// what `make run`, `tests/run.py`'s assertions and `crash-triage` read. A line that silently
-/// vanishes from that file is worse for debugging than a leaky one — you cannot grep for the
-/// absence of something you never knew was written.
+/// **What `crate::eventlog::log` applies to every line before the file write.** Never drops a
+/// line (see the module doc).
 ///
 /// Cost: this runs on `crate::eventlog::log`'s path, which its own doc records as "a few times a second at
 /// most, never per frame". Measure before assuming that stays true.
@@ -93,27 +51,6 @@ pub fn scrub_local_with(line: &str, ids: &[String]) -> String {
     let s = scrub_addresses(&s);
     let s = scrub_viewing(&s);
     scrub_identities(&s, ids)
-}
-
-/// [`scrub`], against a caller-supplied identity list — the testable half. The list is what the
-/// APP knows about this household (see [`identities`]); everything else here is a pure rewrite.
-#[cfg(feature = "lab-diagnostics")]
-pub fn scrub_with(line: &str, ids: &[String]) -> Scrubbed {
-    let s = crate::eventlog::redact_tokens(line).into_owned();
-    let s = scrub_headers(&s);
-    let s = scrub_params(&s);
-    let s = scrub_json_secrets(&s);
-    let s = scrub_paths(&s);
-    let s = scrub_authority(&s);
-    let s = scrub_host_kv(&s);
-    let s = scrub_ipv6(&s);
-    let s = scrub_addresses(&s);
-    let s = scrub_viewing(&s);
-    let s = scrub_identities(&s, ids);
-    if still_looks_secret(&s) {
-        return Scrubbed::Refuse;
-    }
-    Scrubbed::Keep(s)
 }
 
 /// **A BARE IPv4 ADDRESS, outside any URL** — `203.0.113.7:32400`, `10.0.0.2`.
@@ -412,27 +349,6 @@ fn identities() -> Vec<String> {
     IDENTITIES.read().map(|g| g.clone()).unwrap_or_default()
 }
 
-/// The last gate: a line that STILL looks like it carries a credential after all four rewrites is
-/// dropped rather than shipped.
-///
-/// It exists because the rewrites are string surgery on a format nobody validates — a credential
-/// spelled some way none of them anticipated (`Bearer` with no header name in front of it, a
-/// parameter separated by `;`) would sail through every one of them. Dropping a record costs one
-/// line of a several-hundred-line document and is counted in the envelope; shipping it costs a
-/// credential.
-#[cfg(feature = "lab-diagnostics")]
-fn still_looks_secret(s: &str) -> bool {
-    let lower = s.to_ascii_lowercase();
-    if lower.contains("bearer ") {
-        return true;
-    }
-    CREDENTIAL_PARAMS.iter().any(|k| {
-        lower
-            .find(k)
-            .is_some_and(|at| !s[at + k.len()..].starts_with("<redacted>"))
-    })
-}
-
 /// `Authorization: Bearer abc` → `Authorization: <redacted>`. To end of line, deliberately.
 fn scrub_headers(s: &str) -> String {
     let lower = s.to_ascii_lowercase();
@@ -630,14 +546,9 @@ fn scrub_host_kv(s: &str) -> String {
 }
 #[cfg(test)]
 mod tests {
-    // NB the `Refuse` half is gated to its only present caller (the lab bridge); Phase G widens
-    // the gate to `telemetry` when the Sentry client becomes a second one.
     use super::*;
 
-    /// Every rewrite assertion below runs through the LOCAL exit, so it is graded in the default
-    /// `make check` rather than only under `--features lab-diagnostics`. The two exits share all
-    /// five rewrites and differ only in whether they may drop a line, so this loses no coverage of
-    /// the rewriting itself — and the drop behaviour has its own tests at the bottom.
+    /// Every rewrite assertion below runs through the one exit, [`scrub_local`].
     fn kept(s: &str) -> String {
         scrub_local(s)
     }
@@ -879,23 +790,6 @@ mod tests {
             let out = scrub_local_with(line, &[]);
             assert!(!out.contains(address), "leaked: {out}");
             assert!(out.contains("<addr>"), "address was not replaced: {out}");
-        }
-    }
-
-    #[test]
-    #[cfg(feature = "lab-diagnostics")]
-    fn ambiguous_decimal_final_groups_are_redacted_on_the_remote_exit_too() {
-        for (line, address) in [
-            ("peer ::1:80 connected", "::1:80"),
-            ("utf8 — ::0:80 — tail", "::0:80"),
-        ] {
-            match scrub_with(line, &[]) {
-                Scrubbed::Keep(out) => {
-                    assert!(!out.contains(address), "leaked: {out}");
-                    assert!(out.contains("<addr>"), "address was not replaced: {out}");
-                }
-                Scrubbed::Refuse => panic!("address-only line should be safely rewritable"),
-            }
         }
     }
 

@@ -234,10 +234,9 @@ static void crash_handler(int sig, siginfo_t *si, void *uc) {
      * `time()` is on POSIX's async-signal-safe list: it reads the clock and takes no lock and
      * allocates nothing (it was not measured on the television's glibc, which is the one thing a
      * host test cannot show, but nothing in its contract can block). Wall clock, not
-     * monotonic, on purpose: this is the time Sentry is told, and monotonic seconds mean nothing
-     * to it. A set whose clock is wrong records a wrong time, which the importer's window check
-     * (`crashreport::crash_timestamp`) drops when it is absurd; a failed call (-1) writes no line
-     * at all rather than a made-up one. */
+     * monotonic, on purpose: a person reading the log needs a date, and monotonic seconds mean
+     * nothing to them. A set whose clock is wrong records a wrong time; a failed call (-1) writes
+     * no line at all rather than a made-up one. */
     time_t now = time(NULL);
     if (now > 0) {
         b.n = sn_fmt_time(rec_buf, sizeof rec_buf, (unsigned long)now);
@@ -266,9 +265,7 @@ static void crash_handler(int sig, siginfo_t *si, void *uc) {
      * measurement. What IS measured is that we get no report.)
      *
      * So the honest summary of the always-local/system evidence is this app's OWN fault event plus
-     * SAM's status. With consent and a configured endpoint, Sentry Native may additionally preserve
-     * a bounded multi-thread report for every successfully captured thread. That is an argument
-     * for the tracer being good, not for turning cores back on.
+     * SAM's status. That is an argument for the tracer being good, not for turning cores back on.
      *
      * # THE UNBLOCK IS THE WHOLE THING, and without it none of the paragraph above was true
      *

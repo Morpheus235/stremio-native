@@ -19,6 +19,7 @@ What leaves the TV, and where it goes:
 Each addon is run by its own operator under its own terms; an addon's URL can carry your
 configuration for it (for example a debrid key). StremioNative stores your session key and
 settings on the TV only, protected by the TV's own key store, and removes them when you sign out.
-Logs stay on the TV, and every line is scrubbed before it is written: your session key,
-passwords, tokens, addon configuration in addon URLs, keys inside stream links, server names and
-addresses, and search text are removed.
+Logs stay on the TV: the app has no code that uploads them, and nothing leaves the device unless
+you copy a log off yourself (for example to attach it to a GitHub issue). Every line is scrubbed
+before it is written: your session key, passwords, tokens, addon configuration in addon URLs,
+keys inside stream links, server names and addresses, and search text are removed.
