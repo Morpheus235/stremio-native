@@ -804,15 +804,15 @@ pub fn info(mode: &Mode, meta: &Meta) -> Info {
         Mode::Video(v) => meta.videos.iter().find(|x| x.id == v.video_id),
         Mode::Item(_) | Mode::Resume(_) => None,
     };
-    let title = match video {
-        Some(v) => {
-            let address = sn_ui::fmt::episode_ordinal(i64::from(v.season.unwrap_or(0)), i64::from(v.episode.unwrap_or(0)));
-            Some(match text(Some(&v.title)) {
-                Some(t) => format!("{address} \u{b7} {t}"),
-                None => address,
-            })
-        }
-        None => text(Some(&p.name)),
+    // an episode's name is the title, on one line where it fits; its address ("S1, E5") is the
+    // caption that leads the facts line. An untitled episode is titled by its address.
+    let address = video.map(|v| sn_ui::fmt::episode_ordinal(i64::from(v.season.unwrap_or(0)), i64::from(v.episode.unwrap_or(0))));
+    let (title, caption) = match (video, &address) {
+        (Some(v), Some(a)) => match text(Some(&v.title)) {
+            Some(t) => (Some(t), Some(a.clone())),
+            None => (Some(a.clone()), None),
+        },
+        _ => (text(Some(&p.name)), None),
     };
     // an episode's air day in the UI language's date; a work's release info as the addon wrote it
     let date = match video {
@@ -826,7 +826,7 @@ pub fn info(mode: &Mode, meta: &Meta) -> Info {
         Err(_) => format!("IMDb {r}"),
     });
     // the genres are chips of their own ([`meta_links`]), not words on this line
-    let facts = [date, text(meta.runtime.as_deref()), rating]
+    let facts = [caption, date, text(meta.runtime.as_deref()), rating]
         .into_iter()
         .flatten()
         .collect::<Vec<_>>()
@@ -1135,7 +1135,9 @@ fn episodes(out: &mut Built, item: &ItemRef, meta: &Meta, season: Option<u32>, t
 /// dropdown (one button saying the season listed, `dropdown`) or an episode page's one All
 /// episodes button (nothing checked); or a stream list's addon dropdown. The row slides so the
 /// focused chip stays on screen (the type chips' `sn_ui::value_chip::row_xs`), and never reaches
-/// past the content column.
+/// past the content column. The addon dropdown shares the chip row's line, after its chips
+/// ([`SeasonRow::after`]).
+#[derive(Clone)]
 pub struct SeasonRow<'a> {
     pub labels: &'a [CString],
     /// The row's first element key and its focus group: the chip row's ([`SEASON_KEY`],
@@ -1152,6 +1154,12 @@ pub struct SeasonRow<'a> {
     /// The first label is a dropdown's (`crate::dropdown`'s button: a chevron, no check); the rest
     /// are buttons.
     pub dropdown: bool,
+    /// The row this one starts after, on the same line (the addon dropdown after an episode
+    /// page's All episodes and watched buttons); `None` starts at the column's left edge. LEFT
+    /// off this row's first chip goes to that row's last.
+    pub after: Option<Box<SeasonRow<'a>>>,
+    /// Where RIGHT off the last chip goes: the addon dropdown that follows on the line.
+    pub then: Option<FocusKey<u32>>,
 }
 
 impl SeasonRow<'_> {
@@ -1182,8 +1190,10 @@ impl SeasonRow<'_> {
                 .map(|w| w.min(self.frame.w))
                 .collect()
         });
-        // row_xs lays the row from the safe margin; this one starts at the content column
-        let off = self.frame.x - sn_ui::consts::MARGIN_X;
+        // row_xs lays the row from the safe margin; this one starts at the content column, or
+        // after the row it follows
+        let start = self.after.as_ref().and_then(|a| a.end_x(measure)).map_or(self.frame.x, |x| x + theme::space::SM);
+        let off = start - sn_ui::consts::MARGIN_X;
         let mut xs: Vec<f32> = sn_ui::value_chip::row_xs(widths, focused, theme::space::SM).into_iter().map(|x| x + off).collect();
         if let Some(i) = focused.filter(|i| *i < xs.len()) {
             let over = (xs[i] + widths[i] - (self.frame.x + self.frame.w)).max(0.0);
@@ -1196,22 +1206,31 @@ impl SeasonRow<'_> {
         focus.filter(|k| k.entry == self.entry).and_then(|k| self.index_of(k.elem))
     }
 
-    fn extent(&self) -> Rect {
-        Rect::new(self.frame.x, self.frame.y, self.frame.w, crate::type_filter::CHIP_H)
+    /// Where the row's last chip ends, at rest.
+    fn end_x(&self, measure: &dyn Measure) -> Option<f32> {
+        self.rects(measure, None).last().map(|r| r.x + r.w)
+    }
+
+    /// The row's band: the column's width, from where the row starts. Wide on purpose, so LEFT
+    /// off the list never reads it as a neighbour beside it (its centre is not left of the list's).
+    fn extent(&self, measure: &dyn Measure) -> Rect {
+        let x = self.rects(measure, None).first().map_or(self.frame.x, |r| r.x.max(self.frame.x));
+        Rect::new(x, self.frame.y, self.frame.x + self.frame.w - x, crate::type_filter::CHIP_H)
     }
 }
 
 impl Focusable<Bundle> for SeasonRow<'_> {
-    fn groups(&self, _cx: &Cx<'_, Bundle>, out: &mut Vec<GroupSpec>) {
+    fn groups(&self, cx: &Cx<'_, Bundle>, out: &mut Vec<GroupSpec>) {
         out.push(GroupSpec {
             id: self.group,
             kind: GroupKind::Row { wrap: false },
             seat: Seat::Remembered,
             reachable: AxisMask::BOTH,
             // [up, down, left, right]: DOWN to the episodes, LEFT to the library button (an item
-            // page's; with none it stops), RIGHT stops at the row's end
+            // page's; with none it stops), RIGHT stops at the row's end. Between the chip row and
+            // the addon dropdown after it, `neighbour` steps itself (`after`, `then`).
             edge: [EdgeRule::Geometric, EdgeRule::Geometric, EdgeRule::Geometric, EdgeRule::Stop],
-            extent: self.extent(),
+            extent: self.extent(cx.measure),
             len: self.labels.len(),
             elem: ElemKind::Control,
         });
@@ -1224,6 +1243,11 @@ impl Focusable<Bundle> for SeasonRow<'_> {
         match dir {
             Dir::Left if n > 0 => Step::Move(self.key(n - 1)),
             Dir::Right if n + 1 < self.labels.len() => Step::Move(self.key(n + 1)),
+            Dir::Left => match &self.after {
+                Some(a) if !a.labels.is_empty() => Step::Move(a.key(a.labels.len() - 1)),
+                _ => Step::Edge,
+            },
+            Dir::Right => self.then.map_or(Step::Edge, Step::Move),
             _ => Step::Edge,
         }
     }
@@ -1596,10 +1620,10 @@ impl Composed<Bundle> for DetailView<'_> {
     fn layout(&self, cx: &Cx<'_, Bundle>) -> Vec<(PartId, Rect)> {
         let mut v = self.screen.layout(cx);
         if let Some(row) = &self.seasons {
-            v.push((SEASONS_PART, row.extent()));
+            v.push((SEASONS_PART, row.extent(cx.measure)));
         }
         if let Some(row) = &self.addons {
-            v.push((ADDONS_PART, row.extent()));
+            v.push((ADDONS_PART, row.extent(cx.measure)));
         }
         if let Some(b) = &self.library {
             v.push((LIBRARY_PART, b.watched_rect(cx.measure).map_or(b.rect(cx.measure), |w| b.rect(cx.measure).union(w))));
@@ -1644,6 +1668,7 @@ impl Focusable<Bundle> for DetailView<'_> {
                 table.edge[2] = EdgeRule::Geometric;
             }
         }
+
     }
     fn group_of(&self, key: &u32, cx: &Cx<'_, Bundle>) -> Option<GroupId> {
         composed_group_of(self, key, cx)
@@ -2119,7 +2144,8 @@ impl DetailScreen {
     /// The table's frame: the route's sectioned frame, under the chip row when it shows.
     fn table_frame(&self) -> Rect {
         let f = detail_layout().sectioned_table();
-        let rows = usize::from(self.chip_row().is_some()) + usize::from(!self.addon_label.is_empty());
+        // the chip row and the addon dropdown share one line
+        let rows = usize::from(self.chip_row().is_some() || !self.addon_label.is_empty());
         let band = crate::type_filter::BAND * rows as f32;
         Rect::new(f.x, f.y + band, f.w, f.h - band)
     }
@@ -2144,20 +2170,20 @@ impl DetailScreen {
             frame: detail_layout().sectioned_table(),
             widths: &self.season_widths,
             dropdown: self.chips.first() == Some(&Chip::Seasons),
+            after: None,
+            then: (!self.addon_label.is_empty()).then_some(FocusKey { entry: self.entry, elem: ADDON_KEY }),
         });
-        let addons = (!self.addon_label.is_empty()).then(|| {
-            let f = detail_layout().sectioned_table();
-            let top = if self.chip_row().is_some() { crate::type_filter::BAND } else { 0.0 };
-            SeasonRow {
-                labels: &self.addon_label,
-                base: ADDON_KEY,
-                group: ADDON_GROUP,
-                chosen: None,
-                entry: self.entry,
-                frame: Rect::new(f.x, f.y + top, f.w, f.h - top),
-                widths: &self.addon_widths,
-                dropdown: true,
-            }
+        let addons = (!self.addon_label.is_empty()).then(|| SeasonRow {
+            labels: &self.addon_label,
+            base: ADDON_KEY,
+            group: ADDON_GROUP,
+            chosen: None,
+            entry: self.entry,
+            frame: detail_layout().sectioned_table(),
+            widths: &self.addon_widths,
+            dropdown: true,
+            after: seasons.clone().map(Box::new),
+            then: None,
         });
         let library = self.library.map(|look| LibraryButton {
             label: &self.library_label,
@@ -2596,7 +2622,10 @@ impl Screen<Bundle> for DetailScreen {
         let mut v = self.view();
         Part::<Bundle>::draw(&mut v, f, Rect::FULL);
         if let Some(url) = self.info.logo.as_deref() {
-            sn_ui::hero_logo::HeroLogo::url(0, url, &self.title, sn_ui::hero_logo::LogoRung::Hero).draw(f.painter, logo_band(), f.measure);
+            // a tall logo stays under the back crumb: it never paints above where the title starts
+            sn_ui::hero_logo::HeroLogo::url(0, url, &self.title, sn_ui::hero_logo::LogoRung::Hero)
+                .ceiling(logo_band().y)
+                .draw(f.painter, logo_band(), f.measure);
         }
         for b in &flow(&self.info, &self.title, f.measure, self.reserve(), self.expanded.map(|e| e.0)).blocks {
             b.view(f.measure).draw(f.painter, b.rect);
@@ -3157,8 +3186,8 @@ mod tests {
         let _en = sn_platform::i18n::language_on_this_thread_for_test(sn_platform::i18n::Preference::En);
         let mut show = fixture("cinemeta_breaking_bad_meta");
         let ep = info(&Mode::Video(episode("tt0903747:1:5", "S1, E5 Gray Matter")), &show);
-        assert_eq!(ep.title.as_deref(), Some("S1, E5 \u{b7} Gray Matter"));
-        assert_eq!(ep.facts, "2/25/2008 \u{b7} 49 min \u{b7} IMDb 9.5", "the genres are chips, not words on the line");
+        assert_eq!(ep.title.as_deref(), Some("Gray Matter"), "the episode's name alone");
+        assert_eq!(ep.facts, "S1, E5 \u{b7} 2/25/2008 \u{b7} 49 min \u{b7} IMDb 9.5", "its address leads the facts; the genres are chips");
         assert!(ep.synopsis.starts_with("Walter and Skyler attend a former colleague"), "{}", ep.synopsis);
         assert_eq!(
             link_names(&ep),
@@ -3352,7 +3381,8 @@ mod tests {
         app.notify(StoreId::Detail, gen);
         app.frames(40);
         let page = detail_page(&app);
-        assert_eq!(page.title(), "S2, E1 \u{b7} Seven Thirty-Seven");
+        assert_eq!(page.title(), "Seven Thirty-Seven");
+        assert!(page.info().facts.starts_with("S2, E1 \u{b7} "), "{}", page.info().facts);
         assert!(page.info().synopsis.starts_with("Walt and Jesse are reminded"));
         assert_eq!(link_names(page.info())[1], (Category::Cast, vec!["Bryan Cranston", "Aaron Paul", "Anna Gunn"]));
         assert!(page.addon_label.is_empty(), "one stream addon: no addon dropdown");
@@ -4202,7 +4232,7 @@ mod tests {
             for label in [msg::app_search_addons_all().to_string(), msg::app_search_addons_some(12, 12), long.to_string()] {
                 let labels = [CString::new(label.clone()).unwrap()];
                 let widths = RefCell::new(None);
-                let row = SeasonRow { labels: &labels, base: ADDON_KEY, group: ADDON_GROUP, chosen: None, entry: EntryId(1), frame: f, widths: &widths, dropdown: true };
+                let row = SeasonRow { labels: &labels, base: ADDON_KEY, group: ADDON_GROUP, chosen: None, entry: EntryId(1), frame: f, widths: &widths, dropdown: true, after: None, then: None };
                 for focused in [None, Some(0)] {
                     let r = row.rects(&m, focused)[0];
                     assert!(r.x >= f.x && r.x + r.w <= f.x + f.w, "{}: {label:?} at {r:?} leaves {f:?}", language.tag());
@@ -4266,6 +4296,6 @@ mod tests {
         assert!(info(&movie_mode(), &movie).facts.ends_with("IMDb 7,5"), "{}", info(&movie_mode(), &movie).facts);
         let show = fixture("cinemeta_breaking_bad_meta");
         let ep = info(&Mode::Video(episode("tt0903747:1:5", "")), &show);
-        assert!(ep.facts.starts_with("25/02/2008"), "{}", ep.facts);
+        assert!(ep.facts.contains(" \u{b7} 25/02/2008"), "{}", ep.facts);
     }
 }
