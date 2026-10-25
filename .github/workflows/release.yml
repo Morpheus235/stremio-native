@@ -4,8 +4,8 @@
 #
 # The tag must equal pkg/appinfo.json's "version" (with a leading v). A tag with a suffix
 # (v0.2.0-beta.1) publishes a PRERELEASE built as the separate "StremioNative Beta" app
-# (FLAVOR=beta: its own app id, version X.Y.YYYYMMDD).
-# webOS versions are numeric, so the date is what orders betas: one beta per day.
+# (FLAVOR=beta: its own app id, version X.Y.YYMMDDHHm: the UTC cut time, to ten minutes).
+# webOS versions are numeric, so the cut time is what orders betas: one per ten minutes.
 #
 # The Homebrew Channel repository (hbrepo.yml) is on hold: a release no longer publishes it; run
 # that workflow by hand on main when it should list the newest releases.

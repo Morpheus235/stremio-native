@@ -320,19 +320,19 @@ def _selftest() -> int:
             check(f"{app_dir}/{REQUIRED_LIBS[0]}" in infos and f"{app_dir}/fonts/subs/manifest.json" in infos,
                   "the bundled libraries and the subtitle fonts are packaged")
         check(verify(a, "stable") == [], f"the stable package verifies ({verify(a, 'stable')})")
-        check(verify(a, "beta", "20261016") != [], "it does not verify as the beta")
+        check(verify(a, "beta", "202610161347") != [], "it does not verify as the beta")
 
-        beta = build("beta", payload, storage, tmp / "beta", date="20261016")
+        beta = build("beta", payload, storage, tmp / "beta", date="202610161347")
         x, y, _ = tracked["version"].split(".")
         bctl = hbrepo.control_of(beta.read_bytes())
-        check(beta.name == f"{tracked['id']}.beta_{x}.{y}.20261016_arm.ipk", f"a beta is its own app at X.Y.<date> ({beta.name})")
-        check(bctl.get("Package") == f"{tracked['id']}.beta" and bctl.get("Version") == f"{x}.{y}.20261016", f"beta control ({bctl})")
+        check(beta.name == f"{tracked['id']}.beta_{x}.{y}.261016134_arm.ipk", f"a beta is its own app at X.Y.<cut> ({beta.name})")
+        check(bctl.get("Package") == f"{tracked['id']}.beta" and bctl.get("Version") == f"{x}.{y}.261016134", f"beta control ({bctl})")
         with tarfile.open(fileobj=io.BytesIO(hbrepo.ar_members(beta.read_bytes())["data.tar.gz"])) as tf:
             names = [m.name for m in tf.getmembers()]
             bapp = json.load(tf.extractfile(f"usr/palm/applications/{tracked['id']}.beta/appinfo.json"))
             check(bapp["title"] == f"{tracked['title']} Beta", "the beta's tile says Beta")
             check(not any(f"applications/{tracked['id']}/" in n for n in names), "a beta package carries no stable directory")
-        check(verify(beta, "beta", "20261016") == [], f"the beta package verifies ({verify(beta, 'beta', '20261016')})")
+        check(verify(beta, "beta", "202610161347") == [], f"the beta package verifies ({verify(beta, 'beta', '202610161347')})")
 
         (payload / REQUIRED_LIBS[1]).unlink()
         try:

@@ -10,7 +10,7 @@
 #
 # FLAVOR picks the install (ci/flavor.py): `debug` (the default, a developer build beside the
 # others), `beta` (the prerelease channel: its own app id, tile "StremioNative Beta", version
-# X.Y.YYYYMMDD from pkg/appinfo.json's X.Y and today's UTC date) or `stable`. stable and beta are
+# X.Y.YYMMDDHHm from pkg/appinfo.json's X.Y and the UTC cut time to ten minutes) or `stable`. stable and beta are
 # what other people run, so they are ALWAYS RELEASE=1 builds (`release-guard`): no dev triggers.
 #
 # The NDK is $(WEBOS_SDK) (default ~/webos-ndk/arm-webos-linux-gnueabi_sdk-buildroot, where
@@ -34,9 +34,9 @@ $(if $(filter $(FLAVOR),$(FLAVORS)),,$(error unknown FLAVOR "$(FLAVOR)" — one 
 # crates/base/src/paths.rs.
 APPID_STABLE := com.morpheus235.stremionative
 APPID := $(shell python3 ci/flavor.py $(FLAVOR))
-# A beta's package version carries its cut date; computed once per make run (UTC), exported so the
-# packager and the version the binary reports name the same day.
-SN_BETA_DATE := $(shell date -u +%Y%m%d)
+# A beta's package version carries its cut time; computed once per make run (UTC), exported so the
+# packager and the version the binary reports name the same cut.
+SN_BETA_DATE := $(shell date -u +%Y%m%d%H%M)
 export SN_BETA_DATE
 IPK_VERSION := $(shell SN_BETA_DATE=$(SN_BETA_DATE) python3 ci/flavor.py --version $(FLAVOR))
 
