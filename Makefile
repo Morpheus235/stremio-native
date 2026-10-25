@@ -7,6 +7,7 @@
 #   make check                           host tests + the packaging selftests (no NDK)
 #   make selftest                        the packaging selftests alone
 #   make icons                           redraw pkg/*.png (ci/make-icons.py, needs Pillow)
+#   make sim [STREMIO_THEME=ocean]       the app in a desktop window (SDL2 + GL), no television
 #
 # FLAVOR picks the install (ci/flavor.py): `debug` (the default, a developer build beside the
 # others), `beta` (the prerelease channel: its own app id, tile "StremioNative Beta", version
@@ -111,7 +112,7 @@ SUBS_FONT_FILES = $(sort $(wildcard pkg/fonts/subs/*.ttf)) pkg/fonts/subs/manife
 STAGE = $(BUILD)/stage/$(FLAVOR)/app
 IPK   = $(BUILD)/$(APPID)_$(IPK_VERSION)_arm.ipk
 
-.PHONY: all ipk check selftest icons setup-env release-guard ffmpeg libass adec bundled-libs clean help FORCE \
+.PHONY: all ipk check selftest sim icons setup-env release-guard ffmpeg libass adec bundled-libs clean help FORCE \
         print-appid print-version print-ipk
 
 all: $(BUILD)/stremionative $(BUILD)/stremionative-storage
@@ -251,6 +252,17 @@ selftest:
 check: selftest
 	NO_PROXY="$$NO_PROXY,.invalid" no_proxy="$$no_proxy,.invalid" SNATIVE_RUNTIME_DIR=$$(mktemp -d) \
 	  CARGO_INCREMENTAL=0 cargo test --workspace --no-fail-fast
+
+# ---- desktop simulator (no NDK, no television) --------------------------------------------------
+# The app in a desktop window over SDL2 + desktop GL, signed out (Cinemeta), for looking at UI work.
+# SIM_DIR is the instance root: triggers, the event log, `shot-<n>.png`. Drive it by writing
+# commands (`up down left right ok back shot`) into $(SIM_DIR)/stremionative-memcmd.
+# STREMIO_THEME=<name> builds another palette (gfx::tokens::PALETTES).
+SIM_DIR ?= /tmp/stremionative-sim
+sim:
+	CARGO_INCREMENTAL=0 cargo build -p stremionative-app --features hostsim --bin stremionative-sim
+	mkdir -p $(SIM_DIR) && touch $(SIM_DIR)/stremionative-guest
+	SNATIVE_APP_DIR=$(CURDIR)/pkg SNATIVE_RUNTIME_DIR=$(SIM_DIR) target/debug/stremionative-sim
 
 icons:
 	python3 ci/make-icons.py

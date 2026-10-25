@@ -219,6 +219,8 @@ pub unsafe fn run(app: &mut App) {
                 }));
             }
             let draw_ms = ms_since(draw_start);
+            #[cfg(feature = "hostsim")]
+            super::shot::take_if_requested();
             let swap_start = Instant::now();
             {
                 #[cfg(feature = "threadcheck")]

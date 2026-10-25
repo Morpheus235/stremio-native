@@ -26,6 +26,7 @@ use crate::art::{Art, Workers};
 
 const SDL_INIT_VIDEO: u32 = 0x20;
 /// `SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN`: the television owns the whole panel.
+#[cfg(not(feature = "hostsim"))]
 const SDL_WINDOW_FLAGS: u32 = 0x2 | 0x1;
 const GL_RENDERER: c_uint = 0x1F01;
 const GL_VERSION: c_uint = 0x1F02;
@@ -41,6 +42,29 @@ const A_CTX_MAJOR: c_int = 17;
 const A_CTX_MINOR: c_int = 18;
 const A_CTX_PROFILE_MASK: c_int = 21;
 const CTX_PROFILE_ES: c_int = 0x0004;
+#[cfg(feature = "hostsim")]
+const CTX_PROFILE_CORE: c_int = 0x0001;
+#[cfg(not(feature = "hostsim"))]
+const CTX_PROFILE_CORE: c_int = 0x0001;
+/// `SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI`: a movable desktop window, Retina-sharp.
+#[cfg(feature = "hostsim")]
+const SDL_DESKTOP_WINDOW_FLAGS: u32 = 0x2 | 0x2000;
+#[cfg(feature = "hostsim")]
+const SDL_WINDOWPOS_CENTERED: c_int = 0x2FFF_0000;
+
+/// The simulator window in points: `SNATIVE_WIN=<w>x<h>`, else half the canvas, which a Retina
+/// display (`ALLOW_HIGHDPI`) draws at the full 1920x1080. `surface::probe` letterboxes any size.
+#[cfg(feature = "hostsim")]
+fn desktop_window_size() -> (c_int, c_int) {
+    std::env::var("SNATIVE_WIN")
+        .ok()
+        .and_then(|v| {
+            let (w, h) = v.split_once('x')?;
+            Some((w.trim().parse().ok()?, h.trim().parse().ok()?))
+        })
+        .filter(|&(w, h): &(c_int, c_int)| w > 0 && h > 0)
+        .unwrap_or((SCR_W / 2, SCR_H / 2))
+}
 
 extern "C" {
     fn SDL_SetMainReady();
@@ -66,9 +90,17 @@ pub unsafe fn construct(mt: MainThread) -> Result<App, c_int> {
         log("SDL_Init failed");
         return Err(1);
     }
-    SDL_GL_SetAttribute(A_CTX_PROFILE_MASK, CTX_PROFILE_ES);
-    SDL_GL_SetAttribute(A_CTX_MAJOR, 2);
-    SDL_GL_SetAttribute(A_CTX_MINOR, 0);
+    // macOS has no GLES driver and caps desktop GL at 4.1 core; `gfx::glsl_preamble` adapts the
+    // ES shaders to it by asking the driver, so the simulator only has to ask for that context.
+    if cfg!(feature = "hostsim") {
+        SDL_GL_SetAttribute(A_CTX_PROFILE_MASK, CTX_PROFILE_CORE);
+        SDL_GL_SetAttribute(A_CTX_MAJOR, 4);
+        SDL_GL_SetAttribute(A_CTX_MINOR, 1);
+    } else {
+        SDL_GL_SetAttribute(A_CTX_PROFILE_MASK, CTX_PROFILE_ES);
+        SDL_GL_SetAttribute(A_CTX_MAJOR, 2);
+        SDL_GL_SetAttribute(A_CTX_MINOR, 0);
+    }
     SDL_GL_SetAttribute(A_RED, 8);
     SDL_GL_SetAttribute(A_GREEN, 8);
     SDL_GL_SetAttribute(A_BLUE, 8);
@@ -76,7 +108,13 @@ pub unsafe fn construct(mt: MainThread) -> Result<App, c_int> {
     SDL_GL_SetAttribute(A_BUFFER_SIZE, 32);
     SDL_GL_SetAttribute(A_DEPTH, 0);
     SDL_GL_SetAttribute(A_STENCIL, 0);
+    #[cfg(not(feature = "hostsim"))]
     let win = SDL_CreateWindow(c"stremionative".as_ptr(), 0, 0, SCR_W, SCR_H, SDL_WINDOW_FLAGS);
+    #[cfg(feature = "hostsim")]
+    let win = {
+        let (w, h) = desktop_window_size();
+        SDL_CreateWindow(c"StremioNative".as_ptr(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h, SDL_DESKTOP_WINDOW_FLAGS)
+    };
     if win.is_null() {
         log("CreateWindow failed");
         return Err(1);

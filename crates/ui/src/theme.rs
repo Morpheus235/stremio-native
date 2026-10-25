@@ -33,15 +33,15 @@
 // `rgb8`, and the two stops the renderer itself paints with (`NEUTRAL_500`, the app ground, and
 // `NEUTRAL_1000`, the scrim ink behind `SCRIM_INK`), are written down in `gfx::tokens` (module-layers
 // step L5) and imported here, so a code still exists in exactly one place.
-use sn_gfx::gfx::tokens::{rgb8, NEUTRAL_500};
+use sn_gfx::gfx::tokens::{rgb8, NEUTRAL_500, PALETTE};
 
 // Cool — blue-leaning: everything that is text, and artwork that has not loaded.
-const COOL_0: [f32; 4] = rgb8(0xf7, 0xfa, 0xfc);
-const COOL_50: [f32; 4] = rgb8(0xeb, 0xf0, 0xf7);
-const COOL_150: [f32; 4] = rgb8(0xdb, 0xe0, 0xeb);
-const COOL_200: [f32; 4] = rgb8(0xcd, 0xd3, 0xdd);
-const COOL_300: [f32; 4] = rgb8(0xb8, 0xbf, 0xcc);
-const COOL_400: [f32; 4] = rgb8(0x94, 0x99, 0xa3);
+const COOL_0: [f32; 4] = PALETTE.text[0];
+const COOL_50: [f32; 4] = PALETTE.text[1];
+const COOL_150: [f32; 4] = PALETTE.text[2];
+const COOL_200: [f32; 4] = PALETTE.text[3];
+const COOL_300: [f32; 4] = PALETTE.text[4];
+const COOL_400: [f32; 4] = PALETTE.text[5];
 const COOL_700: [f32; 4] = rgb8(0x2e, 0x32, 0x3d);
 const COOL_850: [f32; 4] = rgb8(0x1f, 0x21, 0x29);
 const COOL_900: [f32; 4] = rgb8(0x14, 0x17, 0x1c);
@@ -51,8 +51,8 @@ const COOL_900: [f32; 4] = rgb8(0x14, 0x17, 0x1c);
 // `--modal-background-color: rgba(15, 13, 32, 1)` and `NEUTRAL_750` is
 // `--primary-background-color: rgba(12, 11, 17, 1)`, both darker than the ground (`NEUTRAL_500`,
 // `--secondary-background-color`), as the old greys were. Names kept: a stop's job did not move.
-const NEUTRAL_650: [f32; 4] = rgb8(0x0f, 0x0d, 0x20);
-const NEUTRAL_750: [f32; 4] = rgb8(0x0c, 0x0b, 0x11);
+const NEUTRAL_650: [f32; 4] = PALETTE.panel[0];
+const NEUTRAL_750: [f32; 4] = PALETTE.panel[1];
 const NEUTRAL_850: [f32; 4] = rgb8(0x14, 0x14, 0x16);
 const WHITE: [f32; 4] = rgb8(0xff, 0xff, 0xff);
 const BLACK: [f32; 4] = rgb8(0x00, 0x00, 0x00);
@@ -75,9 +75,9 @@ const SAND_100: [f32; 4] = rgb8(0xe9, 0xe6, 0xe0);
 
 // Violet — Stremio's one accent, stremio-web `src/App/styles.less`
 // `--primary-accent-color: rgb(123, 91, 245)`. The focus fill and nothing decorative.
-const VIOLET_500: [f32; 4] = rgb8(0x7b, 0x5b, 0xf5);
+const VIOLET_500: [f32; 4] = PALETTE.accent[0];
 /// One step deeper than the brand violet: the list focus pill's fill (white clears 5.3:1 on it).
-const VIOLET_550: [f32; 4] = rgb8(0x6e, 0x4e, 0xe8);
+const VIOLET_550: [f32; 4] = PALETTE.accent[1];
 
 // Atmosphere — deliberately dark light for a pre-content route. These are not state colours
 // and never ink a control; together they stand in for an artwork UltraBlur envelope before the
@@ -101,10 +101,10 @@ const VIOLET_550: [f32; 4] = rgb8(0x6e, 0x4e, 0xe8);
 // an authored key light would use — bright near one corner, dark at its opposite — while every
 // corner still clears 3:1 against `TEXT_TERTIARY` and 7:1 against `TEXT_PRIMARY`, the same floors
 // `AmbientWash::keyed` holds a real hero to.
-const ATMOS_NIGHT: [f32; 4] = rgb8(0x0c, 0x0b, 0x11);
-const ATMOS_DUSK: [f32; 4] = rgb8(0x26, 0x20, 0x5e);
-const ATMOS_VIOLET: [f32; 4] = rgb8(0x2e, 0x28, 0x73);
-const ATMOS_INDIGO: [f32; 4] = rgb8(0x0f, 0x0d, 0x20);
+const ATMOS_NIGHT: [f32; 4] = PALETTE.atmos[0];
+const ATMOS_DUSK: [f32; 4] = PALETTE.atmos[1];
+const ATMOS_VIOLET: [f32; 4] = PALETTE.atmos[2];
+const ATMOS_INDIGO: [f32; 4] = PALETTE.atmos[3];
 
 // Semantic — amber / red / green: state and verdict, never decoration.
 const AMBER_300: [f32; 4] = rgb8(0xfa, 0xb8, 0x2e);
@@ -302,7 +302,7 @@ pub const ACCENT: [f32; 4] = VIOLET_500;
 /// violet (4.51:1; even `TEXT_PRIMARY`'s `#f7fafc` lands at 4.30). Pinned by
 /// `widgets_control_face_tests::focus_ink_clears_4_5_on_every_focus_fill`. It was the near-black `NEUTRAL_950` over
 /// the old near-white fill.
-pub const ACCENT_INK: [f32; 4] = WHITE;
+pub const ACCENT_INK: [f32; 4] = PALETTE.accent_ink;
 /// **The account avatar's face** (the top bar's account pill): one of these, picked by a stable
 /// hash of the account id, so one account always wears the same colour and two accounts on one
 /// television usually differ. All on the accent's one hue — the violet and three darker steps
@@ -318,7 +318,7 @@ pub const INK_ON_ACCENT: [f32; 4] = ACCENT_INK;
 pub const FOCUS_FILL: [f32; 4] = VIOLET_550;
 /// The SECONDARY ink over the accent (a focused row's source column, sub-line): white at the
 /// weight that clears 3:1 on [`FOCUS_FILL`].
-pub const INK_ON_ACCENT_SECONDARY: [f32; 4] = with_a(WHITE, 0.78);
+pub const INK_ON_ACCENT_SECONDARY: [f32; 4] = with_a(ACCENT_INK, 0.78);
 // (`CONTROL_FOCUS_FACE_L` .972 / `CONTROL_FOCUS_AMBIENT_C` .36 stood here: a keyed focused face
 // was near-white material carrying the page's hue. Since the Stremio palette sync focus is the
 // fixed [`ACCENT`] violet on every ground, so the page's key reaches only the IDLE face.)
