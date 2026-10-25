@@ -117,6 +117,16 @@ pub const PALETTES: &[(&str, Palette)] = &[
         atmos: [rgb8(0x0f, 0x0d, 0x07), rgb8(0x41, 0x38, 0x1a), rgb8(0x52, 0x46, 0x1c), rgb8(0x18, 0x14, 0x0a)],
         text: TEXT_ON_DARK,
     }),
+    // True black for OLED: the ground's pixels switch off. Nothing is darker than black, so the
+    // panels lift slightly above it instead, and the pre-content wash stays black.
+    ("oled", Palette {
+        ground: rgb8(0x00, 0x00, 0x00),
+        panel: [rgb8(0x0e, 0x0e, 0x11), rgb8(0x08, 0x08, 0x0a)],
+        accent: [rgb8(0x7b, 0x5b, 0xf5), rgb8(0x6e, 0x4e, 0xe8)],
+        accent_ink: INK_WHITE,
+        atmos: [rgb8(0x00, 0x00, 0x00), rgb8(0x06, 0x05, 0x0c), rgb8(0x0a, 0x08, 0x16), rgb8(0x00, 0x00, 0x00)],
+        text: TEXT_ON_DARK,
+    }),
     // ponytail: a light ground and dark text only. Every `with_a(WHITE, a)` overlay, scrim and
     // shader glow still assumes a dark ground; this entry shows what a real light mode must redo.
     ("light", Palette {
