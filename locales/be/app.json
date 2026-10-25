@@ -344,5 +344,25 @@
   "app.discover.recently_watched": {
     "value": "Нядаўна прагледжаныя",
     "description": "Discover, Live TV: the catalog dropdown's first choice — the channels the account watched most recently."
+  },
+  "app.settings.stream_order": {
+    "value": "Парадак плыняў",
+    "description": "Settings: row and picker title — how each addon's streams are ordered in a stream list."
+  },
+  "app.settings.stream_order_copy": {
+    "value": "Як пералічваюцца плыні кожнага дадатку: як іх дасылае дадатак, або спачатку тыя, што граюць адразу, потым паводле вашых моў сартавання або паводле раздзяляльнасці.",
+    "description": "Stream order picker: the line under the title."
+  },
+  "app.settings.stream_order_addon": {
+    "value": "Як у дадатку",
+    "description": "Stream order option: keep the order the addon sent."
+  },
+  "app.settings.stream_order_language": {
+    "value": "Спачатку мовы",
+    "description": "Stream order option: playable at once first, then the preferred stream languages."
+  },
+  "app.settings.stream_order_quality": {
+    "value": "Спачатку якасць",
+    "description": "Stream order option: playable at once first, then the highest resolution."
   }
 }

@@ -138,6 +138,8 @@ pub enum RootRow {
     MultichannelAudio,
     /// TV guide: Off or a region (the picker).
     TvGuide,
+    /// Stream order: the addon's, languages first, quality first (the picker).
+    StreamOrder,
 }
 
 impl FormId for RootRow {
@@ -199,6 +201,7 @@ fn pref_copy(pref: Pref) -> &'static str {
         Pref::Language => msg::app_settings_language_copy(),
         Pref::MultichannelAudio => msg::app_settings_multichannel_audio_copy(),
         Pref::TvGuide => msg::app_settings_tv_guide_copy(),
+        Pref::StreamOrder => msg::app_settings_stream_order_copy(),
     }
 }
 
@@ -289,7 +292,8 @@ pub fn root_form(settings: &SettingsStore, account: &AccountStore, stats: bool) 
     let audio = pick(audio, RootRow::SubtitleOutline, Pref::SubtitleOutline);
     let audio = pick(audio, RootRow::SubtitleOpacity, Pref::SubtitleOpacity);
     let audio = pick(audio, RootRow::AssStyling, Pref::AssStyling);
-    let streams = langs(FormSection::new(msg::app_settings_streams()), RootRow::StreamLanguages, LangList::Streams);
+    let streams = pick(FormSection::new(msg::app_settings_streams()), RootRow::StreamOrder, Pref::StreamOrder);
+    let streams = langs(streams, RootRow::StreamLanguages, LangList::Streams);
     let live = pick(FormSection::new(msg::app_tab_live_tv()), RootRow::TvGuide, Pref::TvGuide);
     Form::new()
         .section(account_section(account).item(
@@ -1116,7 +1120,7 @@ mod tests {
                         SubtitleOpacity,
                         AssStyling,
                     ],
-                    vec![StreamLanguages],
+                    vec![StreamOrder, StreamLanguages],
                     vec![TvGuide],
                     vec![Language, Stats, RemoteKeys],
                     vec![About, Legal, Privacy],
@@ -1236,6 +1240,7 @@ mod tests {
                 SettingsPage::Picker(Pref::SubtitleOutline),
                 SettingsPage::Picker(Pref::SubtitleOpacity),
                 SettingsPage::Picker(Pref::AssStyling),
+                SettingsPage::Picker(Pref::StreamOrder),
                 SettingsPage::Languages(LangList::Streams),
                 SettingsPage::Picker(Pref::TvGuide),
                 SettingsPage::Picker(Pref::Language),
