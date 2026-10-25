@@ -88,7 +88,7 @@ but not published.
 
 A suffixed tag (`v0.2.0-beta.1`) builds the separate **StremioNative Beta** app instead:
 - `FLAVOR=beta`, app id `com.morpheus235.stremionative.beta`;
-- version `X.Y.YYYYMMDD`, so at most one beta a day;
+- version `X.Y.YYMMDDHHm` (the UTC cut time to ten minutes), so at most one beta per ten minutes;
 - published as a GitHub prerelease.
 
 The one `repo.json` lists both apps, each pointing at its newest release, so either or both can

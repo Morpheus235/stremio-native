@@ -3,7 +3,7 @@
 //!
 //! **The version** is `SN_VERSION`, compile-time, read by `app::boot` for the `User-Agent`
 //! (`StremioNative/<version>`) and the boot preamble. The Makefile hands it in for a release
-//! build — the PACKAGE's version, computed by `ci/flavor.py` (`X.Y.Z` stable, `X.Y.YYYYMMDD` beta)
+//! build — the PACKAGE's version, computed by `ci/flavor.py` (`X.Y.Z` stable, `X.Y.YYMMDDHHm` beta)
 //! — so the binary and its package cannot disagree. Every other build reports
 //! `pkg/appinfo.json`'s version with a `-dev` suffix, so a working tree never claims to be the
 //! shipped artifact.

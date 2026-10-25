@@ -7,10 +7,11 @@ directory's name):
 
   * `stable` — what users install (`com.morpheus235.stremionative`). Always a `RELEASE=1` build.
   * `beta`   — the prerelease channel beside it (`…stremionative.beta`, tile "StremioNative Beta"),
-               also always `RELEASE=1`. Its PACKAGE version is `X.Y.YYYYMMDD`: the tracked `X.Y`
-               with the UTC cut date as the patch, because Homebrew Channel offers an update only
-               when the version string differs and webOS takes nothing but three integers, so the
-               date is what orders betas (one per day).
+               also always `RELEASE=1`. Its PACKAGE version is `X.Y.YYMMDDHHm`: the tracked `X.Y`
+               with the UTC cut time (to ten minutes) as the patch, because Homebrew Channel offers
+               an update only when the version string differs and webOS takes nothing but three
+               integers of at most nine digits (ares-package), so the cut time is what orders
+               betas (one per ten minutes; nine digits also sort above the older `YYYYMMDD`).
   * `debug`  — the developer build (`…stremionative.debug`, tile "StremioNative debug").
 
 The install list lives in `ci/install-identities.json`, which the storage layer's build script
@@ -28,7 +29,7 @@ byte-for-byte the tracked one.
 
     python3 ci/flavor.py --list                 stable debug beta
     python3 ci/flavor.py beta                   the app id
-    python3 ci/flavor.py --version beta         the package version (beta reads SN_BETA_DATE)
+    python3 ci/flavor.py --version beta         the package version (beta reads SN_BETA_DATE=YYYYMMDDHHMM)
     python3 ci/flavor.py --title beta           the launcher title
     python3 -I ci/flavor.py --selftest
 """
@@ -61,14 +62,20 @@ def app_id(flavor: str) -> str:
 
 
 def beta_date(date: "str | None" = None) -> str:
-    """The `YYYYMMDD` a beta is cut for: the argument, else `SN_BETA_DATE` (which the Makefile
-    exports, so the package version and the version the binary reports name the same day). There
-    is no fallback to "today": a guessed date would make the package disagree with its binary."""
+    """The `YYYYMMDDHHMM` (UTC) a beta is cut at: the argument, else `SN_BETA_DATE` (which the
+    Makefile exports, so the package version and the version the binary reports name the same cut).
+    There is no fallback to "now": a guessed time would make the package disagree with its binary."""
     d = date if date is not None else os.environ.get("SN_BETA_DATE", "")
-    if not re.fullmatch(r"[0-9]{8}", d) or not ("19700101" <= d <= "99991231") or not (1 <= int(d[4:6]) <= 12) \
-            or not (1 <= int(d[6:]) <= 31):
-        raise SystemExit(f"a beta package's version carries its cut date: pass it or set SN_BETA_DATE=YYYYMMDD (got {d!r})")
+    if not re.fullmatch(r"20[0-9]{10}", d) or not (1 <= int(d[4:6]) <= 12) or not (1 <= int(d[6:8]) <= 31) \
+            or int(d[8:10]) > 23 or int(d[10:]) > 59:
+        raise SystemExit(f"a beta package's version carries its cut time: pass it or set SN_BETA_DATE=YYYYMMDDHHMM (got {d!r})")
     return d
+
+
+def beta_patch(date: "str | None" = None) -> int:
+    """`YYMMDDHHm`: the cut time to ten minutes, nine digits — ares-package's limit for a part."""
+    d = beta_date(date)
+    return int(d[2:11])
 
 
 def version_for(flavor: str, date: "str | None" = None) -> str:
@@ -77,7 +84,7 @@ def version_for(flavor: str, date: "str | None" = None) -> str:
     if not m:
         raise SystemExit(f"pkg/appinfo.json version {v!r} is not X.Y.Z")
     if flavor == "beta":
-        return f"{m.group(1)}.{m.group(2)}.{int(beta_date(date))}"
+        return f"{m.group(1)}.{m.group(2)}.{beta_patch(date)}"
     app_id(flavor)
     return v
 
@@ -115,17 +122,20 @@ def _selftest() -> int:
     moved = {k for k in tracked if dbg.get(k) != tracked[k]}
     check(moved == {"id", "title"}, f"only id and title differ for debug (saw {sorted(moved)})")
 
-    beta = appinfo_for("beta", "20261016")
+    beta = appinfo_for("beta", "202610161347")
     x, y, _ = tracked["version"].split(".")
     check(beta["title"] == f"{tracked['title']} Beta", f"beta title is \"{tracked['title']} Beta\" ({beta['title']!r})")
-    check(beta["version"] == f"{x}.{y}.20261016", f"beta version is X.Y.<date> ({beta['version']!r})")
-    check(re.fullmatch(r"\d+\.\d+\.\d+", beta["version"]) is not None, "beta version is three integers — all webOS accepts")
-    later = appinfo_for("beta", "20261017")
-    check(int(later["version"].rsplit(".", 1)[1]) > int(beta["version"].rsplit(".", 1)[1]),
-          "a later cut is a later version (Homebrew Channel offers an update only when the string differs)")
+    check(beta["version"] == f"{x}.{y}.261016134", f"beta version is X.Y.<YYMMDDHHm> ({beta['version']!r})")
+    check(re.fullmatch(r"\d{1,9}\.\d{1,9}\.\d{1,9}", beta["version"]) is not None,
+          "beta version is three integers of at most nine digits — all ares-package accepts")
+    patch = lambda a: int(a["version"].rsplit(".", 1)[1])
+    for later in ("202610161350", "202610161400", "202610170000", "209912312359"):
+        check(patch(appinfo_for("beta", later)) > patch(beta), f"a later cut ({later}) is a later version")
+    check(patch(beta) > 20261025, "the new scheme sorts above the old X.Y.YYYYMMDD betas")
     moved = {k for k in tracked if beta.get(k) != tracked[k]}
     check(moved == {"id", "title", "version"}, f"only id, title and version differ for beta (saw {sorted(moved)})")
-    for bad in ("2026101", "202610160", "2026-10-1", "", "abcdefgh", "20261316", "20261000"):
+    for bad in ("20261016", "2026101612000", "2026-10-16 12", "", "abcdefghijkl", "202613161200", "202610001200",
+                "202610162400", "202610161260"):
         try:
             appinfo_for("beta", bad)
         except SystemExit:
@@ -140,13 +150,13 @@ def _selftest() -> int:
             check(True, "beta with no date and no SN_BETA_DATE is an error, never a guess")
         else:
             check(False, "beta with no date and no SN_BETA_DATE is an error, never a guess")
-        os.environ["SN_BETA_DATE"] = "20261016"
+        os.environ["SN_BETA_DATE"] = "202610161347"
         check(appinfo_for("beta") == beta, "SN_BETA_DATE (what the Makefile exports) supplies the date")
     finally:
         os.environ.pop("SN_BETA_DATE", None)
         if saved is not None:
             os.environ["SN_BETA_DATE"] = saved
-    check(version_for("stable", "20261016") == tracked["version"] and version_for("debug") == tracked["version"],
+    check(version_for("stable", "202610161347") == tracked["version"] and version_for("debug") == tracked["version"],
           "a date changes nothing for stable and debug")
     try:
         app_id("stabel")
@@ -169,7 +179,7 @@ def _selftest() -> int:
     hb = (ROOT / "ci/hbrepo.py").read_text()
     check(f'TITLE = "{tracked["title"]}"' in hb, "ci/hbrepo.py lists the stable title")
     rel = (ROOT / ".github/workflows/hbrepo.yml").read_text()
-    check(f'channel true "{appinfo_for("beta", "20261016")["title"]}"' in rel, "the Homebrew Channel workflow lists the beta title")
+    check(f'channel true "{appinfo_for("beta", "202610161347")["title"]}"' in rel, "the Homebrew Channel workflow lists the beta title")
 
     print()
     for f in fails:
