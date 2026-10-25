@@ -76,11 +76,11 @@ fn every_control_character_is_refused_and_a_plain_value_is_kept_as_written() {
     assert_eq!(ua.c_string.to_str(), Ok(ua.text.as_str()), "the curl string is the same value");
 }
 
-/// The easy path, which every addon, image, telemetry and lab request passes
+/// The easy path, which every addon, image and lab request passes
 /// (`request_tls_evidence`): the installed value rides the first request AND the hop a redirect
 /// adds, exactly once with or without a caller block (a caller's own `User-Agent:` line is refused,
-/// `net_wire_characterization_tests.rs`), and on the verb the telemetry senders use
-/// (a POST with a body, through the shipped-bundle `Tls` mode) as on a GET.
+/// `net_wire_characterization_tests.rs`), and on a POST with a body (through the `Tls::CaBundle`
+/// mode) as on a GET.
 #[test]
 fn every_hop_and_verb_of_an_easy_request_sends_the_installed_user_agent() {
     let _serial = sn_base::testlock::serial();

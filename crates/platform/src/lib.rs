@@ -2,7 +2,7 @@
 //!
 //! The webOS identity (`webos`), the storage helper's client and its wire protocol (`storage`), the
 //! key stores (`keymanager`), the codec table (`devcaps`), the artwork cache (`imgcache`), the
-//! localization catalog (`i18n`), the Cloud Lab session file (`labcfg`) and the interfaces the
+//! localization catalog (`i18n`), the interfaces the
 //! webOS port fills at boot (`tv`). It is the `platform` layer of `ci/module-layers.ini`: it uses
 //! `base` and `machine` and nothing else. `webos` and `keymanager` are also the port's
 //! (`[port webos]`), and nothing outside the port names them.
@@ -23,7 +23,6 @@ pub mod devcaps; // what this SoC decodes — the TV's own codec table, read onc
 pub mod i18n;
 pub mod imgcache; // bounded persistent artwork cache shared by every image source
 pub mod keymanager; // public LS2 key stores: keymanager3, legacy Palm service, or unavailable
-pub mod labcfg; // `lab.json` (the Cloud Lab session config) and the two answers `ui/` and `screens/` ask of it: is this key the trigger, is the menu row on
 // Stage A foundation: owner adapters connect these APIs in the next integration stage.
 #[allow(dead_code)]
 pub mod storage;

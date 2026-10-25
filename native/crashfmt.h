@@ -176,9 +176,8 @@ static inline size_t sn_fmt_signal(char *out, size_t cap, int sig, const char *n
  *
  * Its own line rather than another field on the first, for the reason `reg:` is: every tool that
  * has parsed this file reads the first line's shape (`crash-report.sh` takes `pc=` and `lr=` off
- * the block by sed). The Rust importer (`crashreport::parse`) reads this back as the fallback
- * event's `timestamp`, which is what lets Sentry show WHEN the crash happened and not when the
- * next launch found the log. A record without it (an older build's) is simply sent without one.
+ * the block by sed). It records WHEN the crash happened, not when the next launch found the log.
+ * A record without it (an older build's) simply has no time line.
  * Same bounded, no-allocation discipline as `sn_fmt_signal`. */
 static inline size_t sn_fmt_time(char *out, size_t cap, unsigned long secs) {
     struct sn_sbuf b = { out, 0, cap };

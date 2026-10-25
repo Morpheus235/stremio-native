@@ -1,6 +1,6 @@
 //! Standard-alphabet, padded base64 (RFC 4648 section 4), hand-written so there is no base64
 //! dependency. A leaf module: it references no other crate module, so `keymanager` (sealed
-//! key blobs) and `spki` (pin strings) can share it without `spki` joining the keymanager cycle.
+//! key blobs) can use it without a cycle.
 
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 

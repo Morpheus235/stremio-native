@@ -4,14 +4,14 @@
 //! must run it off the SDL main loop.
 //!
 //! It is the transport for every TLS request the app makes — JSON GETs to arbitrary addon hosts,
-//! public redirect-following fetches ([`https_get_public`]), telemetry ([`post_ca`]) — with
+//! public redirect-following fetches ([`https_get_public`]) — with
 //! per-call deadlines ([`Timeouts`]), a bounded response body (`max_body`), an optional DNS pin
 //! ([`resolve`]) and the process's one `User-Agent` ([`set_user_agent`]).
 //!
 //! Only the curl *easy* API is used here. This module owns libcurl's process init, including the
 //! mutex callbacks required when the TV's libcurl uses OpenSSL 1.0. The option/info integer
 //! constants are curl's stable public ABI values (kept here so we do not need the header). TLS
-//! peer+host verification is ON (the lab receiver's [`Tls::Pinned`] swaps it for a key pin) with
+//! peer+host verification is always ON, with
 //! ONE bounded fallback on the ordinary request path, in [`roots`]: a request whose verification
 //! against the television's own trust store fails with a MISSING-ISSUER verify result (a 2020
 //! firmware's store lacks Let's Encrypt's newer roots) is repeated once against the bundled public
@@ -128,24 +128,12 @@ const PUBLIC_MAX_REDIRECTS: c_long = 5;
 /// the `dynlib!` table (and therefore nothing about which firmwares this binary starts on) moves
 /// for this. Present since libcurl 7.1; the television's is 7.53.1.
 const CURLOPT_CUSTOMREQUEST: c_int = 10036;
-/// `CURLOPT_PINNEDPUBLICKEY` (OBJECTPOINT + 230) — `"sha256//<base64 of the SPKI's SHA-256>"`.
-///
-/// libcurl 7.39+, against the dev television's 7.53.1, so it reaches every firmware this app
-/// claims. It is checked **independently of** `CURLOPT_SSL_VERIFYPEER`, which is what makes the
-/// one caller possible: the lab receiver ([`crate::lab`]) is a self-signed certificate generated
-/// per session on a developer's Mac, so there is no CA to verify against and the pin is the whole
-/// of the endpoint's identity — a narrower trust root than the television's CA store, not a wider
-/// one. No private key is in this binary; a pin is a hash of a public key.
-const CURLOPT_PINNEDPUBLICKEY: c_int = 10230;
-
 /// `CURLOPT_CAINFO` (OBJECTPOINT + 65) — a path to a PEM bundle to verify the peer against,
 /// INSTEAD of whatever trust store this firmware shipped with in 2019. Production sets it in two
-/// places only: [`Tls::CaBundle`] (the telemetry bundle) and [`roots::apply`] (the bundled-roots
+/// places only: [`Tls::CaBundle`] (tests' private CAs) and [`roots::apply`] (the bundled-roots
 /// fallback, after the device store has already said no).
 ///
-/// **It is not pinning and must not be read as pinning**, which is the confusion
-/// [`CURLOPT_PINNEDPUBLICKEY`]'s own doc exists to prevent from the other side: this selects which
-/// roots are trusted, and any certificate chaining to one of them still validates. What it buys is
+/// **It is not pinning**: this selects which roots are trusted, and any certificate chaining to one of them still validates. What it buys is
 /// independence from a store nobody can update on a television, for hosts whose CA may rotate.
 pub const CURLOPT_CAINFO: c_int = 10065;
 /// `CURLOPTTYPE_SLISTPOINT + 203`: a `curl_slist` of `host:port:address` entries that pre-populate
@@ -1487,10 +1475,8 @@ pub use loopback_server::{dead_port, mint_ca_issued_cert, mint_cert, spawn_dual_
 #[cfg(any(test, feature = "test-support"))]
 pub use loopback_server::{curl_ready, expired_leaf};
 
-/// **How the peer is verified.** Three modes, and they are an enum rather than an
-/// `Option<&str>` for one reason: the pinned one turns CA verification OFF, so "pinned" and
-/// "CA-verified" are opposites that a bare string parameter let a caller hold at the same time.
-/// Making them variants means the compiler enforces what a comment used to ask for.
+/// **How the peer is verified.** Both modes verify the peer against a CA store; they differ only
+/// in which roots.
 pub enum Tls<'a> {
     /// CA-verified against **the television's own trust store**. The default — `request` is
     /// exactly this. An https request that this store fails for a missing issuer is repeated once
@@ -1502,18 +1488,12 @@ pub enum Tls<'a> {
     /// roots: it exists so a third-party endpoint's CA rotation is not at the mercy of a store
     /// baked into a 2019 firmware.
     CaBundle(&'a str),
-    /// **Pinned**, and CA verification deliberately off — see [`CURLOPT_PINNEDPUBLICKEY`]. Only the
-    /// lab receiver, which is a self-signed certificate on a developer's Mac.
-    #[cfg_attr(not(feature = "lab-diagnostics"), allow(dead_code))]
-    Pinned(&'a str),
 }
 
-/// The same three, owning their `CString`s so the pointers handed to curl outlive `perform`.
+/// The same two, owning their `CString`s so the pointers handed to curl outlive `perform`.
 enum TlsCfg {
     Ca,
     CaBundle(CString),
-    #[cfg_attr(not(feature = "lab-diagnostics"), allow(dead_code))]
-    Pinned(CString),
 }
 
 /// [`request`], plus an explicit [`Tls`] mode. One extra parameter rather than a second
@@ -1887,7 +1867,6 @@ fn request_tls_sink(
     let tls_c = match tls {
         Tls::Ca => TlsCfg::Ca,
         Tls::CaBundle(p) => TlsCfg::CaBundle(CString::new(p).map_err(|_| RequestError::Transport)?),
-        Tls::Pinned(p) => TlsCfg::Pinned(CString::new(p).map_err(|_| RequestError::Transport)?),
     };
     // The caller's header block is checked BEFORE any handle exists ([`headers`]): a line that ends a
     // header, names one the transport writes itself (the `User-Agent` libcurl would otherwise REPLACE
@@ -1930,12 +1909,10 @@ fn request_tls_sink(
                 .unwrap_or_else(|e| e.into_inner()),
         )
     };
-    // **Roots mode is only ever considered for a CA-verified https request** — never
-    // [`Tls::Pinned`] (which has already turned verification off for a reason of its own), never
-    // plaintext. `key` is that request's `host:port` in [`roots`]'s latch, or `None` when the
+    // **Roots mode is only ever considered for an https request** — never plaintext. `key` is that request's `host:port` in [`roots`]'s latch, or `None` when the
     // request can never use the bundle. Which attempt follows a failed one is
     // [`roots::after_failure`]'s alone.
-    let key = roots_eligible(url, &tls).then(|| roots::key_of_url(url)).flatten();
+    let key = roots_eligible(url).then(|| roots::key_of_url(url)).flatten();
     let mut mode = key.as_deref().map_or(roots::Mode::Strict, roots::begin);
     // The attempt that failed and led to the next rung ([`roots::after_failure`]), kept while that
     // rung is tried: if libcurl cannot even be put in that mode, the request fails as it would have.
@@ -2031,27 +2008,11 @@ fn request_tls_sink(
                 curl_easy_setopt_long(easy.0, CURLOPT_SSL_VERIFYHOST, 2 as c_long),
                 "CURLOPT_SSL_VERIFYHOST"
             );
-            // A pinned request replaces CA verification with key pinning — see
-            // [`CURLOPT_PINNEDPUBLICKEY`]. Written AFTER the two defaults above so the ordinary path is
-            // still one unconditional pair of lines that cannot be reached with the wrong value.
-            //
-            // Every security-relevant option above is fail-closed. Pinning is additionally important:
-            // if the option is rejected — an older libcurl, or a TLS backend whose
-            // pinning support post-dates it, which is neither a symbol nor a library and so is
-            // invisible to `tools/fwcompat.py` — then the two lines under it would still run and the
-            // request would go out with **no pinning and no CA verification at all**, accepting any
-            // certificate anyone cared to present. So an unsupported option is a REFUSAL, before
-            // verification is touched: a lab upload that does not happen costs a log, and one sent to
-            // whoever answered costs the log's contents.
             match &tls_c {
-                // The two lines above already ARE this mode. Named rather than left implicit:
-                // "CA-verified and unpinned" is the DEFAULT, and needs no option of its own.
+                // The two lines above already ARE this mode.
                 TlsCfg::Ca => {}
-                // A bundle we ship. The return code is checked for the same reason the pin's is, but
-                // the failure it guards is milder and worth stating so nobody "simplifies" the pinned
-                // check to match: a REJECTED `CURLOPT_CAINFO` leaves the device's own store in force,
-                // which still verifies, whereas a rejected pin would leave nothing verifying at all.
-                // Refusing here is a deliberate over-reaction — if we could not select the roots we
+                // A REJECTED `CURLOPT_CAINFO` leaves the device's own store in force, which still
+                // verifies. Refusing here is a deliberate over-reaction — if we could not select the roots we
                 // meant to, the honest report is that the send did not happen.
                 TlsCfg::CaBundle(p) => {
                     let rc = curl_easy_setopt_ptr(easy.0, CURLOPT_CAINFO, p.as_ptr() as *const c_void);
@@ -2059,25 +2020,6 @@ fn request_tls_sink(
                         sn_base::eventlog::log(&format!("net: this libcurl refuses CURLOPT_CAINFO (rc={rc}) — refusing to send against an unknown trust store"));
                         return Err(RequestError::Transport.into());
                     }
-                }
-                TlsCfg::Pinned(p) => {
-                    let rc = curl_easy_setopt_ptr(
-                        easy.0,
-                        CURLOPT_PINNEDPUBLICKEY,
-                        p.as_ptr() as *const c_void,
-                    );
-                    if rc != 0 {
-                        sn_base::eventlog::log(&format!("net: this libcurl refuses CURLOPT_PINNEDPUBLICKEY (rc={rc}) — refusing to send unpinned"));
-                        return Err(RequestError::Transport.into());
-                    }
-                    require_setopt!(
-                        curl_easy_setopt_long(easy.0, CURLOPT_SSL_VERIFYPEER, 0 as c_long),
-                        "CURLOPT_SSL_VERIFYPEER"
-                    );
-                    require_setopt!(
-                        curl_easy_setopt_long(easy.0, CURLOPT_SSL_VERIFYHOST, 0 as c_long),
-                        "CURLOPT_SSL_VERIFYHOST"
-                    );
                 }
             }
             // **Roots mode** ([`roots`]): the bundled public roots in place of this firmware's CA
@@ -2301,14 +2243,12 @@ struct Attempt {
     why: Option<String>,
 }
 
-/// May [`roots`] consider this request at all: only over https, and only when the peer is
-/// verified against a trust store (`Tls::Ca`, or a `Tls::CaBundle`). [`Tls::Pinned`] is the lab
-/// receiver, which turns verification OFF; plaintext has no certificate to verify. Roots mode
+/// May [`roots`] consider this request at all: only over https (every [`Tls`] mode verifies
+/// against a trust store); plaintext has no certificate to verify. Roots mode
 /// relaxes nothing, so a request that follows redirects may take it too: the whole chain is
 /// re-requested with the bundle as its trust store.
-fn roots_eligible(url: &str, tls: &Tls<'_>) -> bool {
-    let https = url.get(..8).is_some_and(|s| s.eq_ignore_ascii_case("https://"));
-    https && matches!(tls, Tls::Ca | Tls::CaBundle(_))
+fn roots_eligible(url: &str) -> bool {
+    url.get(..8).is_some_and(|s| s.eq_ignore_ascii_case("https://"))
 }
 
 /// Civil `(year, month, day)` of a Unix time in UTC — Howard Hinnant's `civil_from_days`, with
@@ -2400,100 +2340,6 @@ pub fn https_post(url: &str, headers: &[String], body: &[u8]) -> Option<Resp> {
     request(url, headers, "POST", Some(body), API, false, None, None)
 }
 
-/// Blocking **pinned** HTTPS POST — used by Lab Diagnostics uploads and Lab Control's long poll.
-/// Their receiver is a self-signed certificate on a developer's Mac. Redirects are OFF (a pinned
-/// endpoint that redirects is not the endpoint) and the response body is capped: the receiver
-/// answers one small JSON object.
-#[cfg(feature = "lab-diagnostics")]
-pub fn post_pinned(
-    url: &str,
-    headers: &[String],
-    body: &[u8],
-    pin: &str,
-    t: Timeouts,
-) -> Option<Resp> {
-    request_tls(
-        url,
-        headers,
-        "POST",
-        Some(body),
-        t,
-        false,
-        Some(4096),
-        Tls::Pinned(pin),
-    )
-}
-
-/// Blocking **CA-verified, unpinned** HTTPS POST to a third-party endpoint — the telemetry sinks.
-///
-/// # Why this exists, given that [`https_post`] is already CA-verified and unpinned
-///
-/// The plan this was built to called for a new request mode on the grounds that [`post_pinned`]
-/// sets `SSL_VERIFYPEER=0`, so "Sentry and PostHog need the opposite". They do — and `request` has
-/// been that opposite since it was written: `VERIFYPEER=1`/`VERIFYHOST=2` by default, lowered in
-/// exactly one place, the lab's pinning branch. The premise was wrong, and the mode it asked for
-/// already existed. Recording that rather than quietly building it, because "add a mode that is
-/// already the default" is the kind of finding that otherwise gets rediscovered.
-///
-/// What a telemetry sender genuinely needs beyond [`https_post`] is three other things:
-///
-/// * **a bounded response sink.** `https_post` passes `max_body: None`; an unbounded sink on a
-///   1.68 GB television is a memory risk for a reply we only read a status code from;
-/// * **its own deadlines.** [`API`] is tuned for a call a person is waiting on. A background flush
-///   holding a worker for 25 s to report a crash that already happened has the priority backwards;
-/// * **our own roots, when we ship them.** The device's trust store was frozen in 2019 and cannot
-///   be updated; a third party's CA rotation should not be able to end reporting on every
-///   television at once. When `roots.pem` sits beside the binary this uses it, and says which it
-///   used — otherwise "which trust store verified that" is unanswerable after the fact.
-///
-/// **Never pinned, deliberately.** Pinning a third party's SPKI means going dark at their next key
-/// rotation, on televisions nobody can update. That is the opposite trade from the lab receiver's.
-#[allow(dead_code)] // no sender yet — see `telemetry::sentry`
-pub fn post_ca(url: &str, headers: &[String], body: &[u8], t: Timeouts) -> Option<Resp> {
-    let bundle = shipped_ca_bundle(sn_base::paths::app_dir());
-    // Once per process, not per send. Which trust store verified a telemetry endpoint is a fact
-    // that is unanswerable after the event and free to state before it — but it does not change
-    // between sends, and a line per upload would drown the log it is written into.
-    static SAID: std::sync::Once = std::sync::Once::new();
-    SAID.call_once(|| match &bundle {
-        Some(p) => sn_base::eventlog::log(&format!("net: telemetry TLS verifies against the shipped bundle ({p})")),
-        None => sn_base::eventlog::log("net: telemetry TLS verifies against the DEVICE trust store (no roots.pem beside the binary)"),
-    });
-    let tls = match bundle.as_deref() {
-        Some(p) => Tls::CaBundle(p),
-        None => Tls::Ca,
-    };
-    request_tls(
-        url,
-        headers,
-        "POST",
-        Some(body),
-        t,
-        false,
-        Some(TELEMETRY_MAX_REPLY),
-        tls,
-    )
-}
-
-/// The shipped PEM bundle beside the binary, if there is one.
-///
-/// Split out from [`post_ca`] because the interesting behaviour is the FALLBACK, and the fallback
-/// is silent by nature: no bundle means the device's own 2019 trust store verifies instead, which
-/// works right up until it does not. A host test can watch this choose, and cannot watch a socket.
-///
-/// `to_str` rather than a lossy conversion — a path that is not UTF-8 cannot become a `CString`
-/// curl would open, and answering `None` sends us down the working path rather than into a
-/// guaranteed error 77.
-fn shipped_ca_bundle(dir: &std::path::Path) -> Option<String> {
-    let p = dir.join("roots.pem");
-    p.is_file().then(|| p.to_str().map(str::to_owned)).flatten()
-}
-
-/// How much of a telemetry endpoint's reply is worth keeping. Both vendors answer a small JSON
-/// object and the only field either sender acts on is the status code; the body is kept at all so a
-/// rejection can be logged with the server's own explanation, which is the difference between
-/// debugging a 400 and guessing at one.
-const TELEMETRY_MAX_REPLY: usize = 4096;
 
 /// Redirect-following HTTPS GET for a PUBLIC, credential-free resource (an addon manifest or
 /// catalog, an image), on the [`API`] deadlines with no body bound. At most five HTTP(S)-only
@@ -2679,9 +2525,7 @@ pub mod roots {
     /// which is all [`untrusted_chain_verify`] says.
     const X509_SELF_SIGNED_LEAF: c_long = 18;
     const X509_SELF_SIGNED_IN_CHAIN: c_long = 19;
-    /// The shipped bundle's file name, beside the binary (`pkg/le-roots.pem`). NOT `roots.pem`:
-    /// that name belongs to [`super::post_ca`]'s telemetry bundle, which is a different trust
-    /// decision.
+    /// The shipped bundle's file name, beside the binary (`pkg/le-roots.pem`).
     pub const ROOTS_FILE: &str = "le-roots.pem";
 
     /// libcurl 60 with an issuer-not-found verify result: the one failure an out-of-date CA store
@@ -3583,54 +3427,6 @@ mod legacy_tests {
     }
 }
 
-#[cfg(test)]
-mod tls_mode_tests {
-    use super::*;
-
-    /// **The fallback is the interesting half, and it is silent.** With no `roots.pem` beside the
-    /// binary a telemetry POST verifies against the television's own 2019 trust store — which works
-    /// until a third party rotates to a root that firmware never shipped, and then stops working on
-    /// every set at once with nothing to read. Pinned here so the day the bundle starts shipping,
-    /// the change in behaviour is a test diff rather than a discovery.
-    #[test]
-    fn a_missing_bundle_falls_back_to_the_device_trust_store() {
-        let dir = std::env::temp_dir().join(format!("sn-net-ca-absent-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("temp dir");
-        assert_eq!(shipped_ca_bundle(&dir), None);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// …and a bundle that IS there is selected, by absolute path. FFmpeg's `$ORIGIN` lesson applies
-    /// to curl too: nothing beside this binary is on any search path, so the only workable form is
-    /// the one `app_dir()` resolves at runtime.
-    #[test]
-    fn a_shipped_bundle_is_selected_by_absolute_path() {
-        let dir = std::env::temp_dir().join(format!("sn-net-ca-present-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("temp dir");
-        std::fs::write(dir.join("roots.pem"), b"-----BEGIN CERTIFICATE-----\n").expect("write");
-        let got = shipped_ca_bundle(&dir).expect("the bundle beside the binary is found");
-        assert!(got.ends_with("roots.pem"));
-        assert!(
-            std::path::Path::new(&got).is_absolute(),
-            "curl is given an absolute path"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// A DIRECTORY named `roots.pem` is not a bundle. `exists()` would accept it and hand curl a
-    /// path it fails to read as error 77 — a send that dies at perform rather than falling back to
-    /// the store that would have worked.
-    #[test]
-    fn a_directory_named_like_the_bundle_is_not_one() {
-        let dir = std::env::temp_dir().join(format!("sn-net-ca-dir-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("roots.pem")).expect("temp dirs");
-        assert_eq!(shipped_ca_bundle(&dir), None);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}
 
 #[cfg(test)]
 mod blocking_guard_tests {

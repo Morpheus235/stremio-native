@@ -87,8 +87,8 @@ static NO_HARDWARE: Hardware = Hardware {
 
 /// What the set is. All-empty when the file could not be read; read with `get()` like [`info`].
 ///
-/// Shared by the opt-in compatibility telemetry and the local lab snapshot. The values come from
-/// the same boot probe, so diagnostics never need to rediscover or reinterpret the device later.
+/// Read by local diagnostics. The values come from
+/// the boot probe, so diagnostics never need to rediscover or reinterpret the device later.
 pub fn device() -> &'static Hardware {
     HW.get().unwrap_or(&NO_HARDWARE)
 }

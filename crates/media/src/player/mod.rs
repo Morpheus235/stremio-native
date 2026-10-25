@@ -1259,15 +1259,6 @@ fn playable_buffer_ms(
 }
 
 impl Diag {
-    /// The lab snapshot's wire spelling; the on-screen read-out words its own labels.
-    #[cfg_attr(not(feature = "lab-diagnostics"), allow(dead_code))]
-    pub fn vp_mode_str(&self) -> &'static str {
-        match self.vp_mode {
-            VP_EXPORTED => "exported window (webOS 5+)",
-            VP_ACB => "ACB (webOS 4)",
-            _ => "NONE — no video path",
-        }
-    }
     /// What the Load payload named as the video codec, or `—` before one was built.
     pub fn load_v_str(&self) -> &'static str {
         load_v_name(self.load_v)
@@ -1284,28 +1275,6 @@ impl Diag {
             7 => "MP3",
             8 => "AC4",
             _ => "NONE (needAudio:false)",
-        }
-    }
-    /// Why the VIDEO feeder is where it is. The video lane specifically: the picture is what a
-    /// user complains about, and a two-lane string overflows the value column.
-    ///
-    /// `queue empty` vs `BufferFull` is the row's whole point — a dead PRODUCER and a dead SINK
-    /// look identical from every other field on the panel and want opposite fixes.
-    ///
-    /// The throttle state is worded as what it IS, not as what it is waiting for. It was
-    /// "waiting for a frame", which is the literal truth and reads as a stall — and it is the
-    /// state a healthy playback sits in most of the time, because the feeder deliberately stays
-    /// within `MAX_FEED_AHEAD_NS` of the presented position. The first person to see the panel in
-    /// the wild asked why playback was stuck; it was not.
-    #[cfg_attr(not(feature = "lab-diagnostics"), allow(dead_code))]
-    pub fn feed_state_str(&self) -> &'static str {
-        match self.feed_state {
-            1 => "accepting",
-            2 => "BufferFull (sink is full)",
-            3 => "REFUSED",
-            4 => "holding ~1.6 s ahead",
-            5 => "queue empty (no data)",
-            _ => "— nothing fed yet",
         }
     }
     /// Only an outright refusal is a fault. BufferFull is the steady state under the feed-ahead

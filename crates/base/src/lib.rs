@@ -17,7 +17,6 @@ pub mod task; // the one spawn: a refused thread is a return value, not a panic 
 pub mod cbuf; // fixed NUL-terminated C-string buffer read/write
 pub mod sha256; // SHA-256 / HMAC / PBKDF2, hand-written: the offline PIN verifier's hash
 pub mod b64; // standard base64 encode/decode
-pub mod spki; // a PEM certificate -> its CURLOPT_PINNEDPUBLICKEY string
 pub mod dynlib; // dlopen-by-SONAME-candidate: the libraries whose major moves between webOS releases
 pub mod checkpoint; // the transport-neutral "may I keep waiting?" seam every blocking media wait consults
 pub mod storage_worker; // a bounded FIFO for blocking persistence work
@@ -25,7 +24,7 @@ pub mod fontcov; // which codepoints a font file can draw, read from its cmap
 pub mod surface; // what we are actually drawing into: drawable vs the 1920x1080 logical canvas
 pub mod tile; // `Tile`: the shelf-tile trait the data layer implements and `ui` draws through
 pub mod devtrig; // the /tmp trigger PRIMITIVES (`flag`, `read`, `latched_flag!`, `no_wan`...)
-pub mod diag; // the frame instruments (`heartbeat`, `spans`) and the zlib helper
+pub mod diag; // the frame instruments (`heartbeat`, `spans`)
 pub mod tracks; // which audio and subtitle tracks a playback starts on, by the language prefs
 #[cfg(any(test, feature = "test-support"))]
 pub mod testlock; // one lock for every test that touches a process-global
