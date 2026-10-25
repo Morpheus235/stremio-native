@@ -267,10 +267,15 @@ pub enum AudioFeed {
     /// optical or plain ARC link carries as 5.1. Chosen for DTS with no DTS row in the codec table
     /// or more channels than its DTS ceiling, and for a codec the pipeline has no name for
     /// (TrueHD, FLAC, LPCM, Opus, ...) with more than two channels unless
-    /// [`crate::prefs::Multichannel`] asks for PCM — when the bundled libraries carry that
+    /// [`crate::prefs::Multichannel`] asks for PCM (or E-AC-3: [`TranscodeEac3`](Self::TranscodeEac3)) — when the bundled libraries carry that
     /// decoder and the `ac3` encoder (runtime-detected), the table lists AC-3 and the source rate
     /// is one AC-3 carries (48/44.1/32 kHz; another rate is decoded to PCM instead).
     TranscodeAc3 { source: String, channels: i64 },
+    /// **The same, re-encoded as E-AC-3 5.1 at 768 kb/s** and declared `"AC3 PLUS"`: a codec the
+    /// pipeline has no name for, more than two channels, when the viewer chose Dolby Digital Plus
+    /// ([`crate::prefs::Multichannel::Eac3`]), the build carries the `eac3` encoder and the table
+    /// lists E-AC-3; otherwise that track is [`TranscodeAc3`](Self::TranscodeAc3). DTS stays AC-3.
+    TranscodeEac3 { source: String, channels: i64 },
     /// **Decoded on the CPU and fed as PCM** (`ff::adec`, ported from PlxNative): FLAC, TrueHD/MLP,
     /// LPCM, Opus, Vorbis, MP2, WMA, ALAC — a codec the pipeline has no name for — and MP3 on a set
     /// without an MPEG audio row, decoded by the
@@ -322,6 +327,8 @@ pub const DECODERS: [(&str, &str); 18] = [
 pub struct SoftwareAudio {
     /// The bundled libavcodec's `ac3` encoder: the AC-3 path's encoding half.
     pub ac3_encoder: bool,
+    /// Its `eac3` encoder too (the Dolby Digital Plus choice).
+    pub eac3_encoder: bool,
     /// The software decode -> PCM path (`ff::adec`): `libsnadec.so` loaded.
     pub pcm: bool,
     /// The [`DECODERS`] the bundled libavcodec carries, one bit each.
@@ -333,13 +340,14 @@ pub struct SoftwareAudio {
 impl SoftwareAudio {
     /// No software path: the television's own decoders only.
     pub const NONE: SoftwareAudio =
-        SoftwareAudio { ac3_encoder: false, pcm: false, decoders: 0, multichannel: crate::prefs::Multichannel::Ac3 };
+        SoftwareAudio { ac3_encoder: false, eac3_encoder: false, pcm: false, decoders: 0, multichannel: crate::prefs::Multichannel::Ac3 };
 
     /// What the bundled FFmpeg on this device can do, as detected at `ff::boot`, and the viewer's
     /// multichannel choice for this start.
     pub fn detected() -> SoftwareAudio {
         SoftwareAudio {
             ac3_encoder: crate::ff::transcode::available(),
+            eac3_encoder: crate::ff::transcode::eac3_available(),
             pcm: crate::ff::adec::available(),
             decoders: crate::ff::transcode::decoders(),
             multichannel: crate::prefs::multichannel(),
@@ -420,6 +428,13 @@ impl AudioFeed {
             {
                 AudioFeed::TranscodeAc3 { source: codec, channels }
             }
+            _ if soft_ac3
+                && sw.multichannel == Multichannel::Eac3
+                && sw.eac3_encoder
+                && caps.audio_supports("eac3", channels.min(TRANSCODE_MAX_CHANNELS)) =>
+            {
+                AudioFeed::TranscodeEac3 { source: codec, channels }
+            }
             _ if soft_ac3 => AudioFeed::TranscodeAc3 { source: codec, channels },
             // A codec the pipeline has no name for, decoded here and fed as PCM. DTS keeps its
             // own paths above (PlxNative never routed DTS through PCM either).
@@ -436,6 +451,7 @@ impl AudioFeed {
     pub fn fed_as(&self) -> &'static str {
         match self {
             AudioFeed::TranscodeAc3 { .. } => "Dolby Digital",
+            AudioFeed::TranscodeEac3 { .. } => "Dolby Digital Plus",
             AudioFeed::SoftPcm { dplii: true, .. } => "Pro Logic II",
             AudioFeed::SoftPcm { .. } => "PCM",
             _ => "",
@@ -448,7 +464,7 @@ impl AudioFeed {
     pub fn rank(&self) -> u8 {
         match self {
             AudioFeed::Native { .. } | AudioFeed::DtsCore | AudioFeed::Silent => 0,
-            AudioFeed::TranscodeAc3 { .. } | AudioFeed::SoftPcm { .. } => 1,
+            AudioFeed::TranscodeAc3 { .. } | AudioFeed::TranscodeEac3 { .. } | AudioFeed::SoftPcm { .. } => 1,
             AudioFeed::NeedsSoftwareDecode { .. } => 2,
         }
     }
@@ -462,6 +478,7 @@ impl AudioFeed {
             // The pipeline is fed AC-3 and told so; the diag code (5) keeps the read-out honest
             // about where that AC-3 came from.
             AudioFeed::TranscodeAc3 { .. } => Some(("AC3", 5)),
+            AudioFeed::TranscodeEac3 { .. } => Some(("AC3 PLUS", 9)),
             AudioFeed::SoftPcm { .. } => Some(("PCM", 6)),
             AudioFeed::Silent | AudioFeed::NeedsSoftwareDecode { .. } => None,
         }
@@ -921,7 +938,7 @@ mod tests {
         assert_eq!(pick(&dts_only, None, SoftwareAudio::NONE).1, Some(0), "nothing plays: the default, which the session then refuses");
     }
 
-    const PCM: SoftwareAudio = SoftwareAudio { ac3_encoder: true, pcm: true, decoders: 1, multichannel: crate::prefs::Multichannel::Ac3 };
+    const PCM: SoftwareAudio = SoftwareAudio { ac3_encoder: true, eac3_encoder: true, pcm: true, decoders: 1, multichannel: crate::prefs::Multichannel::Ac3 };
 
     /// The C1 beta's log: `probed h264 ... audio=flac 2ch` then `start refused — AudioUnsupported
     /// { codec: "flac", channels: 2 }`. With the software decoder in the build, FLAC and the
@@ -978,6 +995,30 @@ mod tests {
         assert_eq!((t, d.acodec.as_str(), d.audio_channels), (Some(0), "truehd", 8), "the viewer may still pick the TrueHD");
     }
 
+    /// **Dolby Digital Plus** (issue #3): with that rung a multichannel track the pipeline has no
+    /// name for goes as E-AC-3 5.1, declared `"AC3 PLUS"`; without the `eac3` encoder or an
+    /// E-AC-3 row it falls back to AC-3; stereo stays PCM; DTS keeps AC-3.
+    #[test]
+    fn the_dolby_digital_plus_rung_reencodes_to_eac3_and_falls_back_to_ac3() {
+        use crate::prefs::Multichannel;
+        let mut caps = Caps::assumed();
+        caps.audio = "aac,ac3,eac3".into();
+        let sw = SoftwareAudio { ac3_encoder: true, eac3_encoder: true, pcm: true, decoders: u32::MAX, multichannel: Multichannel::Eac3 };
+        let eac3 = AudioFeed::TranscodeEac3 { source: "truehd".into(), channels: 8 };
+        assert_eq!(AudioFeed::decide("truehd", 8, &caps, sw), eac3);
+        assert_eq!(eac3.payload(), Some(("AC3 PLUS", 9)));
+        assert_eq!((eac3.fed_as(), eac3.rank()), ("Dolby Digital Plus", 1));
+        assert_eq!(AudioFeed::decide("opus", 8, &caps, sw), AudioFeed::TranscodeEac3 { source: "opus".into(), channels: 8 });
+        let ac3 = AudioFeed::TranscodeAc3 { source: "truehd".into(), channels: 8 };
+        assert_eq!(AudioFeed::decide("truehd", 8, &caps, SoftwareAudio { eac3_encoder: false, ..sw }), ac3, "no eac3 encoder");
+        let mut no_eac3 = caps.clone();
+        no_eac3.audio = "aac,ac3".into();
+        assert_eq!(AudioFeed::decide("truehd", 8, &no_eac3, sw), ac3, "no E-AC-3 row");
+        assert_eq!(AudioFeed::decide("flac", 2, &caps, sw), AudioFeed::SoftPcm { source: "flac".into(), channels: 2, dplii: false });
+        assert_eq!(AudioFeed::decide("dts", 6, &caps, sw), AudioFeed::TranscodeAc3 { source: "dts".into(), channels: 6 }, "DTS stays AC-3");
+        assert_eq!(AudioFeed::decide("eac3", 6, &caps, sw).payload(), Some(("AC3 PLUS", 2)), "a native E-AC-3 track is not re-encoded");
+    }
+
     /// **The optical-link fix.** A multichannel track the pipeline has no name for goes as AC-3
     /// 5.1 where the build can (its decoder and the `ac3` encoder) and the table admits AC-3 at
     /// that width; stereo stays PCM; the PCM rung, a missing decoder or encoder, an AC-3 row too
@@ -987,7 +1028,7 @@ mod tests {
         use crate::prefs::Multichannel;
         let mut caps_with_ac3 = Caps::assumed();
         caps_with_ac3.audio = "aac,ac3,eac3".into();
-        let sw = SoftwareAudio { ac3_encoder: true, pcm: true, decoders: u32::MAX, multichannel: Multichannel::Ac3 };
+        let sw = SoftwareAudio { ac3_encoder: true, eac3_encoder: true, pcm: true, decoders: u32::MAX, multichannel: Multichannel::Ac3 };
         let ac3 = |c: &str, ch| AudioFeed::TranscodeAc3 { source: c.into(), channels: ch };
         let pcm = |c: &str, ch| AudioFeed::SoftPcm { source: c.into(), channels: ch, dplii: false };
         assert_eq!(AudioFeed::decide("truehd", 6, &caps_with_ac3, sw), ac3("truehd", 6));
@@ -1018,7 +1059,7 @@ mod tests {
         use crate::prefs::Multichannel;
         let mut caps = Caps::assumed();
         caps.audio = "aac,ac3,eac3,dts".into();
-        let sw = SoftwareAudio { ac3_encoder: true, pcm: true, decoders: u32::MAX, multichannel: Multichannel::StereoDplii };
+        let sw = SoftwareAudio { ac3_encoder: true, eac3_encoder: true, pcm: true, decoders: u32::MAX, multichannel: Multichannel::StereoDplii };
         let dplii = |c: &str| AudioFeed::SoftPcm { source: c.into(), channels: 2, dplii: true };
         for codec in ["ac3", "eac3", "dts", "truehd", "flac", "pcm_bluray"] {
             assert_eq!(AudioFeed::decide(codec, 6, &caps, sw), dplii(codec), "{codec} 5.1");
@@ -1043,7 +1084,7 @@ mod tests {
         use crate::prefs::Multichannel;
         let mut caps = Caps::assumed();
         caps.audio = "aac,ac3,eac3,dts".into();
-        let sw = SoftwareAudio { ac3_encoder: true, pcm: true, decoders: u32::MAX, multichannel: Multichannel::Stereo };
+        let sw = SoftwareAudio { ac3_encoder: true, eac3_encoder: true, pcm: true, decoders: u32::MAX, multichannel: Multichannel::Stereo };
         let stereo = |c: &str| AudioFeed::SoftPcm { source: c.into(), channels: 2, dplii: false };
         for codec in ["ac3", "eac3", "dts", "truehd", "flac", "pcm_bluray"] {
             assert_eq!(AudioFeed::decide(codec, 6, &caps, sw), stereo(codec), "{codec} 5.1");

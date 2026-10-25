@@ -282,14 +282,20 @@ pub fn set_dv_profile7(v: DvProfile7) {
 /// Playback > Multichannel audio). The serde names are a file-format contract.
 #[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MultichannelAudio {
-    /// AC-3 5.1 unless the television's sound route carries multichannel PCM losslessly (eARC):
-    /// [`multichannel_out`] over the route [`refresh_sound_route`] read.
+    /// AC-3 5.1 over every route, eARC included: webOS 6 (the owner-reported C1, Pass Through and
+    /// eARC on) mixes app PCM down to stereo inside the TV, while a Dolby bitstream reaches the
+    /// soundbar intact — Kodi's webOS port never sends PCM for the same reason. PCM stays a rung.
     #[default]
     #[serde(rename = "auto")]
     Auto,
     /// Always AC-3 5.1 (`stream::AudioFeed::TranscodeAc3`): what optical and plain ARC carry.
     #[serde(rename = "dolby_digital")]
     DolbyDigital,
+    /// Always E-AC-3 5.1 at 768 kb/s (`stream::AudioFeed::TranscodeEac3`, declared `"AC3 PLUS"`),
+    /// for HDMI ARC / eARC; AC-3 where the build or the table has no E-AC-3. Over optical the TV
+    /// converts it back to AC-3.
+    #[serde(rename = "dolby_digital_plus")]
+    DolbyDigitalPlus,
     /// Always 6-channel PCM (`stream::AudioFeed::SoftPcm`), the behaviour before this setting.
     #[serde(rename = "pcm")]
     Pcm,
@@ -307,9 +313,10 @@ pub enum MultichannelAudio {
 }
 
 impl MultichannelAudio {
-    pub const LADDER: [MultichannelAudio; 5] = [
+    pub const LADDER: [MultichannelAudio; 6] = [
         MultichannelAudio::Auto,
         MultichannelAudio::DolbyDigital,
+        MultichannelAudio::DolbyDigitalPlus,
         MultichannelAudio::Pcm,
         MultichannelAudio::Stereo,
         MultichannelAudio::StereoDplii,
@@ -335,6 +342,8 @@ pub enum Multichannel {
     /// Re-encoded as AC-3 5.1 (where the build and the codec table allow; else 6-channel PCM).
     #[default]
     Ac3,
+    /// Re-encoded as E-AC-3 5.1 (where the build and the codec table allow; else AC-3).
+    Eac3,
     /// 6-channel PCM.
     Pcm,
     /// Plain stereo PCM (Lo/Ro downmix) — every >2-channel track, native codecs included.
@@ -363,54 +372,36 @@ pub fn parse_sound_route(reply: &str) -> Option<SoundRoute> {
     Some(SoundRoute { output, earc })
 }
 
-/// PURE: **the multichannel decision** from the preference and the route (`None`: not read, or
-/// no answer). `Auto` sends PCM only over a route that carries multichannel PCM losslessly — eARC
-/// on and the HDMI ARC output — and AC-3 everywhere else (optical, ARC without eARC, Bluetooth,
-/// the TV's speakers, an unknown route), since AC-3 is the path proven on the television.
+/// PURE: **the multichannel decision** from the preference. `Auto` is AC-3 on every route: the
+/// path proven on the television, what optical and plain ARC carry, and over eARC the one that
+/// stays 5.1 (app PCM is mixed to stereo there on webOS 6).
 ///
-/// ponytail: Auto trades eARC-less routes' lossless PCM for the AC-3 optical/ARC can carry; the
-/// PCM rung is the way back for anyone who wants PCM regardless.
-pub fn multichannel_out(pref: MultichannelAudio, route: Option<&SoundRoute>) -> Multichannel {
+/// ponytail: Auto does not try E-AC-3 on eARC — it is 5.1 either way (FFmpeg's encoder has no
+/// 7.1), so the gain is 128 kb/s; Dolby Digital Plus is its own rung.
+pub fn multichannel_out(pref: MultichannelAudio) -> Multichannel {
     match pref {
-        MultichannelAudio::DolbyDigital => Multichannel::Ac3,
+        MultichannelAudio::Auto | MultichannelAudio::DolbyDigital => Multichannel::Ac3,
+        MultichannelAudio::DolbyDigitalPlus => Multichannel::Eac3,
         MultichannelAudio::Pcm => Multichannel::Pcm,
         MultichannelAudio::Stereo => Multichannel::Stereo,
         MultichannelAudio::StereoDplii => Multichannel::StereoDplii,
-        MultichannelAudio::Auto => match route {
-            Some(r) if r.earc && r.output == "external_arc" => Multichannel::Pcm,
-            _ => Multichannel::Ac3,
-        },
     }
 }
 
-/// The route [`refresh_sound_route`] last read carries multichannel PCM (seeded no: AC-3).
-static ROUTE_CARRIES_PCM: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// The decision for the start being made: the preference, and for `Auto` the route last read.
+/// The decision for the start being made.
 pub fn multichannel() -> Multichannel {
-    match multichannel_audio() {
-        MultichannelAudio::Auto if ROUTE_CARRIES_PCM.load(Relaxed) => Multichannel::Pcm,
-        pref => multichannel_out(pref, None),
-    }
+    multichannel_out(multichannel_audio())
 }
 
-/// Read the television's sound route (an LS2 round trip: off the frame thread — the probe worker
-/// calls it before each probe) and keep its answer for [`multichannel`]. Only for `Auto`; one log
-/// line with the route and the choice.
-///
-/// ponytail: read once per probed start, no subscription — a route changed mid-playback applies
-/// from the next start; subscribe to the settings service if that ever matters.
+/// Log the television's sound route (an LS2 round trip: off the frame thread — the probe worker
+/// calls it before each probe) beside the multichannel choice: no decision reads it any more, but
+/// a report of "stereo on my soundbar" needs the route next to what was sent.
 pub fn refresh_sound_route() {
-    if multichannel_audio() != MultichannelAudio::Auto {
-        return;
-    }
     let route = sn_platform::tv::sound_settings().as_deref().and_then(parse_sound_route);
-    let out = multichannel_out(MultichannelAudio::Auto, route.as_ref());
-    ROUTE_CARRIES_PCM.store(out == Multichannel::Pcm, Relaxed);
     sn_base::eventlog::log(&format!(
-        "audio route: {} -> multichannel {}",
+        "audio route: {} -> multichannel {:?}",
         route.as_ref().map_or("unknown".to_string(), |r| format!("output={} earc={}", r.output, r.earc)),
-        if out == Multichannel::Pcm { "PCM" } else { "AC-3" }
+        multichannel()
     ));
 }
 
@@ -518,29 +509,25 @@ mod tests {
         assert_eq!(MultichannelAudio::from_u8(<MultichannelAudio as Packed>::SEED), MultichannelAudio::Auto);
     }
 
-    /// Every rung against an eARC, an optical and an unknown route: only Auto reads the route,
-    /// and only eARC on the HDMI ARC output carries PCM; Pro Logic II is never Auto's.
+    /// Every rung's decision. Automatic is AC-3 whatever the route — issue #3: it picked PCM on
+    /// eARC, and the C1 (webOS 6) played that as 2.0. Pro Logic II and PCM are never Auto's.
     #[test]
-    fn the_multichannel_choice_follows_the_rung_and_for_auto_the_route() {
+    fn the_multichannel_choice_follows_the_rung_and_automatic_is_ac3_even_on_earc() {
         use MultichannelAudio::*;
-        let earc = parse_sound_route(r#"{"returnValue":true,"settings":{"soundOutput":"external_arc","eArcSupport":"on","soundOutputDigital":"pcm"}}"#).unwrap();
+        let cases = [
+            (Auto, Multichannel::Ac3),
+            (DolbyDigital, Multichannel::Ac3),
+            (DolbyDigitalPlus, Multichannel::Eac3),
+            (Pcm, Multichannel::Pcm),
+            (Stereo, Multichannel::Stereo),
+            (StereoDplii, Multichannel::StereoDplii),
+        ];
+        assert_eq!(cases.len(), MultichannelAudio::LADDER.len());
+        for (pref, want) in cases {
+            assert_eq!(multichannel_out(pref), want, "{pref:?}");
+        }
         let optical = parse_sound_route(r#"{"returnValue":false,"settings":{"soundOutput":"external_optical","eArcSupport":"off","soundOutputDigital":"pcm"}}"#).unwrap();
         assert_eq!(optical, SoundRoute { output: "external_optical".into(), earc: false }, "returnValue false still carries the known keys");
-        let arc_no_earc = SoundRoute { output: "external_arc".into(), earc: false };
-        let speakers_earc_on = SoundRoute { output: "tv_speaker".into(), earc: true };
-        let cases: [(MultichannelAudio, [Multichannel; 3]); 5] = [
-            (Auto, [Multichannel::Pcm, Multichannel::Ac3, Multichannel::Ac3]),
-            (DolbyDigital, [Multichannel::Ac3; 3]),
-            (Pcm, [Multichannel::Pcm; 3]),
-            (Stereo, [Multichannel::Stereo; 3]),
-            (StereoDplii, [Multichannel::StereoDplii; 3]),
-        ];
-        for (pref, want) in cases {
-            let got = [Some(&earc), Some(&optical), None].map(|r| multichannel_out(pref, r));
-            assert_eq!(got, want, "{pref:?} over eARC / optical / unknown");
-        }
-        assert_eq!(multichannel_out(Auto, Some(&arc_no_earc)), Multichannel::Ac3, "ARC without eARC");
-        assert_eq!(multichannel_out(Auto, Some(&speakers_earc_on)), Multichannel::Ac3, "eARC enabled but not the output");
         assert_eq!(parse_sound_route(r#"{"returnValue":false,"errorText":"x"}"#), None);
         assert_eq!(parse_sound_route("not json"), None);
     }

@@ -79,7 +79,7 @@ fn the_bundled_build_carries_the_dts_to_ac3_path() {
     let _g = sn_base::testlock::serial();
     let _b = Bound::new();
     assert!(transcode::available());
-    assert_eq!(crate::stream::SoftwareAudio::detected(), crate::stream::SoftwareAudio { ac3_encoder: true, decoders: transcode::decoders(), ..crate::stream::SoftwareAudio::NONE });
+    assert_eq!(crate::stream::SoftwareAudio::detected(), crate::stream::SoftwareAudio { ac3_encoder: true, eac3_encoder: true, decoders: transcode::decoders(), ..crate::stream::SoftwareAudio::NONE });
 }
 
 /// **The transcoder's contract.** Ten DTS core frames (5120 samples of 5.1) in, AC-3 out: every
@@ -90,7 +90,7 @@ fn the_bundled_build_carries_the_dts_to_ac3_path() {
 fn a_dts_core_track_becomes_640k_5_1_ac3_with_monotonic_pts() {
     let _g = sn_base::testlock::serial();
     let _b = Bound::new();
-    let mut t = unsafe { ToAc3::open(std::ptr::null(), "dts") }.expect("open the transcoder");
+    let mut t = unsafe { ToAc3::open(std::ptr::null(), "dts", transcode::Target::Ac3) }.expect("open the transcoder");
     let start_ns = 10_000_000_000i64;
     let mut out = Vec::new();
     for i in 0..10 {
@@ -111,6 +111,31 @@ fn a_dts_core_track_becomes_640k_5_1_ac3_with_monotonic_pts() {
     assert_eq!(AC3_FRAME_SAMPLES as i64 * 1_000_000_000 / 48_000, AC3_FRAME_NS);
 }
 
+/// **The Dolby Digital Plus target** (issue #3): the same DTS core in, E-AC-3 out — sync-worded,
+/// bsid 16 (E-AC-3, not AC-3's 8), one 768 kb/s frame (3072 bytes) per 1536 samples, 32 ms apart.
+#[test]
+#[ignore = "requires the bundled host FFmpeg; run make check-ffmpeg"]
+fn the_eac3_target_writes_768k_eac3_frames() {
+    let _g = sn_base::testlock::serial();
+    let _b = Bound::new();
+    assert!(transcode::eac3_available(), "the bundled build carries the eac3 encoder");
+    let mut t = unsafe { ToAc3::open(std::ptr::null(), "dts", transcode::Target::Eac3) }.expect("open the transcoder");
+    let mut out = Vec::new();
+    for i in 0..10 {
+        out.extend(t.push(DTS_FRAME, i * DTS_FRAME_SAMPLES * 1_000_000_000 / 48_000).expect("push"));
+    }
+    out.extend(t.finish().expect("finish"));
+    assert_eq!(out.len(), 4);
+    for (i, f) in out.iter().enumerate() {
+        assert_eq!(&f.data[..2], &[0x0b, 0x77], "frame {i}: sync word");
+        assert_eq!(f.data[5] >> 3, 16, "frame {i}: bsid 16 = E-AC-3");
+        assert_eq!(f.data.len(), 3072, "frame {i}: one 768 kb/s frame at 48 kHz");
+    }
+    for w in out.windows(2) {
+        assert!((w[1].pts_ns - w[0].pts_ns - AC3_FRAME_NS).abs() <= 1, "one frame apart");
+    }
+}
+
 /// A seek (`reset`) or a jump in the container's timeline starts the clock over at the new pts,
 /// and the AC-3 pts follow it.
 #[test]
@@ -118,7 +143,7 @@ fn a_dts_core_track_becomes_640k_5_1_ac3_with_monotonic_pts() {
 fn a_seek_or_a_timeline_jump_reanchors_the_ac3_pts() {
     let _g = sn_base::testlock::serial();
     let _b = Bound::new();
-    let mut t = unsafe { ToAc3::open(std::ptr::null(), "dts") }.expect("open the transcoder");
+    let mut t = unsafe { ToAc3::open(std::ptr::null(), "dts", transcode::Target::Ac3) }.expect("open the transcoder");
     let frame_ns = DTS_FRAME_SAMPLES * 1_000_000_000 / 48_000;
     let mut first = Vec::new();
     for i in 0..6 {
@@ -148,7 +173,7 @@ fn a_seek_or_a_timeline_jump_reanchors_the_ac3_pts() {
 fn undecodable_packets_are_skipped_then_refused() {
     let _g = sn_base::testlock::serial();
     let _b = Bound::new();
-    let mut t = unsafe { ToAc3::open(std::ptr::null(), "dts") }.expect("open the transcoder");
+    let mut t = unsafe { ToAc3::open(std::ptr::null(), "dts", transcode::Target::Ac3) }.expect("open the transcoder");
     let junk = [0x5au8; 400];
     assert_eq!(t.push(&junk, 0), Ok(vec![]), "one bad packet is skipped");
     assert!(t.push(DTS_FRAME, 0).is_ok(), "and good ones decode after it");
@@ -255,7 +280,7 @@ fn demux_feeds_a_dts_track_as_ac3_when_the_session_says_transcode() {
     SHARED.demux_failed.store(false, Ordering::Relaxed);
     SHARED.demux_io_failed.store(false, Ordering::Relaxed);
     FEED_AUDIO.store(true, Ordering::Relaxed);
-    set_transcode_ac3(true);
+    set_transcode(Some(crate::ff::transcode::Target::Ac3));
 
     let (video_cap, audio_cap) = crate::player::engine::aq_caps();
     let mut video = crate::aq::aq_new(video_cap as c_long);
@@ -291,7 +316,7 @@ fn demux_feeds_a_dts_track_as_ac3_when_the_session_says_transcode() {
     th.join().unwrap();
     pop_all(&mut audio, &mut aus);
     pop_all(&mut video, &mut vids);
-    set_transcode_ac3(false);
+    set_transcode(None);
 
     assert!(!SHARED.demux_failed.load(Ordering::Acquire), "the transcoded demux must not fail");
     assert!(vids.len() >= 45, "the video lane carries the video ({} AUs)", vids.len());
@@ -340,5 +365,5 @@ fn begin_playback_probes_an_undeclared_start_and_loads_its_dts_as_ac3() {
     assert_eq!(SHARED.dg_load_a.load(Ordering::Relaxed), 5, "the Load declared AC3 (transcoded)");
     assert_eq!(ps.probed().map(|p| p.audio.len()), Some(1));
     crate::player::stop_bufferfeed(&mut ps, &mut pa);
-    set_transcode_ac3(false);
+    set_transcode(None);
 }

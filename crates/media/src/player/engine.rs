@@ -1447,8 +1447,12 @@ fn start_bufferfeed_inner(ps: &mut crate::session::PlaybackSession, pa: &mut sup
     let audio_payload = ps.audio().payload();
     let no_audio = sn_base::devtrig::flag("noaudio") || audio_payload.is_none();
     crate::ff::set_feed_audio(!no_audio);
-    // A track decoded on the CPU and re-encoded as the AC-3 this Load declares.
-    crate::ff::set_transcode_ac3(matches!(ps.audio(), crate::stream::AudioFeed::TranscodeAc3 { .. }));
+    // A track decoded on the CPU and re-encoded as the AC-3 / E-AC-3 this Load declares.
+    crate::ff::set_transcode(match ps.audio() {
+        crate::stream::AudioFeed::TranscodeAc3 { .. } => Some(crate::ff::transcode::Target::Ac3),
+        crate::stream::AudioFeed::TranscodeEac3 { .. } => Some(crate::ff::transcode::Target::Eac3),
+        _ => None,
+    });
     // A track decoded on the CPU, fed as the PCM this Load declares (a Pro Logic II matrix flagged).
     crate::ff::set_soft_pcm(match ps.audio() {
         crate::stream::AudioFeed::SoftPcm { channels, dplii, .. } => *channels | if *dplii { crate::ff::adec::DPLII } else { 0 },

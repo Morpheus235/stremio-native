@@ -43,13 +43,14 @@ static SWS_OK: AtomicBool = AtomicBool::new(false);
 pub fn set_feed_audio(on: bool) {
     FEED_AUDIO.store(on, Ordering::Relaxed);
 }
-/// Decode the fed track on the CPU and re-encode it as AC-3 (`transcode::ToAc3`) — for DTS
-/// instead of extracting its core. Set by `engine::start_bufferfeed` from the session's frozen
-/// `AudioFeed::TranscodeAc3` before it spawns the demuxer, which reads it once, at open — the
-/// same contract as [`FEED_AUDIO`].
-static TRANSCODE_AC3: AtomicBool = AtomicBool::new(false);
-pub fn set_transcode_ac3(on: bool) {
-    TRANSCODE_AC3.store(on, Ordering::Relaxed);
+/// Decode the fed track on the CPU and re-encode it as AC-3 or E-AC-3 (`transcode::ToAc3`) — for
+/// DTS instead of extracting its core. Set by `engine::start_bufferfeed` from the session's frozen
+/// `AudioFeed::TranscodeAc3` / `TranscodeEac3` before it spawns the demuxer, which reads it once,
+/// at open — the same contract as [`FEED_AUDIO`]. 0 off, 1 AC-3, 2 E-AC-3.
+static TRANSCODE_AC3: AtomicU32 = AtomicU32::new(0);
+pub fn set_transcode(target: Option<transcode::Target>) {
+    let v = match target { None => 0, Some(transcode::Target::Ac3) => 1, Some(transcode::Target::Eac3) => 2 };
+    TRANSCODE_AC3.store(v, Ordering::Relaxed);
 }
 /// Decode the fed track on the CPU and feed PCM of this many channels (`adec::PcmFeed`), with
 /// [`adec::DPLII`] or-ed in for a Pro Logic II matrixed stereo pair; 0 = off.
@@ -702,6 +703,7 @@ pub const AV_CODEC_ID_AAC: c_int = 0x15002;
 /// The AC-3 encoder's codec id, which `avcodec_parameters_to_context` writes and `avcodec_open2`
 /// checks against the codec it opens. Asserted in ci/ffabi-assert.c.
 pub const AV_CODEC_ID_AC3: c_int = 0x15003;
+pub const AV_CODEC_ID_EAC3: c_int = 0x15028;
 /// `AV_DISPOSITION_DEFAULT` — the muxer's default track. Asserted in ci/ffabi-assert.c.
 pub const AV_DISPOSITION_DEFAULT: c_int = 1;
 /// `AV_DISPOSITION_FORCED` — a forced (signs, foreign dialogue) track. Asserted in ci/ffabi-assert.c.
@@ -4171,16 +4173,22 @@ pub fn demux(
                 let dts_audio = ai >= 0 && std::ffi::CStr::from_ptr(avcodec_get_name(
                     (*stream_codecpar(*streams.add(ai as usize))).codec_id
                 )).to_bytes() == b"dts";
-                // The session decided this track plays as AC-3 made on the CPU (`AudioFeed::
-                // TranscodeAc3`): open the transcoder now, before any packet is read, so a build or
-                // a stream it cannot serve fails the open with a reason rather than a silent lane.
-                let mut transcoder = if ai >= 0 && TRANSCODE_AC3.load(Ordering::Relaxed) && FEED_AUDIO.load(Ordering::Relaxed) {
+                // The session decided this track plays as AC-3 / E-AC-3 made on the CPU (`AudioFeed::
+                // TranscodeAc3` / `TranscodeEac3`): open the transcoder now, before any packet is
+                // read, so a build or a stream it cannot serve fails the open with a reason rather
+                // than a silent lane.
+                let target = match TRANSCODE_AC3.load(Ordering::Relaxed) {
+                    1 => Some(transcode::Target::Ac3),
+                    2 => Some(transcode::Target::Eac3),
+                    _ => None,
+                };
+                let mut transcoder = if let (true, Some(target)) = (ai >= 0 && FEED_AUDIO.load(Ordering::Relaxed), target) {
                     let acp = stream_codecpar(*streams.add(ai as usize));
                     let source = std::ffi::CStr::from_ptr(avcodec_get_name((*acp).codec_id)).to_string_lossy();
-                    match transcode::ToAc3::open(acp, &source) {
+                    match transcode::ToAc3::open(acp, &source, target) {
                         Ok(t) => Some(t),
                         Err(e) => {
-                            crate::player::log(&format!("ff: {source} -> AC-3 transcoder unavailable ({e:?}); refusing the stream"));
+                            crate::player::log(&format!("ff: {source} -> {} transcoder unavailable ({e:?}); refusing the stream", target.name()));
                             SHARED.demux_failed.store(true, Ordering::Release);
                             avformat_close_input(&mut fmt);
                             free_avio(avio);

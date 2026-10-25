@@ -417,10 +417,10 @@ mod tests {
     /// same choice although Stereo now sits where Pro Logic II was; an unknown name is the defaults.
     #[test]
     fn the_multichannel_choice_reads_back_by_name_across_ladder_changes() {
-        use sn_screens::stores::settings::{MULTI_AUTO, MULTI_DOLBY_DIGITAL, MULTI_DPLII, MULTI_PCM, MULTI_STEREO};
+        use sn_screens::stores::settings::{MULTI_AUTO, MULTI_DOLBY_DIGITAL, MULTI_DOLBY_DIGITAL_PLUS, MULTI_DPLII, MULTI_PCM, MULTI_STEREO};
         let dir = sn_base::testscratch::process_dir("settings-multichannel");
         let path = dir.join("settings.json");
-        for (name, rung) in [("auto", MULTI_AUTO), ("dolby_digital", MULTI_DOLBY_DIGITAL), ("pcm", MULTI_PCM), ("stereo_dplii", MULTI_DPLII), ("stereo", MULTI_STEREO)] {
+        for (name, rung) in [("auto", MULTI_AUTO), ("dolby_digital", MULTI_DOLBY_DIGITAL), ("dolby_digital_plus", MULTI_DOLBY_DIGITAL_PLUS), ("pcm", MULTI_PCM), ("stereo_dplii", MULTI_DPLII), ("stereo", MULTI_STEREO)] {
             std::fs::write(&path, format!(r#"{{"multichannel_audio":"{name}"}}"#)).unwrap();
             assert_eq!(load(&path).settings.get(Pref::MultichannelAudio), rung, "{name}");
         }

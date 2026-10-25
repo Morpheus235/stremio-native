@@ -36,10 +36,12 @@
   - CH +/- jumps between chapters.
 - **Audio the TV can't decode.**
   - Software decode feeds S16LE 48 kHz PCM: TrueHD, DTS, FLAC, LPCM, Opus, Vorbis, MP2, WMA, ALAC.
-  - Multichannel goes out as AC-3 640 kb/s 5.1 by default, which is what optical and plain ARC
-    carry.
-  - Settings → Multichannel audio can choose PCM instead (Automatic picks it on HDMI eARC),
-    plain stereo, or Pro Logic II.
+  - Multichannel goes out as AC-3 640 kb/s 5.1 by default on every output, eARC included: on the
+    C1 (webOS 6) app PCM is mixed down to stereo inside the TV even with eARC and Pass Through
+    (issue #3), while a Dolby bitstream reaches the soundbar as 5.1.
+  - Settings → Multichannel audio can choose Dolby Digital Plus (E-AC-3 768 kb/s 5.1, for HDMI
+    ARC/eARC), multichannel PCM (not confirmed as 5.1 on any model yet), plain stereo, or Pro
+    Logic II.
   - Verified on the C1 over optical with all 5.1 channels in place: AC-3, E-AC-3, AAC, TrueHD,
     DTS, FLAC, PCM.
   - webOS 5/6 refuse a DTS Load, so DTS always goes through software.

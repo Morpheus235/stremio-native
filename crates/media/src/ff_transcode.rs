@@ -1,5 +1,6 @@
 //! **Decode -> AC-3 on the television's CPU** — the software audio path behind
-//! [`crate::stream::AudioFeed::TranscodeAc3`].
+//! [`crate::stream::AudioFeed::TranscodeAc3`] and, with the `eac3` encoder ([`Target::Eac3`],
+//! 768 kb/s, the same frame and delay), [`crate::stream::AudioFeed::TranscodeEac3`].
 //!
 //! A DTS track the television's codec table will not take (no DTS row, or more channels than its
 //! DTS ceiling), and a multichannel track in a codec the pipeline has no name for (TrueHD/MLP,
@@ -15,8 +16,8 @@
 //! audio lane in place of the source packets while the Load declares `"AC3"`.
 //!
 //! ponytail: this trades the lossless multichannel PCM an eARC link could carry for the AC-3 an
-//! optical or ARC link can; `prefs::MultichannelAudio` (Auto reads the route, PCM forces it) is
-//! the way back for an eARC setup.
+//! optical or ARC link can — and on webOS 6 app PCM is mixed to stereo even over eARC (issue #3),
+//! so AC-3 is Auto's on every route; `prefs::MultichannelAudio`'s PCM rung forces PCM.
 //!
 //! # Timestamps
 //!
@@ -48,6 +49,32 @@ use super::*;
 
 /// The AC-3 bit rate: the format's maximum, so a 5.1 source loses as little as AC-3 allows.
 pub const AC3_BITRATE: i64 = 640_000;
+/// The E-AC-3 bit rate, Kodi's webOS choice. FFmpeg's `eac3` encoder is the AC-3 core (same
+/// 1536-sample frame, same 256-sample delay, 5.1 at most), so everything below serves both.
+pub const EAC3_BITRATE: i64 = 768_000;
+
+/// What the transcoder encodes to: AC-3 (`"AC3"`, what optical and plain ARC carry), or E-AC-3
+/// (`"AC3 PLUS"`, for HDMI ARC / eARC; Settings → Multichannel audio → Dolby Digital Plus).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Target {
+    Ac3,
+    Eac3,
+}
+
+impl Target {
+    fn encoder(self) -> &'static std::ffi::CStr {
+        match self { Target::Ac3 => c"ac3", Target::Eac3 => c"eac3" }
+    }
+    fn codec_id(self) -> c_int {
+        match self { Target::Ac3 => AV_CODEC_ID_AC3, Target::Eac3 => AV_CODEC_ID_EAC3 }
+    }
+    pub fn bitrate(self) -> i64 {
+        match self { Target::Ac3 => AC3_BITRATE, Target::Eac3 => EAC3_BITRATE }
+    }
+    pub fn name(self) -> &'static str {
+        match self { Target::Ac3 => "AC-3", Target::Eac3 => "E-AC-3" }
+    }
+}
 /// Samples per AC-3 frame (six 256-sample blocks), what the encoder requires of every input frame.
 pub const AC3_FRAME_SAMPLES: usize = 1536;
 /// The sample rates AC-3 can carry. The decoder's output rate is checked against them before the
@@ -374,6 +401,7 @@ pub enum TranscodeError {
 }
 
 static AVAILABLE: AtomicBool = AtomicBool::new(false);
+static EAC3_AVAILABLE: AtomicBool = AtomicBool::new(false);
 static DECODERS: AtomicU32 = AtomicU32::new(0);
 
 /// Does this build carry the `ac3` encoder? Latched by `ff::boot` from the libraries actually
@@ -381,6 +409,11 @@ static DECODERS: AtomicU32 = AtomicU32::new(0);
 /// refusal. `false` before boot.
 pub fn available() -> bool {
     AVAILABLE.load(Ordering::Acquire)
+}
+
+/// The bundled libavcodec also carries the `eac3` encoder (the E-AC-3 target). `false` before boot.
+pub fn eac3_available() -> bool {
+    EAC3_AVAILABLE.load(Ordering::Acquire)
 }
 
 /// Which of [`crate::stream::DECODERS`] the loaded libavcodec carries, one bit each (0 before
@@ -403,12 +436,14 @@ pub(super) fn detect() -> bool {
             names.push(*codec);
         }
     }
+    let eac3 = enc && unsafe { !avcodec_find_encoder_by_name(c"eac3".as_ptr()).is_null() };
     AVAILABLE.store(enc, Ordering::Release);
+    EAC3_AVAILABLE.store(eac3, Ordering::Release);
     DECODERS.store(mask, Ordering::Release);
     let ok = enc && mask != 0;
     crate::player::log(&format!(
         "ff: decode -> AC-3 software path {}",
-        if ok { format!("available (ac3 encoder; from {})", names.join(" ")) } else { "UNAVAILABLE — DTS past the TV's ceiling is refused, other multichannel sources go as PCM".into() }
+        if ok { format!("available (ac3{} encoder; from {})", if eac3 { " + eac3" } else { "" }, names.join(" ")) } else { "UNAVAILABLE — DTS past the TV's ceiling is refused, other multichannel sources go as PCM".into() }
     ));
     ok
 }
@@ -472,6 +507,8 @@ pub struct ToAc3 {
     formats: [c_int; SAMPLE_FORMATS.len()],
     /// The source codec's name, for the log.
     source: &'static str,
+    /// AC-3 or E-AC-3.
+    target: Target,
     bad_run: u32,
     bad_total: u64,
     frames_out: u64,
@@ -500,12 +537,13 @@ impl Drop for ToAc3 {
 impl ToAc3 {
     /// Open the decoder for `source` (FFmpeg's codec name, one of [`crate::stream::DECODERS`]),
     /// from the demuxed stream's parameters when there is a stream (`codecpar`), else bare (raw
-    /// DTS frames, as the host tests feed). The encoder opens at the first decoded frame.
+    /// DTS frames, as the host tests feed), encoding to `target`. The encoder opens at the first
+    /// decoded frame.
     ///
     /// # Safety
     /// `codecpar` is null or a live `AVCodecParameters` of a `source` stream.
-    pub unsafe fn open(codecpar: *const AVCodecParameters, source: &str) -> Result<ToAc3, TranscodeError> {
-        if !available() {
+    pub unsafe fn open(codecpar: *const AVCodecParameters, source: &str, target: Target) -> Result<ToAc3, TranscodeError> {
+        if !available() || (target == Target::Eac3 && !eac3_available()) {
             return Err(TranscodeError::Unavailable);
         }
         let Some(&(source, dec_name)) = crate::stream::DECODERS.iter().find(|(c, _)| c.eq_ignore_ascii_case(source)) else {
@@ -533,6 +571,7 @@ impl ToAc3 {
             fltp,
             formats,
             source,
+            target,
             bad_run: 0,
             bad_total: 0,
             frames_out: 0,
@@ -701,10 +740,11 @@ impl ToAc3 {
     }
 
     unsafe fn open_encoder(&self, plan: ChannelPlan, rate: i32, input: Vec<i32>) -> Result<Encoder, TranscodeError> {
-        let codec = avcodec_find_encoder_by_name(c"ac3".as_ptr());
+        let codec = avcodec_find_encoder_by_name(self.target.encoder().as_ptr());
         if codec.is_null() {
             return Err(TranscodeError::Unavailable);
         }
+        let bitrate = self.target.bitrate();
         let e = Encoder {
             ctx: avcodec_alloc_context3(codec),
             frame: av_frame_alloc(),
@@ -729,9 +769,9 @@ impl ToAc3 {
             return Err(TranscodeError::Open("avcodec_parameters_alloc", -12));
         }
         (*par).codec_type = AVMEDIA_TYPE_AUDIO;
-        (*par).codec_id = AV_CODEC_ID_AC3;
+        (*par).codec_id = self.target.codec_id();
         (*par).format = self.fltp;
-        (*par).bit_rate = AC3_BITRATE;
+        (*par).bit_rate = bitrate;
         (*par).sample_rate = rate;
         let mut r = av_channel_layout_copy(&mut (*par).ch_layout, &layout);
         if r >= 0 {
@@ -767,11 +807,11 @@ impl ToAc3 {
             (*back).initial_padding,
         );
         avcodec_parameters_free(&mut back);
-        let want = (self.fltp, rate, e.plan.channels() as c_int, e.plan.mask, AC3_BITRATE, AC3_FRAME_SAMPLES as c_int);
+        let want = (self.fltp, rate, e.plan.channels() as c_int, e.plan.mask, bitrate, AC3_FRAME_SAMPLES as c_int);
         if r < 0 || (got.0, got.1, got.2, got.3, got.4, got.5) != want {
             return Err(TranscodeError::Abi(format!(
-                "ac3 encoder reads back (fmt {}, {} Hz, {} ch, mask {:#x}, {} b/s, frame {}) for {:?}",
-                got.0, got.1, got.2, got.3, got.4, got.5, want
+                "{} encoder reads back (fmt {}, {} Hz, {} ch, mask {:#x}, {} b/s, frame {}) for {:?}",
+                self.target.name(), got.0, got.1, got.2, got.3, got.4, got.5, want
             )));
         }
         // The input frame: its audio fields have no setter, so these are the asserted offsets.
@@ -789,12 +829,13 @@ impl ToAc3 {
         let mut desc = [0 as c_char; 64];
         av_channel_layout_describe(&layout, desc.as_mut_ptr(), desc.len());
         crate::player::log(&format!(
-            "ff: transcode: AC-3 encoder up: {} Hz, {} ({} ch, from {} decoded), {} kb/s, padding {}",
+            "ff: transcode: {} encoder up: {} Hz, {} ({} ch, from {} decoded), {} kb/s, padding {}",
+            self.target.name(),
             rate,
             std::ffi::CStr::from_ptr(desc.as_ptr()).to_string_lossy(),
             e.plan.channels(),
             e.input.len(),
-            AC3_BITRATE / 1000,
+            bitrate / 1000,
             got.6
         ));
         Ok(e)
@@ -866,8 +907,8 @@ impl ToAc3 {
         let mut out = Vec::new();
         unsafe { self.flush_into(&mut out)? };
         crate::player::log(&format!(
-            "ff: transcode: finished — {} AC-3 frames, {} {} packets skipped",
-            self.frames_out, self.bad_total, self.source
+            "ff: transcode: finished — {} {} frames, {} {} packets skipped",
+            self.frames_out, self.target.name(), self.bad_total, self.source
         ));
         Ok(out)
     }

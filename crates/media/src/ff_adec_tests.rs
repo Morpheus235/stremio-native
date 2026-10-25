@@ -77,7 +77,7 @@ fn demux_audio(file: &Path, channels: u32, ac3: bool, acodec: &str) -> Vec<(Vec<
     SHARED.demux_io_failed.store(false, Ordering::Relaxed);
     FEED_AUDIO.store(true, Ordering::Relaxed);
     set_soft_pcm(channels);
-    set_transcode_ac3(ac3);
+    set_transcode(ac3.then_some(crate::ff::transcode::Target::Ac3));
     let (video_cap, audio_cap) = crate::player::engine::aq_caps();
     let mut video = crate::aq::aq_new(video_cap as c_long);
     let mut audio = crate::aq::aq_new(audio_cap as c_long);
@@ -115,7 +115,7 @@ fn demux_audio(file: &Path, channels: u32, ac3: bool, acodec: &str) -> Vec<(Vec<
     pop_all(&mut audio, &mut aus);
     pop_all(&mut video, &mut vids);
     set_soft_pcm(0);
-    set_transcode_ac3(false);
+    set_transcode(None);
     assert!(!SHARED.demux_failed.load(Ordering::Acquire), "the software audio demux must not fail");
     assert!(vids.len() >= 45, "the video lane carries the video ({} AUs)", vids.len());
     aus

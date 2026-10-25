@@ -47,7 +47,7 @@ pub enum Pref {
     Language = 14,
     /// What a track of more than two channels the app decodes itself becomes
     /// (`sn_media::prefs::MultichannelAudio`): [`MULTI_AUTO`] (the default), [`MULTI_DOLBY_DIGITAL`],
-    /// [`MULTI_PCM`], [`MULTI_STEREO`], [`MULTI_DPLII`].
+    /// [`MULTI_DOLBY_DIGITAL_PLUS`], [`MULTI_PCM`], [`MULTI_STEREO`], [`MULTI_DPLII`].
     MultichannelAudio = 15,
     /// The programme guide Live TV shows now / next from: Off (rung 0) or a region's public XMLTV
     /// guide, rungs 1… in [`TV_GUIDES`] order.
@@ -82,9 +82,10 @@ pub fn tv_guide_rung(name: &str) -> u8 {
 /// [`Pref::MultichannelAudio`]'s rungs (`sn_media::prefs::MultichannelAudio::LADDER` order).
 pub const MULTI_AUTO: u8 = 0;
 pub const MULTI_DOLBY_DIGITAL: u8 = 1;
-pub const MULTI_PCM: u8 = 2;
-pub const MULTI_STEREO: u8 = 3;
-pub const MULTI_DPLII: u8 = 4;
+pub const MULTI_DOLBY_DIGITAL_PLUS: u8 = 2;
+pub const MULTI_PCM: u8 = 3;
+pub const MULTI_STEREO: u8 = 4;
+pub const MULTI_DPLII: u8 = 5;
 
 /// [`Pref::UpNextAt`]'s rung 0, and the lead it falls back to without a credits marker
 /// (stremio-core's default `nextVideoNotificationDuration`, 35 s).
@@ -251,7 +252,7 @@ impl Pref {
             Pref::AutoPlay => 2,
             Pref::UpNextAt => 1 + UP_NEXT_LEADS_S.len() as u8,
             Pref::Language => sn_platform::i18n::Preference::ALL.len() as u8,
-            Pref::MultichannelAudio => 5,
+            Pref::MultichannelAudio => 6,
             Pref::TvGuide => 1 + TV_GUIDES.len() as u8,
         }
     }
@@ -329,6 +330,7 @@ impl Pref {
             (Pref::UpNextAt, _) => msg::app_settings_up_next_45(),
             (Pref::MultichannelAudio, MULTI_AUTO) => msg::app_settings_multichannel_auto(),
             (Pref::MultichannelAudio, MULTI_DOLBY_DIGITAL) => msg::app_settings_multichannel_dolby_digital(),
+            (Pref::MultichannelAudio, MULTI_DOLBY_DIGITAL_PLUS) => msg::app_settings_multichannel_dolby_digital_plus(),
             (Pref::MultichannelAudio, MULTI_PCM) => msg::app_settings_multichannel_pcm(),
             (Pref::MultichannelAudio, MULTI_STEREO) => msg::app_settings_multichannel_stereo(),
             (Pref::MultichannelAudio, _) => msg::app_settings_multichannel_dplii(),

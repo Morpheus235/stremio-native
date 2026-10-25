@@ -1274,6 +1274,7 @@ impl Diag {
             6 => "PCM (software decode)",
             7 => "MP3",
             8 => "AC4",
+            9 => "AC3 PLUS (software transcode)",
             _ => "NONE (needAudio:false)",
         }
     }

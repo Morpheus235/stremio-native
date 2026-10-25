@@ -61,8 +61,8 @@ The packages (ipk + sha256) are on the [download page](https://morpheus235.githu
   optional TV guide (now / next from a public XMLTV guide)
 - Hardware playback with probing before load; HLS; Dolby Vision Profile 7 played as 8.1
 - Audio the TV can't decode (TrueHD, DTS, FLAC, PCM…) converted in software. Under
-  **Settings → Multichannel audio**, 5.1 is sent as Dolby Digital (optical/ARC), as PCM (eARC),
-  as stereo or as Pro Logic II.
+  **Settings → Multichannel audio**, 5.1 is sent as Dolby Digital (the default, on every output),
+  Dolby Digital Plus, PCM, stereo or Pro Logic II.
 - Text subtitles through libass (SRT, WebVTT, ASS/SSA, embedded fonts), plus addon subtitles
 - Skip intro/recap/credits, CH +/- to jump between chapters, Up Next
 - English, Deutsch, Español, Français, Italiano, Беларуская
