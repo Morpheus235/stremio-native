@@ -4,11 +4,11 @@
 #
 # The tag must equal pkg/appinfo.json's "version" (with a leading v). A tag with a suffix
 # (v0.2.0-beta.1) publishes a PRERELEASE built as the separate "StremioNative Beta" app
-# (FLAVOR=beta: its own app id, version X.Y.YYYYMMDD), listed beside stable in the Homebrew Channel repository.
+# (FLAVOR=beta: its own app id, version X.Y.YYYYMMDD).
 # webOS versions are numeric, so the date is what orders betas: one beta per day.
 #
-# Releases created with the workflow token do not fire `release` events for other workflows, so
-# this calls the Homebrew Channel repository workflow itself.
+# The Homebrew Channel repository (hbrepo.yml) is on hold: a release no longer publishes it; run
+# that workflow by hand on main when it should list the newest releases.
 name: Release
 
 on:
@@ -117,11 +117,3 @@ jobs:
             dist/*.ipk
             dist/*.ipk.sha256
           fail_on_unmatched_files: true
-
-  homebrew-channel:
-    needs: publish
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    uses: ./.github/workflows/hbrepo.yml

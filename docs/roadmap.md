@@ -59,7 +59,7 @@
 
 `ci/hbrepo.py` turns a built ipk into a Homebrew Channel repository: `repo.json`, the package
 manifest with sha256 and size, and the ipk URL. `.github/workflows/hbrepo.yml` publishes it on
-GitHub Pages for every release. A TV adds `https://morpheus235.github.io/stremio-native/repo.json`
+GitHub Pages, run by hand while it is on hold (a release no longer refreshes it). A TV adds `https://morpheus235.github.io/stremio-native/repo.json`
 under Settings → Add repository and gets updates as releases appear.
 
 The package itself is built by `make ipk` (`ci/mkipk.py`). It is reproducible and read back with
@@ -76,7 +76,7 @@ Releases are tags on `main`, with no release branch. Bump `pkg/appinfo.json`'s v
 2. runs the tests;
 3. cross-builds the ipk on an arm64 runner with the pinned webOS NDK;
 4. publishes the GitHub release (ipk + sha256);
-5. refreshes the Homebrew Channel repository.
+5. (the Homebrew Channel repository is refreshed by hand, `hbrepo.yml`, while it is on hold).
 
 `ci.yml` runs on every push and pull request. It runs the host tests, the shipping feature set,
 the packaging selftests and an ARM compile check, and does a full package build that is read back

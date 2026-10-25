@@ -53,6 +53,7 @@ The packages (ipk + sha256) are on the [download page](https://morpheus235.githu
   runner and checks it with `webosbrew-ipk-verify` (it fails on an incompatibility).
 - `release.yml` runs on a `v*` tag. It builds, tests and publishes the release.
 - `hbrepo.yml` publishes the Homebrew Channel repository and the download page on GitHub Pages.
+  It is on hold and runs only by hand.
 
 ## Features
 
@@ -92,8 +93,8 @@ make check                         # host tests + packaging selftests
 ```
 
 Releases are cut by pushing a `vX.Y.Z` tag on `main` (a suffixed tag such as `v0.2.0-beta.1`
-publishes the Beta). CI builds, publishes the release and refreshes the Homebrew Channel
-repository. Details in [docs/roadmap.md](docs/roadmap.md#releases).
+publishes the Beta). CI builds and publishes the release; the Homebrew Channel repository is
+refreshed by hand for now. Details in [docs/roadmap.md](docs/roadmap.md#releases).
 
 ## Layout
 

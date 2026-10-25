@@ -10,14 +10,12 @@
 # out, so the URL can be added on the TV before the first build (it lists nothing until then).
 # Pages replaces the whole site on every deploy, so every run regenerates both entries.
 # One-time setup: Settings > Pages > Source: "GitHub Actions".
+# On hold: nothing runs it on its own (no release, no push); run it by hand on main
+# (Actions > Homebrew Channel repository > Run workflow) when the repository should be refreshed.
 name: Homebrew Channel repository
 
 on:
-  push:
-    branches: [main]
-    paths: [ci/hbrepo.py, .github/workflows/hbrepo.yml, site/**, docs/screenshots/**]
   workflow_dispatch:
-  workflow_call:
 
 permissions:
   contents: read
