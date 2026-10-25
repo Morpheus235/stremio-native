@@ -10,12 +10,21 @@
 # out, so the URL can be added on the TV before the first build (it lists nothing until then).
 # Pages replaces the whole site on every deploy, so every run regenerates both entries.
 # One-time setup: Settings > Pages > Source: "GitHub Actions".
-# On hold: nothing runs it on its own (no release, no push); run it by hand on main
-# (Actions > Homebrew Channel repository > Run workflow) when the repository should be refreshed.
+# The download page deploys on every push to main that changes it. The Homebrew Channel listing
+# (repo.json) is on hold: only a manual run on main with "homebrew" ticked builds it
+# (Actions > Homebrew Channel repository > Run workflow); without it the page links the releases.
 name: Homebrew Channel repository
 
 on:
+  push:
+    branches: [main]
+    paths: [ci/hbrepo.py, .github/workflows/hbrepo.yml, site/**, docs/screenshots/**]
   workflow_dispatch:
+    inputs:
+      homebrew:
+        description: Also publish the Homebrew Channel listing (repo.json)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -35,6 +44,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Generate both channels
+        if: inputs.homebrew
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -63,6 +73,10 @@ jobs:
           channel false "StremioNative"
           channel true "StremioNative Beta"
           if [ -f pkg/icon160.png ]; then cp pkg/icon160.png _site/; fi
+      - name: The download page
+        run: |
+          set -euo pipefail
+          mkdir -p _site
           # the download page beside the index: it reads repo.json and the manifests in the browser
           cp site/index.html _site/
           mkdir -p _site/screenshots && cp docs/screenshots/*.jpg _site/screenshots/

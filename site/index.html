@@ -58,6 +58,7 @@
     <img src="screenshots/list.jpg" alt="Discover as a list">
   </div>
 
+  <section id="hb">
   <h2>Install with Homebrew Channel</h2>
   <ol>
     <li>Install <a href="https://github.com/webosbrew/webos-homebrew-channel">Homebrew Channel</a> on the TV (a rooted TV is recommended).</li>
@@ -66,6 +67,7 @@
     </li>
     <li>Install <b>StremioNative</b> or <b>StremioNative Beta</b> from the list. Updates arrive the same way.</li>
   </ol>
+  </section>
 
   <h2>Download</h2>
   <div class="pkgs" id="pkgs"><p class="note">Loading the current packages…</p></div>
@@ -105,7 +107,9 @@
         box.append(card);
       }
     } catch {
-      box.replaceChildren(el("p", "note", "Couldn't load the package list."));
+      // no Homebrew Channel listing published (it is on hold): the releases page has the packages
+      document.getElementById("hb").hidden = true;
+      box.replaceChildren(el("p", "note", "Download the newest .ipk from the releases page."));
       const a = el("a", "btn ghost", "Open the releases page");
       a.href = "https://github.com/Morpheus235/stremio-native/releases";
       box.append(a);

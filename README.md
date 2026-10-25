@@ -52,8 +52,8 @@ The packages (ipk + sha256) are on the [download page](https://morpheus235.githu
   the packaging selftests and an ARM compile check, then does a full package build on an arm64
   runner and checks it with `webosbrew-ipk-verify` (it fails on an incompatibility).
 - `release.yml` runs on a `v*` tag. It builds, tests and publishes the release.
-- `hbrepo.yml` publishes the Homebrew Channel repository and the download page on GitHub Pages.
-  It is on hold and runs only by hand.
+- `hbrepo.yml` deploys the download page on GitHub Pages whenever it changes on `main`. The
+  Homebrew Channel repository is on hold: only a manual run with "homebrew" ticked publishes it.
 
 ## Features
 
