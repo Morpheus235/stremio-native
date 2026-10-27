@@ -79,8 +79,8 @@ fn read_to_end(src: &mut CurlSource) -> Vec<u8> {
 
 /// **A TLS stream redirected to plain `http://` plays, bare** (a video host's file links often are
 /// plaintext). The video arrives from the plaintext server, which sees none of the stream's
-/// request headers — no `Referer`, no credential — only the `User-Agent`, and a seek replays the
-/// chain the same way.
+/// request headers — no `Referer`, no credential, not its `User-Agent` (the client's own, here none:
+/// nothing installed one) — and a seek replays the chain the same way.
 #[test]
 fn a_redirect_from_https_to_plain_http_is_followed_without_the_streams_headers() {
     let _serial = sn_base::testlock::serial();
@@ -124,7 +124,7 @@ fn a_redirect_from_https_to_plain_http_is_followed_without_the_streams_headers()
     for (i, request) in heads.iter().enumerate() {
         assert_eq!(header(request, "referer"), None, "plaintext request {i}: no stream header in the clear");
         assert_eq!(header(request, "authorization"), None, "plaintext request {i}: no credential in the clear");
-        assert_eq!(header_lines(request, "user-agent"), ["User-Agent: LiveClient/2.6"], "plaintext request {i}");
+        assert!(header_lines(request, "user-agent").iter().all(|l| !l.contains("LiveClient")), "plaintext request {i}: not the stream's agent: {request:?}");
     }
 }
 

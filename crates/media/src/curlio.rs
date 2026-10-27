@@ -1007,8 +1007,8 @@ impl CurlSource {
             sn_net::net::curl_easy_setopt_ptr(easy, CURLOPT_HEADERDATA, xp);
             // The stream's own `User-Agent` when it set one (`RequestHeaders`), else the process's
             // one name, installed at boot; none in a host test that never booted, where libcurl
-            // then sends none either.
-            match &self.user_agent {
+            // then sends none either. A plaintext hop of a TLS chain gets the process's (`Hop::bare`).
+            match self.user_agent.as_ref().filter(|_| !hop.bare) {
                 Some(ua) => {
                     sn_net::net::curl_easy_setopt_ptr(easy, CURLOPT_USERAGENT, ua.as_ptr() as *const c_void);
                 }
@@ -1804,7 +1804,8 @@ struct Hop {
     same_origin: bool,
     /// A plaintext hop of a chain that began on TLS: it is followed, but none of the stream's
     /// request headers go to it (an add-on attached them to an encrypted request; a `Referer` or a
-    /// token header must not cross the wire in the clear). The `User-Agent` is the handle's.
+    /// token header must not cross the wire in the clear), and its `User-Agent` neither: the hop
+    /// carries the process's own.
     bare: bool,
 }
 
