@@ -1,7 +1,7 @@
 //! Redirects, media plane: what `curlio::CurlSource` does when the server answers an open, a reopen
 //! or a seek with a `3xx`. It follows the hops itself, one request at a time (`next_hop`). These
 //! tests grade what that promises whoever relies on it, and held before it did: the hop cap, the
-//! no-downgrade rule, the `Range` that rides every hop, a relative `Location`, which statuses are
+//! TLS-to-plaintext rule (followed, bare), the `Range` that rides every hop, a relative `Location`, which statuses are
 //! followed, what a `3xx` body and a missing `Location` do, and what of the original URL a hop
 //! receives. They also grade what only a hop-by-hop follower can promise: a hop is a request of its
 //! own, to its own host, under its own TLS decision (`net::roots`), whichever mode the host that
@@ -77,60 +77,55 @@ fn read_to_end(src: &mut CurlSource) -> Vec<u8> {
     }
 }
 
-/// A plaintext listener that counts the connections it accepts and answers none of them.
-struct Plain {
-    port: u16,
-    accepted: Arc<AtomicUsize>,
-}
-
-impl Plain {
-    fn spawn() -> Plain {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind plaintext listener");
-        let port = listener.local_addr().unwrap().port();
-        let accepted = Arc::new(AtomicUsize::new(0));
-        let count = Arc::clone(&accepted);
-        std::thread::spawn(move || {
-            for stream in listener.incoming() {
-                if stream.is_ok() {
-                    count.fetch_add(1, Ordering::AcqRel);
-                }
-            }
-        });
-        Plain { port, accepted }
-    }
-
-    /// How many connections this listener has accepted besides the one this call makes to prove
-    /// it is accepting at all: a bare count of zero would also be what a dead listener reports.
-    fn connections_but_a_probe(&self) -> usize {
-        let _probe = std::net::TcpStream::connect(("127.0.0.1", self.port)).expect("the plaintext listener is up");
-        let give_up = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        while self.accepted.load(Ordering::Acquire) == 0 && std::time::Instant::now() < give_up {
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        // Connections queue in the order they arrive, so one made before the probe is counted by
-        // the time the probe is; this is the time for the thread to count both.
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        self.accepted.load(Ordering::Acquire).saturating_sub(1)
-    }
-}
-
+/// **A TLS stream redirected to plain `http://` plays, bare** (a video host's file links often are
+/// plaintext). The video arrives from the plaintext server, which sees none of the stream's
+/// request headers — no `Referer`, no credential — only the `User-Agent`, and a seek replays the
+/// chain the same way.
 #[test]
-fn a_redirect_from_https_to_plain_http_is_refused_and_the_plain_target_is_never_dialled() {
+fn a_redirect_from_https_to_plain_http_is_followed_without_the_streams_headers() {
     let _serial = sn_base::testlock::serial();
     if !curl_ready() { return; }
     let cert = leaf(&["127.0.0.1"]);
     let _ca = TestCaGuard::install(&cert.pem, "redirect-downgrade");
-    let plain = Plain::spawn();
+    let media = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", media_body().len()).into_bytes();
+    let partial = |at: usize| {
+        let body = media_body()[at..].to_vec();
+        let head = format!(
+            "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {at}-{}/{}\r\nContent-Length: {}\r\n\r\n",
+            media_body().len() - 1,
+            media_body().len(),
+            body.len()
+        );
+        (head.into_bytes(), body)
+    };
+    let plain = KeepAlive::spawn(vec![("/video.mkv", media, media_body())]);
+    let (seek_head, seek_body) = partial(1000);
+    plain.ranged.lock().unwrap().push(("bytes=1000-".into(), seek_head, seek_body));
     let served = spawn_scripted(cert, [("/start", Reply::redirect(302, &format!("http://127.0.0.1:{}/video.mkv?token={TOKEN}", plain.port)))]);
     let _watch = watch("127.0.0.1", served.port);
 
-    let err = CurlSource::open(&url_of("127.0.0.1", served.port, "/start"), 0)
-        .err()
-        .expect("a TLS media request may not be redirected into plaintext");
-    // CURLE_UNSUPPORTED_PROTOCOL: a hop from an https URL may only be https (`next_hop`).
-    assert_eq!(err, OpenErr::Transport(1));
-    assert_eq!(request_lines(&served), ["GET /start HTTP/1.1"], "the redirecting server was asked once");
-    assert_eq!(plain.connections_but_a_probe(), 0, "the plaintext target was never connected to");
+    let mut src = CurlSource::open_with_headers(&url_of("127.0.0.1", served.port, "/start"), 0, &live_tv_headers())
+        .expect("a TLS media request redirected to plaintext is followed");
+    assert_eq!(src.status(), 200);
+    let mut head = [0u8; 16];
+    assert_eq!(src.read(&mut head), 16);
+    assert_eq!(head[..], media_body()[..16]);
+    assert!(src.seek(1000), "the seek replays the chain into plaintext");
+    let mut buf = [0u8; 16];
+    assert_eq!(src.read(&mut buf), 16);
+    assert_eq!(buf[..], media_body()[1000..1016]);
+    drop(src);
+
+    for request in requests(&served) {
+        assert_eq!(header(&request, "referer").as_deref(), Some("https://live.example/"), "the TLS origin gets the stream's headers");
+    }
+    let heads = plain.heads.lock().unwrap().clone();
+    assert_eq!(heads.len(), 2, "the open and the seek each reached the plaintext host: {heads:?}");
+    for (i, request) in heads.iter().enumerate() {
+        assert_eq!(header(request, "referer"), None, "plaintext request {i}: no stream header in the clear");
+        assert_eq!(header(request, "authorization"), None, "plaintext request {i}: no credential in the clear");
+        assert_eq!(header_lines(request, "user-agent"), ["User-Agent: LiveClient/2.6"], "plaintext request {i}");
+    }
 }
 
 /// `/h0` redirects to `/h1` and so on, `hops` times, and `/h<hops>` is the media.
@@ -148,6 +143,10 @@ fn chain(hops: usize) -> Vec<(String, Reply)> {
 struct KeepAlive {
     port: u16,
     accepted: Arc<AtomicUsize>,
+    /// Every request head it read, in order.
+    heads: Arc<std::sync::Mutex<Vec<String>>>,
+    /// Replies for a request carrying exactly this `Range` value, before `routes` is asked.
+    ranged: Arc<std::sync::Mutex<Vec<(String, Vec<u8>, Vec<u8>)>>>,
 }
 
 impl KeepAlive {
@@ -158,11 +157,15 @@ impl KeepAlive {
         let accepted = Arc::new(AtomicUsize::new(0));
         let count = Arc::clone(&accepted);
         let routes = Arc::new(routes);
+        let heads: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+        let ranged: Arc<std::sync::Mutex<Vec<(String, Vec<u8>, Vec<u8>)>>> = Arc::default();
+        let (seen_heads, by_range) = (Arc::clone(&heads), Arc::clone(&ranged));
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { continue };
                 count.fetch_add(1, Ordering::AcqRel);
                 let routes = Arc::clone(&routes);
+                let (seen_heads, by_range) = (Arc::clone(&seen_heads), Arc::clone(&by_range));
                 std::thread::spawn(move || {
                     let mut seen = Vec::new();
                     let mut buf = [0u8; 4096];
@@ -170,11 +173,12 @@ impl KeepAlive {
                         while let Some(end) = seen.windows(4).position(|w| w == b"\r\n\r\n") {
                             let head = String::from_utf8_lossy(&seen[..end]).into_owned();
                             seen.drain(..end + 4);
+                            seen_heads.lock().unwrap().push(head.clone());
                             let path = head.split_whitespace().nth(1).unwrap_or_default().split('?').next().unwrap_or_default().to_owned();
-                            let (reply_head, reply_body) = routes
-                                .iter()
-                                .find(|(p, _, _)| *p == path)
-                                .map(|(_, h, b)| (h.clone(), b.clone()))
+                            let range = header(&head, "range");
+                            let ranged = by_range.lock().unwrap().iter().find(|(r, _, _)| Some(r) == range.as_ref()).map(|(_, h, b)| (h.clone(), b.clone()));
+                            let (reply_head, reply_body) = ranged
+                                .or_else(|| routes.iter().find(|(p, _, _)| *p == path).map(|(_, h, b)| (h.clone(), b.clone())))
                                 .unwrap_or_else(|| (b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".to_vec(), Vec::new()));
                             let sent = stream.write_all(&reply_head).and_then(|_| stream.flush()).map(|_| std::thread::sleep(std::time::Duration::from_millis(50)));
                             if sent.and_then(|_| stream.write_all(&reply_body)).is_err() {
@@ -189,7 +193,7 @@ impl KeepAlive {
                 });
             }
         });
-        KeepAlive { port, accepted }
+        KeepAlive { port, accepted, heads, ranged }
     }
 }
 

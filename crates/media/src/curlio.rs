@@ -89,8 +89,10 @@
 //! `run_hop`. **Redirects:** this module follows them itself, one hop at a time
 //! (`CURLOPT_FOLLOWLOCATION` is 0; `start_range_until`, [`next_hop`]), because the CA file and the
 //! resolve pin are per easy handle, not per hop. Each hop is a request of its own, to its own host,
-//! with its own TLS decision; at most five are followed, a TLS request is never redirected to
-//! plaintext, and the original's query is never copied onto a hop.
+//! with its own TLS decision; at most five are followed, and the original's query is never copied
+//! onto a hop. A TLS chain redirected to plaintext is followed (a video host's file links often are
+//! `http://`, and a stream that is plaintext from the start plays too), but bare: no stream header
+//! goes to a plaintext hop of a chain that began on TLS ([`Hop::bare`]).
 //!
 //! **Stream request headers** ([`crate::headers::RequestHeaders`], Stremio's
 //! `behaviorHints.proxyHeaders.request`) ride every request a source makes: the first open, every
@@ -180,10 +182,8 @@ const CURLMSG_DONE: c_int = 1;
 const CURLM_OK: c_int = 0;
 const CURL_WAIT_POLLIN: i16 = 0x0001;
 const CURLE_OPERATION_TIMEDOUT: c_int = 28;
-/// What a redirect refused for its protocol, and one past the hop cap, are reported as: the codes
-/// libcurl answered both with while it followed redirects itself, so a caller and a support log read
-/// the same thing they always did.
-const CURLE_UNSUPPORTED_PROTOCOL: c_int = 1;
+/// What one past the hop cap is reported as: the code libcurl answered with while it followed
+/// redirects itself, so a caller and a support log read the same thing they always did.
 const CURLE_TOO_MANY_REDIRECTS: c_int = 47;
 use sn_net::net::roots::{self, TLS_VERIFY_FAILED};
 
@@ -220,17 +220,6 @@ const CURLOPT_PROTOCOLS: c_int = 181;
 const CURLOPT_RESOLVE: c_int = 10203;
 const CURLPROTO_HTTP: c_long = 1 << 0;
 const CURLPROTO_HTTPS: c_long = 1 << 1;
-
-/// Protocol floor for redirects. A TLS request may never cross back into plaintext; an HTTP
-/// request may upgrade. Kept pure so the security rule is host-testable without a TLS fixture.
-/// [`next_hop`] applies it to every redirect before anything is dialled.
-fn allowed_redirect_protocols(url: &[u8]) -> c_long {
-    if url.starts_with(b"https://") {
-        CURLPROTO_HTTPS
-    } else {
-        CURLPROTO_HTTP | CURLPROTO_HTTPS
-    }
-}
 
 /// How long one `curl_multi_wait` may sit before we call `curl_multi_perform` again.
 ///
@@ -1032,8 +1021,12 @@ impl CurlSource {
             // the headers the origin demands, which is a refusal we would misread as the server's.
             // Owned copies first: the list is built while `self` is mutated on the failure arms.
             // `RequestHeaders` refused NUL at construction, so `CString::new` cannot fail here.
-            let header_lines: Vec<CString> =
-                self.headers.lines(hop.same_origin).filter_map(|l| CString::new(l).ok()).collect();
+            // A plaintext hop of a TLS chain gets none of them (`Hop::bare`).
+            let header_lines: Vec<CString> = if hop.bare {
+                Vec::new()
+            } else {
+                self.headers.lines(hop.same_origin).filter_map(|l| CString::new(l).ok()).collect()
+            };
             if !header_lines.is_empty() {
                 let mut list: *mut sn_net::net::curl_slist = std::ptr::null_mut();
                 for c in &header_lines {
@@ -1131,8 +1124,7 @@ impl CurlSource {
                 sn_net::net::curl_easy_setopt_long(easy, CURLOPT_FOLLOWLOCATION, 0),
                 "CURLOPT_FOLLOWLOCATION"
             );
-            // The first request may only be http(s), and so may every later one (`next_hop`; a
-            // redirect that would downgrade a TLS request is refused there, not by libcurl).
+            // The first request may only be http(s), and so may every later one (`Hop::of`).
             require_setopt!(
                 sn_net::net::curl_easy_setopt_long(
                     easy,
@@ -1251,12 +1243,11 @@ impl CurlSource {
             let status = self.xfer.status;
             let current = hop.url.to_str().unwrap_or_default();
             let location = std::str::from_utf8(&self.xfer.location).unwrap_or_default();
-            let next = match next_hop(original, current, status, location, hop.n) {
+            let next = match next_hop(current, status, location, hop.n) {
                 Ok(next) => next,
                 Err(e) => {
                     let why = match e {
                         OpenErr::Transport(CURLE_TOO_MANY_REDIRECTS) => format!("REFUSED: more than {MAX_HOPS} hops"),
-                        OpenErr::Transport(_) => "REFUSED: a redirect may not leave TLS for plaintext".to_owned(),
                         _ => "has no usable Location".to_owned(),
                     };
                     crate::player::log(&format!("curlio: redirect {status} from {} {why}", log_target(target_of(current).as_ref())));
@@ -1266,10 +1257,12 @@ impl CurlSource {
             };
             crate::player::note_media_path(&next.path);
             let same = target_of(original).is_some_and(|first| same_origin(&first.origin, &next.origin));
+            let bare = is_bare(original, &next);
             crate::player::log(&format!(
-                "curlio: redirect {status} -> {} hop={} same_origin={same}",
+                "curlio: redirect {status} -> {} hop={} same_origin={same}{}",
                 log_target(Some(&next)),
-                hop.n + 1
+                hop.n + 1,
+                if bare { " plaintext (TLS left; no stream headers)" } else { "" }
             ));
             self.finish_redirect_body(deadline);
             self.stop();
@@ -1809,6 +1802,10 @@ struct Hop {
     /// This hop is on the origin the chain began on: the stream's credential headers
     /// ([`crate::headers::CREDENTIAL`]) go to it, and to no other.
     same_origin: bool,
+    /// A plaintext hop of a chain that began on TLS: it is followed, but none of the stream's
+    /// request headers go to it (an add-on attached them to an encrypted request; a `Referer` or a
+    /// token header must not cross the wire in the clear). The `User-Agent` is the handle's.
+    bare: bool,
 }
 
 impl Hop {
@@ -1821,6 +1818,7 @@ impl Hop {
             url: url.clone(),
             resolve_entry,
             same_origin: true,
+            bare: false,
         }
     }
 
@@ -1840,8 +1838,14 @@ impl Hop {
             url: CString::new(url).map_err(|_| OpenErr::Local)?,
             resolve_entry,
             same_origin: target_of(original).is_some_and(|first| same_origin(&first.origin, &target.origin)),
+            bare: is_bare(original, target),
         })
     }
+}
+
+/// `target` is plaintext and the chain began on TLS ([`Hop::bare`]).
+fn is_bare(original: &str, target: &Target) -> bool {
+    !target.origin.is_tls() && original.get(..8).is_some_and(|s| s.eq_ignore_ascii_case("https://"))
 }
 
 /// The [`Target`] a URL names: `None` unless it is an absolute http(s) URL whose authority is a plain
@@ -1861,9 +1865,9 @@ fn no_base() -> Target {
     }
 }
 
-/// Where a redirect goes, decided before anything is dialled, or why it does not. `original` is the
-/// URL the chain began on and `current` the one that just answered; `hop` is the number of
-/// redirects already followed, so the request that answered was request `hop + 1`.
+/// Where a redirect goes, decided before anything is dialled, or why it does not. `current` is the
+/// URL that just answered; `hop` is the number of redirects already followed, so the request that
+/// answered was request `hop + 1`.
 ///
 /// * **The target is exactly what `Location` spells**, resolved against `current` when it is
 ///   relative. The original's query, the only place its token is, is never copied onto a hop; and a
@@ -1873,10 +1877,9 @@ fn no_base() -> Target {
 ///   `3xx` itself, as a redirect that names nowhere has always been.
 /// * More than [`MAX_HOPS`] redirects is `Transport(47)` (`CURLE_TOO_MANY_REDIRECTS`: five followed
 ///   is six requests, and the sixth answer is read and not followed).
-/// * A redirect may not go to a protocol it must not: [`allowed_redirect_protocols`] of `original`,
-///   and never plaintext from a `current` that is https, so a TLS request cannot cross back into
-///   plaintext at any hop. `Transport(1)` (`CURLE_UNSUPPORTED_PROTOCOL`), before the target is dialled.
-fn next_hop(original: &str, current: &str, status: c_int, location: &str, hop: u32) -> Result<Target, OpenErr> {
+/// * Either scheme may follow either: a TLS chain redirected to plaintext goes on, bare
+///   ([`Hop::bare`]).
+fn next_hop(current: &str, status: c_int, location: &str, hop: u32) -> Result<Target, OpenErr> {
     if !is_redirect(status) {
         return Err(OpenErr::Status(status));
     }
@@ -1892,15 +1895,6 @@ fn next_hop(original: &str, current: &str, status: c_int, location: &str, hop: u
     };
     if hop >= MAX_HOPS {
         return Err(OpenErr::Transport(CURLE_TOO_MANY_REDIRECTS));
-    }
-    let allowed = if current.get(..8).is_some_and(|s| s.eq_ignore_ascii_case("https://")) {
-        CURLPROTO_HTTPS
-    } else {
-        allowed_redirect_protocols(original.as_bytes())
-    };
-    let wanted = if next.origin.is_tls() { CURLPROTO_HTTPS } else { CURLPROTO_HTTP };
-    if allowed & wanted == 0 {
-        return Err(OpenErr::Transport(CURLE_UNSUPPORTED_PROTOCOL));
     }
     Ok(next)
 }
@@ -2982,7 +2976,7 @@ mod tests {
     const ORIGIN: &str = "https://media.example:8443/media/1/file.mkv?token=tok";
 
     fn hop_of(location: &str) -> Result<String, OpenErr> {
-        next_hop(ORIGIN, ORIGIN, 302, location, 0).map(|t| t.url())
+        next_hop(ORIGIN, 302, location, 0).map(|t| t.url())
     }
 
     /// The target is what `Location` spells and nothing of the original's: not its query (the only
@@ -3006,8 +3000,8 @@ mod tests {
     #[test]
     fn a_relative_location_on_a_url_with_no_port_keeps_the_schemes_port() {
         let cdn = "https://cdn.example/a/b";
-        assert_eq!(next_hop(cdn, cdn, 301, "c", 0).unwrap().url(), "https://cdn.example:443/a/c");
-        assert_eq!(next_hop("http://a.example/x", "http://a.example/x", 307, "/y", 0).unwrap().url(), "http://a.example:80/y");
+        assert_eq!(next_hop(cdn, 301, "c", 0).unwrap().url(), "https://cdn.example:443/a/c");
+        assert_eq!(next_hop("http://a.example/x", 307, "/y", 0).unwrap().url(), "http://a.example:80/y");
     }
 
     #[test]
@@ -3024,35 +3018,33 @@ mod tests {
     fn a_relative_location_is_refused_against_an_authority_that_is_not_a_plain_host() {
         let odd = "https://user:pw@media.example/media/file.mkv";
         for loc in ["/v.mkv", "v.mkv", "//cdn.example/v.mkv", "?x=1"] {
-            assert_eq!(next_hop(odd, odd, 302, loc, 0), Err(OpenErr::Status(302)), "{loc}");
+            assert_eq!(next_hop(odd, 302, loc, 0), Err(OpenErr::Status(302)), "{loc}");
         }
-        assert_eq!(next_hop(odd, odd, 302, "https://cdn.example/v.mkv", 0).unwrap().url(), "https://cdn.example:443/v.mkv");
+        assert_eq!(next_hop(odd, 302, "https://cdn.example/v.mkv", 0).unwrap().url(), "https://cdn.example:443/v.mkv");
         assert_eq!(target_of(odd), None);
         assert_eq!(target_of("https://media.example:8443/x").map(|t| t.url()), Some("https://media.example:8443/x".to_owned()));
         assert_eq!(target_of("media.example:8080/x"), None, "no scheme: not a URL this reads an origin from");
     }
 
     #[test]
-    fn a_tls_request_is_never_redirected_to_plaintext_at_any_hop() {
-        assert_eq!(hop_of("http://cdn.example/v.mkv"), Err(OpenErr::Transport(CURLE_UNSUPPORTED_PROTOCOL)));
-        assert_eq!(hop_of("//cdn.example/v.mkv").map(|_| ()), Ok(()), "a scheme-relative Location keeps the scheme: https");
-        // The original is plaintext and may upgrade; once it is TLS it may not go back, whatever it began as.
+    fn a_tls_chain_redirected_to_plaintext_goes_on_bare() {
+        assert_eq!(hop_of("http://cdn.example/v.mkv").as_deref(), Ok("http://cdn.example:80/v.mkv"), "followed");
+        let to = |loc: &str| next_hop(ORIGIN, 302, loc, 0).unwrap();
+        assert!(is_bare(ORIGIN, &to("http://cdn.example/v.mkv")), "a plaintext hop of a TLS chain carries no stream headers");
+        assert!(!is_bare(ORIGIN, &to("//cdn.example/v.mkv")), "a scheme-relative Location keeps https");
+        // A chain that began plaintext sends its headers to every hop, as it always did.
         let plain = "http://media.example:8080/f.mkv";
-        assert!(next_hop(plain, plain, 302, "https://cdn.example/v.mkv", 0).is_ok());
-        assert!(next_hop(plain, plain, 302, "http://other.example/v.mkv", 0).is_ok());
-        assert_eq!(
-            next_hop(plain, "https://cdn.example/v.mkv", 302, "http://other.example/v.mkv", 1),
-            Err(OpenErr::Transport(CURLE_UNSUPPORTED_PROTOCOL))
-        );
+        assert!(!is_bare(plain, &next_hop("https://cdn.example/v.mkv", 302, "http://other.example/v.mkv", 1).unwrap()));
+        assert!(!is_bare(plain, &next_hop(plain, 302, "https://cdn.example/v.mkv", 0).unwrap()));
     }
 
     /// Five redirects are followed (six requests); the sixth answer is read and not followed.
     #[test]
     fn the_sixth_redirect_is_too_many() {
-        assert!(next_hop(ORIGIN, ORIGIN, 302, "/a", MAX_HOPS - 1).is_ok(), "the fifth redirect is followed");
-        assert_eq!(next_hop(ORIGIN, ORIGIN, 302, "/a", MAX_HOPS), Err(OpenErr::Transport(CURLE_TOO_MANY_REDIRECTS)));
+        assert!(next_hop(ORIGIN, 302, "/a", MAX_HOPS - 1).is_ok(), "the fifth redirect is followed");
+        assert_eq!(next_hop(ORIGIN, 302, "/a", MAX_HOPS), Err(OpenErr::Transport(CURLE_TOO_MANY_REDIRECTS)));
         // A redirect that names nowhere is the 3xx itself, even past the cap: there is nothing to count.
-        assert_eq!(next_hop(ORIGIN, ORIGIN, 302, "", MAX_HOPS), Err(OpenErr::Status(302)));
+        assert_eq!(next_hop(ORIGIN, 302, "", MAX_HOPS), Err(OpenErr::Status(302)));
     }
 
     #[test]
@@ -3061,25 +3053,13 @@ mod tests {
             assert_eq!(hop_of(loc), Err(OpenErr::Status(302)), "{loc:?}");
         }
         for status in [300, 304, 200, 404, 0] {
-            assert_eq!(next_hop(ORIGIN, ORIGIN, status, "/a", 0), Err(OpenErr::Status(status)), "{status}");
+            assert_eq!(next_hop(ORIGIN, status, "/a", 0), Err(OpenErr::Status(status)), "{status}");
         }
         for status in [301, 302, 303, 307, 308] {
-            assert!(next_hop(ORIGIN, ORIGIN, status, "/a", 0).is_ok(), "{status}");
+            assert!(next_hop(ORIGIN, status, "/a", 0).is_ok(), "{status}");
         }
     }
 
-    #[test]
-    fn redirects_never_downgrade_a_tls_media_origin() {
-        assert_eq!(
-            allowed_redirect_protocols(b"https://example.invalid/media"),
-            CURLPROTO_HTTPS
-        );
-        assert_eq!(
-            allowed_redirect_protocols(b"http://example.invalid/media"),
-            CURLPROTO_HTTP | CURLPROTO_HTTPS,
-            "plaintext may upgrade, but the inverse is forbidden"
-        );
-    }
 
     // -- (d) abort during connect and during read unblocks promptly ------------------------------
 
