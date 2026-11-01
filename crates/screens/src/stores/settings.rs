@@ -418,6 +418,9 @@ pub struct SettingsStore {
     /// The audio sync the viewer chose per stream source ([`SettingsStore::audio_offset`]), oldest
     /// first, at most [`MAX_AUDIO_OFFSETS`].
     audio_offsets: Vec<(String, i64)>,
+    /// The streaming server torrents play through, as `sn_stremio::streaming_server::normalize_url`
+    /// writes it; `None` is off.
+    streaming_server: Option<String>,
     gen: u32,
 }
 
@@ -434,6 +437,7 @@ impl Default for SettingsStore {
             streams: None,
             lists: [false; 4],
             library_sort: sn_stremio::library::Sort::LastWatched,
+            streaming_server: None,
             gen: 0,
         }
     }
@@ -656,6 +660,36 @@ impl SettingsStore {
         self
     }
 
+    /// The streaming server torrents play through (a normalized base URL), `None` when off.
+    pub fn streaming_server(&self) -> Option<&str> {
+        self.streaming_server.as_deref()
+    }
+
+    /// Use `server` (normalized here; `None` is off); `false` (and nothing moves) when it is
+    /// already the server or is not a server address.
+    pub fn set_streaming_server(&mut self, server: Option<String>) -> bool {
+        let next = match server {
+            Some(s) => match sn_stremio::streaming_server::normalize_url(&s) {
+                Some(url) => Some(url),
+                None => return false,
+            },
+            None => None,
+        };
+        if self.streaming_server == next {
+            return false;
+        }
+        self.streaming_server = next;
+        self.gen = self.gen.wrapping_add(1);
+        true
+    }
+
+    /// The store with the streaming server the settings file held (seeding: the generation stays;
+    /// an address that is not one is off).
+    pub fn with_streaming_server(mut self, server: Option<&str>) -> Self {
+        self.streaming_server = server.and_then(sn_stremio::streaming_server::normalize_url);
+        self
+    }
+
     /// Order the Library page by `sort`; `false` when it already is.
     pub fn set_library_sort(&mut self, sort: sn_stremio::library::Sort) -> bool {
         if self.library_sort == sort {
@@ -822,6 +856,28 @@ mod tests {
         assert_eq!(file.pick_tracks(&[t("", false, false), t("", false, true)], &[]), Picked { audio: Some(1), subtitle: None });
         assert_eq!(file.pick_tracks(&[], &[]), Picked { audio: None, subtitle: None });
         assert_eq!((language_code("fre"), language_code("pt-BR"), language_code("")), ("FR".into(), "PT".into(), "".into()));
+    }
+
+    /// The streaming server is a normalized address or off: setting moves the generation only on
+    /// a change, a typed address is normalized, garbage is refused, seeding is no change.
+    #[test]
+    fn the_streaming_server_is_a_normalized_address_and_a_change_moves_the_generation() {
+        let mut s = SettingsStore::default();
+        assert_eq!(s.streaming_server(), None, "off by default");
+        assert!(s.set_streaming_server(Some("192.168.1.20".into())));
+        assert_eq!(s.streaming_server(), Some("http://192.168.1.20:11470/"));
+        assert_eq!(s.gen(), 1);
+        assert!(!s.set_streaming_server(Some("http://192.168.1.20:11470/".into())), "the same server is no change");
+        assert!(!s.set_streaming_server(Some("ftp://nope".into())), "not an address: refused");
+        assert_eq!(s.streaming_server(), Some("http://192.168.1.20:11470/"), "a refusal changes nothing");
+        assert!(s.set_streaming_server(Some("https://a.b/c".into())));
+        assert_eq!(s.streaming_server(), Some("https://a.b/c/"));
+        assert!(s.set_streaming_server(None));
+        assert!(!s.set_streaming_server(None), "off again is no change");
+        assert_eq!((s.streaming_server(), s.gen()), (None, 3));
+        let seeded = SettingsStore::default().with_streaming_server(Some("nas.local:8080"));
+        assert_eq!((seeded.streaming_server(), seeded.gen()), (Some("http://nas.local:8080/"), 0), "seeding is no change");
+        assert_eq!(SettingsStore::default().with_streaming_server(Some("ftp://x")).streaming_server(), None);
     }
 
     #[test]

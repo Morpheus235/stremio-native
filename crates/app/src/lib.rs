@@ -23,6 +23,7 @@ pub mod crash;
 pub mod fetch;
 pub mod guide;
 pub mod port;
+pub mod server;
 pub mod system;
 pub mod textinput;
 pub mod work;

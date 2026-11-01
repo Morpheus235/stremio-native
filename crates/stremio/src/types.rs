@@ -165,6 +165,14 @@ pub struct Stream {
     pub info_hash: Option<String>,
     #[serde(default)]
     pub file_idx: Option<u32>,
+    /// A torrent's trackers and DHT nodes as the addon wrote them (`tracker:udp://…`, `dht:…`).
+    /// Handed to the streaming server as `tr=`, merged with [`Self::announce`] by `playable()`.
+    #[serde(default, deserialize_with = "lenient_strings")]
+    pub sources: Vec<String>,
+    /// stremio-core's second name for the same list. A separate field, not a serde alias: a
+    /// stream sending both keys would fail as a duplicate field and be dropped whole.
+    #[serde(default, deserialize_with = "lenient_strings")]
+    pub announce: Vec<String>,
     #[serde(default)]
     pub external_url: Option<String>,
     #[serde(default)]
@@ -226,8 +234,9 @@ pub enum Playable {
     /// An HTTP(S) URL the player fetches itself, with these request headers on every request
     /// (manifest, segments and redirects alike) — live-TV addons refuse requests without them.
     Http { url: String, headers: Vec<(String, String)> },
-    /// A torrent; needs a streaming server.
-    Torrent { info_hash: String, file_idx: Option<u32> },
+    /// A torrent; needs a streaming server ([`crate::streaming_server::torrent_url`]). `sources`
+    /// are the stream's trackers, as sent.
+    Torrent { info_hash: String, file_idx: Option<u32>, sources: Vec<String> },
     /// A YouTube id.
     YouTube(String),
     /// A link to open elsewhere, not playable here.
@@ -245,8 +254,15 @@ impl Stream {
                 .unwrap_or_default();
             return Some(Playable::Http { url: url.to_string(), headers });
         }
-        if let Some(hash) = self.info_hash.as_deref().filter(|h| !h.is_empty()) {
-            return Some(Playable::Torrent { info_hash: hash.to_lowercase(), file_idx: self.file_idx });
+        // the hash becomes a path segment of the viewer's server: only a real one is playable
+        if let Some(hash) = self.info_hash.as_deref().and_then(crate::streaming_server::normalize_info_hash) {
+            let mut sources = self.sources.clone();
+            for extra in &self.announce {
+                if !sources.contains(extra) {
+                    sources.push(extra.clone());
+                }
+            }
+            return Some(Playable::Torrent { info_hash: hash, file_idx: self.file_idx, sources });
         }
         if let Some(id) = self.yt_id.as_deref().filter(|i| !i.is_empty()) {
             return Some(Playable::YouTube(id.to_string()));
@@ -338,6 +354,21 @@ where
         .collect())
 }
 
+/// A list of strings where `null`, a missing list or an entry that is not a string is dropped
+/// instead of failing the stream it sits on.
+fn lenient_strings<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    Ok(match Option::<serde_json::Value>::deserialize(d)? {
+        Some(serde_json::Value::Array(items)) => items
+            .into_iter()
+            .filter_map(|v| match v {
+                serde_json::Value::String(s) if !s.trim().is_empty() => Some(s),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    })
+}
+
 /// A string some addons send as a number (`"imdbRating": 7.4`, `"releaseInfo": 2019`).
 fn lenient_hints<'de, D: Deserializer<'de>>(d: D) -> Result<MetaHints, D::Error> {
     let v = Option::<serde_json::Value>::deserialize(d)?;
@@ -414,12 +445,75 @@ mod tests {
 
     #[test]
     fn stream_sources_in_priority_order() {
-        let s: Stream = serde_json::from_str(r#"{"infoHash":"ABCDEF","fileIdx":2}"#).unwrap();
-        assert_eq!(s.playable(), Some(Playable::Torrent { info_hash: "abcdef".into(), file_idx: Some(2) }));
+        let s: Stream = serde_json::from_str(r#"{"infoHash":"0123456789ABCDEF0123456789ABCDEF01234567","fileIdx":2}"#).unwrap();
+        assert_eq!(s.playable(), Some(Playable::Torrent { info_hash: "0123456789abcdef0123456789abcdef01234567".into(), file_idx: Some(2), sources: vec![] }));
         let s: Stream = serde_json::from_str(r#"{"ytId":"dQw4w9WgXcQ"}"#).unwrap();
         assert_eq!(s.playable(), Some(Playable::YouTube("dQw4w9WgXcQ".into())));
         let s: Stream = serde_json::from_str(r#"{"url":""}"#).unwrap();
         assert_eq!(s.playable(), None);
+    }
+
+    /// A torrent keeps its trackers: `sources`, or stremio-core's alias `announce`; a null, a
+    /// non-list or a non-string entry is dropped, never the stream.
+    #[test]
+    fn a_torrent_keeps_its_sources_under_either_name() {
+        let sources = |j: &str| serde_json::from_str::<Stream>(j).unwrap().playable();
+        let torrent = |sources: &[&str]| {
+            Some(Playable::Torrent { info_hash: HASH.into(), file_idx: None, sources: sources.iter().map(|s| s.to_string()).collect() })
+        };
+        assert_eq!(sources(r#"{"infoHash":"0123456789abcdef0123456789abcdef01234567","sources":["tracker:udp://t.example:80","dht:abc"]}"#), torrent(&["tracker:udp://t.example:80", "dht:abc"]));
+        assert_eq!(sources(r#"{"infoHash":"0123456789abcdef0123456789abcdef01234567","announce":["tracker:udp://t.example:80"]}"#), torrent(&["tracker:udp://t.example:80"]));
+        assert_eq!(sources(r#"{"infoHash":"0123456789abcdef0123456789abcdef01234567","sources":null}"#), torrent(&[]));
+        assert_eq!(sources(r#"{"infoHash":"0123456789abcdef0123456789abcdef01234567","sources":"tracker:x"}"#), torrent(&[]));
+        assert_eq!(sources(r#"{"infoHash":"0123456789abcdef0123456789abcdef01234567","sources":["a",7,null,"  ","b"]}"#), torrent(&["a", "b"]));
+        assert_eq!(sources(r#"{"infoHash":"0123456789abcdef0123456789abcdef01234567"}"#), torrent(&[]));
+    }
+
+    const HASH: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    /// An addon's `infoHash` becomes a URL path segment on the viewer's own server, so only a
+    /// real hash is one: 40 hex, or the 32-letter base32 form some addons send.
+    #[test]
+    fn only_a_real_info_hash_is_playable() {
+        let play = |hash: &str| serde_json::from_value::<Stream>(serde_json::json!({ "infoHash": hash })).unwrap().playable();
+        let torrent = |hash: &str| Some(Playable::Torrent { info_hash: hash.into(), file_idx: None, sources: vec![] });
+        assert_eq!(play(HASH), torrent(HASH));
+        assert_eq!(play(&HASH.to_uppercase()), torrent(HASH), "lower-cased");
+        assert_eq!(play(&format!("  {HASH} ")), torrent(HASH), "trimmed");
+        // RFC 4648 base32 of the same 20 bytes, either case
+        assert_eq!(play("AERUKZ4JVPG66AJDIVTYTK6N54ASGRLH"), torrent(HASH));
+        assert_eq!(play("aerukz4jvpg66ajdivtytk6n54asgrlh"), torrent(HASH));
+        let evil = [
+            "removeall?x=", "../settings", "..", "abc/def", &format!("{}/{}", &HASH[..20], &HASH[20..]), &format!("{HASH}?x=1"),
+            &format!("{HASH}#top"), &format!("{}%2f{}", &HASH[..20], &HASH[22..]), &format!("{}\n{}", &HASH[..20], &HASH[22..]),
+            "abc", "ABC", &HASH[..39], &format!("{HASH}0"), &"g".repeat(40), "AERUKZ4JVPG66AJDIVTYTK6N54ASGRL", "AERUKZ4JVPG66AJDIVTYTK6N54ASGRL1",
+            "AERUKZ4JVPG66AJDIVTYTK6N54ASGRL=", "",
+        ];
+        for bad in evil {
+            assert_eq!(play(bad), None, "{bad:?} is not a playable hash");
+        }
+        // a stream with nothing else playable is unplayable; one with a link still plays the link
+        let s: Stream = serde_json::from_str(r#"{"infoHash":"removeall?x=","externalUrl":"https://x.example"}"#).unwrap();
+        assert_eq!(s.playable(), Some(Playable::External("https://x.example".into())));
+    }
+
+    /// A stream spelling both `sources` and `announce` still lists and plays, with both lists
+    /// merged (sources first, then the announce entries not already there).
+    #[test]
+    fn a_stream_with_both_sources_and_announce_merges_them() {
+        let s: Stream = serde_json::from_str(&format!(
+            r#"{{"infoHash":"{HASH}","name":"Both","sources":["tracker:a","dht:b"],"announce":["dht:b","tracker:c",7]}}"#
+        ))
+        .unwrap();
+        assert_eq!(
+            s.playable(),
+            Some(Playable::Torrent { info_hash: HASH.into(), file_idx: None, sources: vec!["tracker:a".into(), "dht:b".into(), "tracker:c".into()] })
+        );
+        let listed: StreamsResponse = serde_json::from_str(&format!(
+            r#"{{"streams":[{{"infoHash":"{HASH}","sources":["tracker:a"],"announce":["tracker:c"]}},{{"url":"https://x.example/a.mp4"}}]}}"#
+        ))
+        .unwrap();
+        assert_eq!(listed.streams.len(), 2, "the stream with both keys is not dropped");
     }
 
     #[test]

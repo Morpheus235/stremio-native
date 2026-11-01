@@ -113,6 +113,10 @@ struct File {
     /// `Pref::DebridOnly` (absent: off, every stream is listed).
     #[serde(default)]
     debrid_only: bool,
+    /// The streaming server torrents play through, as a base URL (absent or `null`: off; an
+    /// address that is not one reads as off).
+    #[serde(default)]
+    streaming_server: Option<String>,
 }
 
 fn yes() -> bool {
@@ -216,6 +220,7 @@ fn of(file: File) -> Loaded {
         .seeded(Pref::TvGuide, sn_screens::stores::settings::tv_guide_rung(&file.tv_guide))
         .seeded(Pref::StreamOrder, file.stream_order)
         .seeded(Pref::DebridOnly, u8::from(file.debrid_only))
+        .with_streaming_server(file.streaming_server.as_deref())
         .with_audio_offsets(file.audio_offsets),
         search: SearchStore::new(file.recent_searches),
     }
@@ -256,6 +261,7 @@ pub fn snapshot(settings: &SettingsStore, search: &SearchStore) -> Vec<u8> {
         tv_guide: sn_screens::stores::settings::tv_guide_name(settings.get(Pref::TvGuide)).to_string(),
         stream_order: settings.get(Pref::StreamOrder),
         debrid_only: settings.get(Pref::DebridOnly) != 0,
+        streaming_server: settings.streaming_server().map(str::to_string),
     };
     serde_json::to_vec_pretty(&file).unwrap_or_default()
 }
@@ -515,6 +521,32 @@ mod tests {
         }
         assert_eq!(s.audio_offsets().len(), MAX_AUDIO_OFFSETS);
         assert_eq!(s.audio_offset("tt0111161"), 0, "the oldest went first");
+    }
+
+    /// The streaming server is kept as its normalized address; a file from before it existed,
+    /// a `null` and an address that is not one are all off.
+    #[test]
+    fn the_streaming_server_is_kept_as_its_address() {
+        let dir = sn_base::testscratch::process_dir("settings-streaming-server");
+        let path = dir.join("settings.json");
+        let none = SearchStore::new(Vec::new());
+        let mut s = SettingsStore::default();
+        write_atomic(&path, &snapshot(&s, &none)).unwrap();
+        assert!(std::fs::read_to_string(&path).unwrap().contains(r#""streaming_server": null"#), "off is written as null");
+        assert_eq!(load(&path).settings.streaming_server(), None);
+        assert!(s.set_streaming_server(Some("192.168.1.20".into())));
+        write_atomic(&path, &snapshot(&s, &none)).unwrap();
+        assert!(std::fs::read_to_string(&path).unwrap().contains(r#""streaming_server": "http://192.168.1.20:11470/""#));
+        let back = load(&path).settings;
+        assert_eq!((back.streaming_server(), back.gen()), (Some("http://192.168.1.20:11470/"), 0), "read back, and seeding is no change");
+        std::fs::write(&path, br#"{"subtitle_size":"huge"}"#).unwrap();
+        assert_eq!(load(&path).settings.streaming_server(), None, "a file from before the setting existed");
+        std::fs::write(&path, br#"{"streaming_server":null}"#).unwrap();
+        assert_eq!(load(&path).settings.streaming_server(), None);
+        std::fs::write(&path, br#"{"streaming_server":"nas.local:8080"}"#).unwrap();
+        assert_eq!(load(&path).settings.streaming_server(), Some("http://nas.local:8080/"), "a hand-written address is normalized");
+        std::fs::write(&path, br#"{"streaming_server":"ftp://nope"}"#).unwrap();
+        assert_eq!(load(&path).settings.streaming_server(), None, "not an address: off");
     }
 
     /// A file an earlier build wrote keeps its meaning: its language rungs become the lists.

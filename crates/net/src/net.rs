@@ -719,6 +719,10 @@ pub struct Timeouts {
     pub total_ms: c_long,
     pub low_speed_bps: c_long,
     pub low_speed_s: c_long,
+    /// Skip the per-request `net: curl rc=…` failure line. For a probe that is expected to fail
+    /// almost every time (a scan of 253 hosts for a streaming server); the caller says what it
+    /// found in one line of its own.
+    pub quiet: bool,
 }
 
 /// The deadlines for an **API call** — a request whose answer is small JSON (an addon manifest, a
@@ -729,7 +733,24 @@ pub const API: Timeouts = Timeouts {
     total_ms: 0,
     low_speed_bps: 0,
     low_speed_s: 0,
+    quiet: false,
 };
+
+/// The deadlines for a probe of a device on the home network (is a streaming server there?): a
+/// host that is not there must cost a moment, not a spinner. `connect_s` is libcurl's whole
+/// seconds, so the 1.5 s whole-request deadline is what bounds a silent address.
+pub const LAN: Timeouts = Timeouts {
+    connect_s: 1,
+    total_s: 0,
+    total_ms: 1500,
+    low_speed_bps: 0,
+    low_speed_s: 0,
+    quiet: false,
+};
+
+/// [`LAN`] for the probes of a scan: the same deadlines, and no failure line per host (nearly
+/// every one fails; the scan logs one summary).
+pub const LAN_SCAN: Timeouts = Timeouts { quiet: true, ..LAN };
 
 /// The deadlines for a body whose size is content-dependent (a large catalog, artwork, sidecar
 /// subtitles). A connect normally costs at most 8 s and fewer than one byte per second for 30 s
@@ -741,6 +762,7 @@ pub const BULK: Timeouts = Timeouts {
     total_ms: 0,
     low_speed_bps: 1,
     low_speed_s: 30,
+    quiet: false,
 };
 
 /// Protocol floor for a public redirect. A TLS request may remain TLS only; a plaintext request
@@ -1539,6 +1561,7 @@ pub const STREAM: Timeouts = Timeouts {
     total_ms: 0,
     low_speed_bps: 0,
     low_speed_s: 0,
+    quiet: false,
 };
 
 /// `CURLOPT_NOPROGRESS` (LONG + 43): `0` turns on libcurl's progress meter, whose callback is the
@@ -2206,7 +2229,7 @@ fn request_tls_sink(
             _ => {}
         }
     }
-    if let Some(why) = why {
+    if let Some(why) = why.filter(|_| !t.quiet) {
         sn_base::eventlog::log(&format!("net: curl rc={rc} — {why}"));
     }
     // `done_verify` is read only for the one code that carries it, from the attempt that DECIDED
@@ -3104,6 +3127,7 @@ mod request_tests {
                 total_ms: 0,
                 low_speed_bps: 0,
                 low_speed_s: 0,
+                quiet: false,
             }
         );
         assert_eq!(
@@ -3114,6 +3138,7 @@ mod request_tests {
                 total_ms: 0,
                 low_speed_bps: 1,
                 low_speed_s: 30,
+                quiet: false,
             }
         );
     }
@@ -3278,7 +3303,7 @@ mod budget_tests {
     use std::time::Duration;
 
     fn timeouts(total_s: c_long, total_ms: c_long) -> Timeouts {
-        Timeouts { connect_s: 8, total_s, total_ms, low_speed_bps: 0, low_speed_s: 0 }
+        Timeouts { connect_s: 8, total_s, total_ms, low_speed_bps: 0, low_speed_s: 0, quiet: false }
     }
 
     /// A roots-mode retry spends what the failed strict attempt left of the caller's deadline, never
@@ -3463,5 +3488,38 @@ mod blocking_guard_tests {
         assert!(first.ends_with(&format!("net.rs:{first_line}")), "{first}");
         assert!(second.ends_with(&format!("net.rs:{second_line}")), "{second}");
         assert_ne!(first, second);
+    }
+}
+
+#[cfg(test)]
+mod quiet_tests {
+    use super::*;
+
+    /// The log a failing probe of a closed loopback port leaves, under `t`.
+    fn log_after_refused_probe(t: Timeouts) -> Option<String> {
+        let _g = sn_base::testlock::serial();
+        if !(global_init() && available()) {
+            return None;
+        }
+        let port = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        };
+        Some(sn_base::eventlog::with_private_log(|| {
+            let r = request_result(&format!("http://127.0.0.1:{port}/settings"), &[], "GET", None, t, false, Some(1024), None);
+            assert!(r.is_err(), "nothing listens there");
+            std::fs::read_to_string(sn_base::eventlog::events_log()).unwrap_or_default()
+        }))
+    }
+
+    /// A scan probe fails ~250 times a scan: it logs no `net: curl rc=` line, where every other
+    /// profile (here the plain LAN one) keeps its line.
+    #[test]
+    fn a_scan_probe_logs_no_failure_line_and_other_requests_keep_theirs() {
+        let Some(quiet) = log_after_refused_probe(LAN_SCAN) else { return };
+        assert!(!quiet.contains("net: curl rc="), "scan probe logged: {quiet:?}");
+        let loud = log_after_refused_probe(LAN).unwrap();
+        assert!(loud.contains("net: curl rc=7"), "a LAN request keeps its failure line: {loud:?}");
+        assert_eq!(LAN_SCAN, Timeouts { quiet: true, ..LAN }, "same deadlines as LAN");
     }
 }

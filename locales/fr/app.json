@@ -270,7 +270,7 @@
   "app.reason.bad_response": "réponse inattendue",
   "app.reason.cancelled": "annulé",
   "app.reason.api_error": "erreur {code}",
-  "app.detail.why_torrent": "Les torrents ne peuvent pas être lus ici : configurez un service debrid dans cet addon pour obtenir des liens lisibles",
+  "app.detail.why_torrent": "Les torrents ont besoin d’un serveur de streaming : configurez-en un dans Réglages > Flux",
   "app.detail.why_youtube": "Les vidéos YouTube ne peuvent pas être lues dans cette application",
   "app.detail.why_external": "Ce flux s’ouvre dans une autre application ou un site web, pas ici",
   "app.detail.quiet_addons": {
@@ -363,6 +363,18 @@
     "value": "Qualité d'abord",
     "description": "Stream order option: playable at once first, then the highest resolution."
   },
+  "app.settings.streaming_server": "Serveur de streaming",
+  "app.settings.streaming_server_copy": "Lit les torrents via un serveur de streaming Stremio sur votre réseau ou votre ordinateur. Choisissez-en un trouvé sur votre réseau ou saisissez son adresse.",
+  "app.settings.server_network_header": "Sur votre réseau",
+  "app.settings.server_find": "Chercher sur mon réseau",
+  "app.settings.server_searching": "Recherche…",
+  "app.settings.server_none_found": "Aucun serveur trouvé",
+  "app.settings.server_type": "Saisir une adresse…",
+  "app.settings.server_invalid": "Ce n’est pas une adresse de serveur",
+  "app.settings.server_connected": "Connecté",
+  "app.settings.server_unreachable": "Injoignable",
+  "app.settings.server_checking": "Vérification…",
+  "app.settings.server_version": "Version {version}",
   "app.settings.debrid_only": "Flux debrid uniquement",
   "app.settings.debrid_only_copy": "Activé : uniquement les flux d’un service debrid, en cache ou non. Les flux qui ne mentionnent pas debrid sont masqués. Désactivé : tous les flux.",
   "app.detail.no_debrid_streams": "Aucun flux debrid"

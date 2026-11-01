@@ -270,7 +270,7 @@
   "app.reason.bad_response": "respuesta inesperada",
   "app.reason.cancelled": "cancelado",
   "app.reason.api_error": "error {code}",
-  "app.detail.why_torrent": "Los torrents no se pueden reproducir aquí: configura un servicio debrid en este addon para obtener enlaces reproducibles",
+  "app.detail.why_torrent": "Los torrents necesitan un servidor de streaming: configúralo en Ajustes > Streams",
   "app.detail.why_youtube": "Los vídeos de YouTube no se pueden reproducir en esta aplicación",
   "app.detail.why_external": "Esta fuente se abre en otra aplicación o sitio web, no aquí",
   "app.detail.quiet_addons": {
@@ -363,6 +363,18 @@
     "value": "Calidad primero",
     "description": "Stream order option: playable at once first, then the highest resolution."
   },
+  "app.settings.streaming_server": "Servidor de streaming",
+  "app.settings.streaming_server_copy": "Reproduce los torrents mediante un servidor de streaming de Stremio en tu red u ordenador. Elige uno de los encontrados en tu red o escribe su dirección.",
+  "app.settings.server_network_header": "En tu red",
+  "app.settings.server_find": "Buscar en mi red",
+  "app.settings.server_searching": "Buscando…",
+  "app.settings.server_none_found": "No se encontró ningún servidor",
+  "app.settings.server_type": "Escribir una dirección…",
+  "app.settings.server_invalid": "Eso no es una dirección de servidor",
+  "app.settings.server_connected": "Conectado",
+  "app.settings.server_unreachable": "No disponible",
+  "app.settings.server_checking": "Comprobando…",
+  "app.settings.server_version": "Versión {version}",
   "app.settings.debrid_only": "Solo streams debrid",
   "app.settings.debrid_only_copy": "Sí: muestra solo los streams de un servicio debrid, estén en caché o no. Se ocultan los que no mencionan debrid. No: muestra todos los streams.",
   "app.detail.no_debrid_streams": "Sin transmisiones debrid"

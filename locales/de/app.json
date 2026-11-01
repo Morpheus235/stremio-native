@@ -1212,8 +1212,8 @@
     }
   },
   "app.detail.why_torrent": {
-    "value": "Torrents laufen hier nicht: Richte in diesem Addon einen Debrid-Dienst ein, um abspielbare Links zu erhalten",
-    "description": "Toast when OK is pressed on a torrent stream: this app has no torrent engine; a debrid service in the addon turns torrents into playable links."
+    "value": "Torrents brauchen einen Streaming-Server: Richte ihn unter Einstellungen > Streams ein",
+    "description": "Toast when OK is pressed on a torrent stream and no streaming server is set: where to set one up."
   },
   "app.detail.why_youtube": {
     "value": "YouTube-Videos können in dieser App nicht abgespielt werden",
@@ -1340,6 +1340,57 @@
   "app.settings.stream_order_quality": {
     "value": "Qualität zuerst",
     "description": "Stream order option: playable at once first, then the highest resolution."
+  },
+  "app.settings.streaming_server": {
+    "value": "Streaming-Server",
+    "description": "Settings: the Streams row and the page title for the streaming server that plays torrents."
+  },
+  "app.settings.streaming_server_copy": {
+    "value": "Spielt Torrents über einen Stremio-Streaming-Server in deinem Netzwerk oder auf deinem Computer ab. Wähle einen im Netzwerk gefundenen oder gib seine Adresse ein.",
+    "description": "Streaming server page: the line under the title."
+  },
+  "app.settings.server_network_header": {
+    "value": "In deinem Netzwerk",
+    "description": "Streaming server page: section header over the Find row and the servers a scan found."
+  },
+  "app.settings.server_find": {
+    "value": "Im Netzwerk suchen",
+    "description": "Streaming server page: the row that scans the home network for streaming servers."
+  },
+  "app.settings.server_searching": {
+    "value": "Suche…",
+    "description": "Streaming server page: the Find row's value while the scan runs."
+  },
+  "app.settings.server_none_found": {
+    "value": "Kein Server gefunden",
+    "description": "Streaming server page: the note when a finished scan found no server."
+  },
+  "app.settings.server_type": {
+    "value": "Adresse eingeben…",
+    "description": "Streaming server page: the row that opens the keyboard to type the server's address."
+  },
+  "app.settings.server_invalid": {
+    "value": "Das ist keine Serveradresse",
+    "description": "Toast when the typed streaming server address is not a web address a server could have."
+  },
+  "app.settings.server_connected": {
+    "value": "Verbunden",
+    "description": "Streaming server status: the server answered its check."
+  },
+  "app.settings.server_unreachable": {
+    "value": "Nicht erreichbar",
+    "description": "Streaming server status: the server did not answer its check."
+  },
+  "app.settings.server_checking": {
+    "value": "Wird geprüft…",
+    "description": "Streaming server status: the check is running."
+  },
+  "app.settings.server_version": {
+    "value": "Version {version}",
+    "description": "Streaming server: the version the server reported, under its address.",
+    "args": {
+      "version": "str"
+    }
   },
   "app.settings.debrid_only": {
     "value": "Nur Debrid-Streams",
