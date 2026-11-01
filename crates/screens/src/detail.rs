@@ -87,8 +87,11 @@
 //! the list or the season dropdown reaches it, RIGHT walks the row and then goes back to the list,
 //! LEFT on its first disc is BACK. An episode's Streams page has none: it is a page about one
 //! video, and the library keeps the show (its All episodes page has the row). The row may unfurl
-//! into the air up to the stream panel ([`stream_panel_x`]). (Trailer and Share discs are not
-//! here: the app has no YouTube playback, and sharing is not a television's job.)
+//! into the air up to the stream panel ([`stream_panel_x`]). A **Trailer** disc ends the row, only
+//! when the meta names a usable YouTube id (`Meta::trailer_id`): the app has no YouTube playback,
+//! so OK asks the application to open the TV's own YouTube app on the trailer
+//! (`AppFx::OpenTrailer`); the screen does nothing else. (A Share disc is not here: sharing is
+//! not a television's job.)
 //!
 //! **The stream panel**: the list's column stands on its own dark ground
 //! ([`theme::DETAIL_STREAM_PANEL`], rounded at its top-left), and each stream row's facts are
@@ -152,6 +155,8 @@ const SEASON_GROUP: GroupId = GroupId(1);
 const LIBRARY_KEY: u32 = 0x0E80_0000;
 /// The movie's *Mark as Watched* button under it (the same group).
 const WATCHED_KEY: u32 = LIBRARY_KEY + 1;
+/// The trailer disc after them (the same group): present when the meta names a YouTube trailer.
+const TRAILER_KEY: u32 = LIBRARY_KEY + 2;
 const LIBRARY_GROUP: GroupId = GroupId(2);
 /// The addon dropdown over a stream list (in the chip band) and its group.
 const ADDON_KEY: u32 = 0x0EC0_0000;
@@ -1463,7 +1468,8 @@ impl Part<Bundle> for LinkColumn<'_> {
 
 /// **The action row** at the foot of an item page's narrative column (stremio-web's MetaPreview
 /// action buttons): round icon discs — the library toggle (a plus, or a check once the account
-/// holds the item), then a movie's watched mark (an eye, or a check once watched) — that UNFURL
+/// holds the item), then a movie's watched mark (an eye, or a check once watched), then the
+/// trailer (a film frame) when there is one — that UNFURL
 /// their verb while focused (`CircleButton::label`, `open` the unfurl springs). LEFT/RIGHT walk
 /// the row; RIGHT off its end is the list, LEFT off its start is BACK.
 pub struct LibraryButton<'a> {
@@ -1472,13 +1478,16 @@ pub struct LibraryButton<'a> {
     pub held: bool,
     /// A movie's *Mark as Watched / Unwatched* disc beside it, and whether it is watched (a check).
     pub watched: Option<(&'a CString, bool)>,
+    /// The *Trailer* disc's verb, last in the row, when the meta names a trailer.
+    pub trailer: Option<&'a CString>,
     pub entry: EntryId,
     pub info: &'a Info,
     pub title: &'a str,
     /// The expanded link group ([`LinkColumn::expanded`]'s group).
     pub expanded: Option<usize>,
-    /// How far each disc's verb has unfurled (0 shut, 1 open): the library disc's, the watched one's.
-    pub open: [f32; 2],
+    /// How far each disc's verb has unfurled (0 shut, 1 open): the library disc's, the watched
+    /// one's, the trailer's.
+    pub open: [f32; ACTION_DISCS],
     /// Where the row starts, measured once per column (focus asks every frame).
     pub rect: &'a RefCell<Option<Rect>>,
 }
@@ -1488,6 +1497,11 @@ pub struct LibraryButton<'a> {
 pub fn stream_panel_x() -> f32 {
     detail_layout().content.x - theme::space::LG
 }
+
+/// The most discs the action row holds: library, watched, trailer.
+pub const ACTION_DISCS: usize = 3;
+/// The action discs' element keys in row order (`open`'s order).
+const ACTION_KEYS: [u32; ACTION_DISCS] = [LIBRARY_KEY, WATCHED_KEY, TRAILER_KEY];
 
 /// An action disc's diameter (`CircleButton`'s own).
 pub const ACTION_D: f32 = 60.0;
@@ -1517,28 +1531,51 @@ impl LibraryButton<'_> {
         sn_ui::widgets::CircleButton::cap_w(ACTION_D, e, lw)
     }
 
-    fn rect(&self, measure: &dyn Measure) -> Rect {
-        let o = self.origin(measure);
-        Rect::new(o.x, o.y, Self::disc_w(self.label, self.open[0], measure), ACTION_D)
+    /// The discs present, in row order: element key, verb, and the index into `open`.
+    fn discs(&self) -> Vec<(u32, &CString, usize)> {
+        let mut v = vec![(LIBRARY_KEY, self.label, 0)];
+        if let Some((label, _)) = self.watched {
+            v.push((WATCHED_KEY, label, 1));
+        }
+        if let Some(label) = self.trailer {
+            v.push((TRAILER_KEY, label, 2));
+        }
+        v
     }
 
-    /// The watched disc's rect: after the library disc.
-    fn watched_rect(&self, measure: &dyn Measure) -> Option<Rect> {
-        let (label, _) = self.watched?;
-        let lib = self.rect(measure);
-        Some(Rect::new(lib.x + lib.w + ACTION_GAP, lib.y, Self::disc_w(label, self.open[1], measure), ACTION_D))
+    /// Every disc's rect, left to right from the column's foot.
+    fn rects(&self, measure: &dyn Measure) -> Vec<(u32, Rect)> {
+        let o = self.origin(measure);
+        let mut x = o.x;
+        self.discs()
+            .into_iter()
+            .map(|(elem, label, i)| {
+                let r = Rect::new(x, o.y, Self::disc_w(label, self.open[i], measure), ACTION_D);
+                x += r.w + ACTION_GAP;
+                (elem, r)
+            })
+            .collect()
+    }
+
+    /// The whole row's rect, first disc to last.
+    fn extent(&self, measure: &dyn Measure) -> Rect {
+        let rects = self.rects(measure);
+        rects.iter().skip(1).fold(rects[0].1, |u, (_, r)| u.union(*r))
     }
 
     fn rect_of(&self, elem: u32, measure: &dyn Measure) -> Option<Rect> {
-        match elem {
-            LIBRARY_KEY => Some(self.rect(measure)),
-            WATCHED_KEY => self.watched_rect(measure),
-            _ => None,
-        }
+        self.rects(measure).into_iter().find_map(|(e, r)| (e == elem).then_some(r))
     }
 
     fn key(&self) -> FocusKey<u32> {
         FocusKey { entry: self.entry, elem: LIBRARY_KEY }
+    }
+
+    /// The disc `step` places from `elem` along the row (`-1` left, `1` right), if there is one.
+    fn next_to(&self, elem: u32, step: isize) -> Option<u32> {
+        let discs = self.discs();
+        let at = discs.iter().position(|(e, _, _)| *e == elem)?;
+        discs.get(at.checked_add_signed(step)?).map(|(e, _, _)| *e)
     }
 }
 
@@ -1551,30 +1588,32 @@ impl Focusable<Bundle> for LibraryButton<'_> {
             reachable: AxisMask::BOTH,
             // [up, down, left, right]: LEFT off the row is BACK, as on the list; RIGHT off it the list
             edge: [EdgeRule::Stop, EdgeRule::Stop, EdgeRule::Nav(sn_machine::machine::NavOpKind::Back), EdgeRule::Geometric],
-            extent: match self.watched_rect(cx.measure) {
-                Some(w) => self.rect(cx.measure).union(w),
-                None => self.rect(cx.measure),
-            },
-            len: 1 + usize::from(self.watched.is_some()),
+            extent: self.extent(cx.measure),
+            len: self.discs().len(),
             elem: ElemKind::Control,
         });
     }
     fn group_of(&self, key: &u32, _cx: &Cx<'_, Bundle>) -> Option<GroupId> {
-        (*key == LIBRARY_KEY || *key == WATCHED_KEY && self.watched.is_some()).then_some(LIBRARY_GROUP)
+        self.discs().iter().any(|(e, _, _)| e == key).then_some(LIBRARY_GROUP)
     }
     fn neighbour(&self, key: FocusKey<u32>, dir: Dir, _cx: &Cx<'_, Bundle>) -> Step<u32> {
-        match (key.elem, dir) {
-            (LIBRARY_KEY, Dir::Right) if self.watched.is_some() => Step::Move(FocusKey { entry: self.entry, elem: WATCHED_KEY }),
-            (WATCHED_KEY, Dir::Left) => Step::Move(self.key()),
-            _ => Step::Edge,
+        let step = match dir {
+            Dir::Right => 1,
+            Dir::Left => -1,
+            _ => return Step::Edge,
+        };
+        match self.next_to(key.elem, step) {
+            Some(elem) => Step::Move(FocusKey { entry: self.entry, elem }),
+            None => Step::Edge,
         }
     }
     fn place(&self, key: &u32, cx: &Cx<'_, Bundle>, _at: At) -> Option<Placed> {
         let r = self.rect_of(*key, cx.measure)?;
-        Some(Placed { rect: r, rest_rect: r, clip: Rect::FULL, index: Some(u32::from(*key == WATCHED_KEY)) })
+        let index = self.discs().iter().position(|(e, _, _)| e == key).map(|i| i as u32);
+        Some(Placed { rect: r, rest_rect: r, clip: Rect::FULL, index })
     }
     fn reconcile(&self, want: FocusKey<u32>, _cx: &Cx<'_, Bundle>) -> FocusKey<u32> {
-        if want.elem == WATCHED_KEY && self.watched.is_some() {
+        if self.discs().iter().any(|(e, _, _)| *e == want.elem) {
             return want;
         }
         self.key()
@@ -1589,11 +1628,13 @@ impl Part<Bundle> for LibraryButton<'_> {
     fn draw(&mut self, f: &mut DrawFrame<'_, '_, Bundle>, _rect: Rect) {
         use sn_ui::icons::Icon;
         let p = f.painter;
-        let mut discs = vec![(LIBRARY_KEY, self.rect(f.measure), self.label, if self.held { Icon::Check } else { Icon::Plus }, self.open[0])];
-        if let (Some((label, on)), Some(rect)) = (self.watched, self.watched_rect(f.measure)) {
-            discs.push((WATCHED_KEY, rect, label, if on { Icon::Check } else { Icon::Eye }, self.open[1]));
-        }
-        for (elem, rect, label, icon, e) in discs {
+        let rects = self.rects(f.measure);
+        for ((elem, label, i), (_, rect)) in self.discs().into_iter().zip(rects) {
+            let (icon, e) = match elem {
+                LIBRARY_KEY => (if self.held { Icon::Check } else { Icon::Plus }, self.open[i]),
+                WATCHED_KEY => (if self.watched.is_some_and(|w| w.1) { Icon::Check } else { Icon::Eye }, self.open[i]),
+                _ => (Icon::Trailer, self.open[i]),
+            };
             let key = FocusKey { entry: self.entry, elem };
             sn_ui::widgets::CircleButton::new(c"".as_ptr())
                 .frame(rect)
@@ -1633,7 +1674,7 @@ impl Composed<Bundle> for DetailView<'_> {
             v.push((ADDONS_PART, row.extent()));
         }
         if let Some(b) = &self.library {
-            v.push((LIBRARY_PART, b.watched_rect(cx.measure).map_or(b.rect(cx.measure), |w| b.rect(cx.measure).union(w))));
+            v.push((LIBRARY_PART, b.extent(cx.measure)));
         }
         if let Some(r) = self.links.as_ref().and_then(|l| l.bounds(cx.measure)) {
             v.push((LINKS_PART, r));
@@ -1753,11 +1794,14 @@ pub struct DetailScreen {
     library: Option<(bool, AddState)>,
     library_label: CString,
     library_rect: RefCell<Option<Rect>>,
-    /// The action discs' unfurl springs (the library disc's, the watched disc's): open on focus.
-    action_open: [sn_ui::Spring; 2],
+    /// The action discs' unfurl springs (library, watched, trailer): open on focus.
+    action_open: [sn_ui::Spring; ACTION_DISCS],
     /// A movie page's watched button (signed in): whether its entry is watched, and its label.
     watched: Option<bool>,
     watched_label: CString,
+    /// The trailer disc: the meta's first usable YouTube id, and its label (shown once the meta is in).
+    trailer: Option<String>,
+    trailer_label: CString,
     /// The chip row: what each chip does and its label (the season dropdown or All episodes, then
     /// the season's or the episode's watched button), rebuilt each tick.
     chips: Vec<Chip>,
@@ -1848,9 +1892,11 @@ impl DetailScreen {
             library: None,
             library_label: CString::default(),
             library_rect: RefCell::new(None),
-            action_open: [sn_ui::Spring::at(0.0), sn_ui::Spring::at(0.0)],
+            action_open: [sn_ui::Spring::at(0.0), sn_ui::Spring::at(0.0), sn_ui::Spring::at(0.0)],
             watched: None,
             watched_label: CString::default(),
+            trailer: None,
+            trailer_label: CString::default(),
             chips: Vec::new(),
             chip_labels: Vec::new(),
             focus_episode: None,
@@ -1960,6 +2006,14 @@ impl DetailScreen {
             self.relayout();
             fx.invalidate(Provenance::Landing(fx.from()));
         }
+        // the trailer disc (a movie's or a series'): the meta's first usable YouTube id
+        let trailer = self.ready_meta(cx).and_then(Meta::trailer_id).map(str::to_string);
+        if trailer != self.trailer {
+            self.trailer = trailer;
+            self.trailer_label = CString::new(msg::app_detail_trailer()).unwrap_or_default();
+            self.relayout();
+            fx.invalidate(Provenance::Landing(fx.from()));
+        }
         if self.library == Some(look) {
             return;
         }
@@ -2043,6 +2097,16 @@ impl DetailScreen {
             && match ev {
                 ScreenEvent::Activate(e) => *e == WATCHED_KEY,
                 ScreenEvent::PressCommit(_) => cx.focus.current == Some(FocusKey { entry: self.entry, elem: WATCHED_KEY }),
+                _ => false,
+            }
+    }
+
+    /// Does `ev` press the trailer disc?
+    fn trailer_pressed(&self, ev: &ScreenEvent<Bundle>, cx: &Cx<'_, Bundle>) -> bool {
+        self.trailer.is_some()
+            && match ev {
+                ScreenEvent::Activate(e) => *e == TRAILER_KEY,
+                ScreenEvent::PressCommit(_) => cx.focus.current == Some(FocusKey { entry: self.entry, elem: TRAILER_KEY }),
                 _ => false,
             }
     }
@@ -2194,11 +2258,12 @@ impl DetailScreen {
             label: &self.library_label,
             held: library_held(look),
             watched: self.watched.map(|on| (&self.watched_label, on)),
+            trailer: self.trailer.as_ref().map(|_| &self.trailer_label),
             entry: self.entry,
             info: &self.info,
             title: &self.title,
             expanded: self.expanded.map(|e| e.0),
-            open: [self.action_open[0].pos.clamp(0.0, 1.0), self.action_open[1].pos.clamp(0.0, 1.0)],
+            open: self.action_open.each_ref().map(|s| s.pos.clamp(0.0, 1.0)),
             rect: &self.library_rect,
         });
         let links = (!self.info.links.is_empty()).then(|| LinkColumn {
@@ -2448,7 +2513,7 @@ impl Machine<Bundle> for DetailScreen {
                 }
                 self.seat.tick(seated, target, fx);
                 self.table.update(t.dt(), self.table_frame().h);
-                for (spring, elem) in self.action_open.iter_mut().zip([LIBRARY_KEY, WATCHED_KEY]) {
+                for (spring, elem) in self.action_open.iter_mut().zip(ACTION_KEYS) {
                     let on = cx.focus.current == Some(FocusKey { entry: self.entry, elem });
                     let before = spring.pos;
                     spring.step(if on { 1.0 } else { 0.0 }, 300.0, t.dt());
@@ -2503,6 +2568,14 @@ impl Machine<Bundle> for DetailScreen {
             }
             ScreenEvent::PressCommit(_) | ScreenEvent::Activate(_) if self.watched_pressed(ev, cx) => {
                 self.press_mark(sn_stremio::library::Edit::MarkWatched(self.watched != Some(true)), cx, fx);
+                fx.invalidate(Provenance::Input);
+                Handled::Yes
+            }
+            // the trailer disc hands the YouTube id to the application, which opens the TV's YouTube app
+            ScreenEvent::PressCommit(_) | ScreenEvent::Activate(_) if self.trailer_pressed(ev, cx) => {
+                if let Some(id) = &self.trailer {
+                    fx.push(Fx::App(AppFx::OpenTrailer(id.clone())));
+                }
                 fx.invalidate(Provenance::Input);
                 Handled::Yes
             }
@@ -3430,8 +3503,12 @@ mod tests {
         }
     }
 
+    fn movie_mode_item() -> ItemRef {
+        ItemRef { kind: "movie".into(), id: "tt0111161".into(), name: "The Shawshank Redemption".into(), from: String::new() }
+    }
+
     fn movie_mode() -> Mode {
-        Mode::Item(ItemRef { kind: "movie".into(), id: "tt0111161".into(), name: "The Shawshank Redemption".into(), from: String::new() })
+        Mode::Item(movie_mode_item())
     }
 
     fn link_names(i: &Info) -> Vec<(Category, Vec<&str>)> {
@@ -3805,17 +3882,23 @@ mod tests {
             titled.logo = None;
             for (what, inf) in [("logo", &page), ("title", &titled)] {
                 let verbs = [None, Some((sn_ui::widgets::mark_watched_verb(), false)), Some((sn_ui::widgets::mark_unwatched_verb(), true))];
-                for (label, verb) in [msg::app_menu_add_to_library(), msg::app_menu_in_library()].into_iter().flat_map(|l| verbs.map(|v| (l, v))) {
+                let trailer_c = CString::new(msg::app_detail_trailer()).unwrap();
+                for (label, verb, trailer) in [msg::app_menu_add_to_library(), msg::app_menu_in_library()]
+                    .into_iter()
+                    .flat_map(|l| verbs.map(|v| (l, v)))
+                    .flat_map(|(l, v)| [None, Some(&trailer_c)].map(|t| (l, v, t)))
+                {
                     let label = CString::new(label).unwrap();
                     let verb_c = verb.map(|(v, on)| (CString::new(v).unwrap(), on));
                     let memo = RefCell::new(None);
                     let held = label.to_str().unwrap() == msg::app_menu_in_library();
                     let watched = verb_c.as_ref().map(|(c, on)| (c, *on));
-                    let tag = format!("{}/{what}/{label:?}/{verb:?}", language.tag());
-                    for open in [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]] {
-                        let b = LibraryButton { label: &label, held, watched, entry: EntryId(1), info: inf, title: inf.title.as_deref().unwrap(), expanded: None, open, rect: &memo };
-                        let lib = b.rect(&m);
-                        let row = b.watched_rect(&m).map_or(lib, |w| lib.union(w));
+                    let tag = format!("{}/{what}/{label:?}/{verb:?}/trailer={}", language.tag(), trailer.is_some());
+                    // each disc unfurled in turn, and none: focus is on one disc at a time
+                    for open in [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] {
+                        let b = LibraryButton { label: &label, held, watched, trailer, entry: EntryId(1), info: inf, title: inf.title.as_deref().unwrap(), expanded: None, open, rect: &memo };
+                        let lib = b.rect_of(LIBRARY_KEY, &m).unwrap();
+                        let row = b.extent(&m);
                         // the row may unfurl into the air between the column and the stream panel
                         assert!(lib.x == n.x && row.x + row.w <= stream_panel_x() - theme::space::SM, "{tag}/{open:?}: the row {row:?} reaches the stream panel");
                         assert!(row.y + row.h <= n.y + n.h, "{tag}: inside the column {row:?}");
@@ -3971,6 +4054,170 @@ mod tests {
         let rows = &detail_page(&app).sections()[0].rows;
         assert!(rows.iter().all(|r| r.value.as_deref() == Some(msg::app_watched_watched())), "every S1 row is watched");
         assert!(app.drawn_text().iter().any(|t| t == msg::app_watched_unmark_season()), "so its button unmarks");
+    }
+
+    /// An item page (`item`) with `meta` landed, everything in; signed in or out.
+    fn detail_with_meta(item: ItemRef, meta: Meta, signed_in: bool) -> crate::test_support::TestApp {
+        let key = MetaKey { kind: item.kind.clone(), id: item.id.clone() };
+        page_with_meta(AppArg::Detail(item), key, meta, signed_in)
+    }
+
+    /// `arg`'s page (an item's or an episode's) with `meta` landed under `key`, everything in.
+    fn page_with_meta(arg: AppArg, key: MetaKey, meta: Meta, signed_in: bool) -> crate::test_support::TestApp {
+        use crate::stores::account::Secret;
+        use crate::stores::detail::{DetailLanding, DetailStore};
+        use crate::stores::library::{LibraryLanding, LibraryStore};
+        use sn_machine::machine::MachineId;
+        use sn_stremio::manifest::{Addon, Manifest};
+        let cinemeta = Addon::new(
+            "https://v3-cinemeta.strem.io/manifest.json",
+            Manifest::parse(br#"{"id":"com.linvo.cinemeta","resources":["catalog","meta"],"types":["movie","series"],"idPrefixes":["tt"]}"#).unwrap(),
+        );
+        let mut app = crate::test_support::TestApp::boot(crate::stores::catalog::CatalogStore::from_addons(vec![cinemeta.clone()]));
+        let mut library = LibraryStore::new();
+        library.sign_in("u1", &Secret::new("k"));
+        let _ = library.land(LibraryLanding::Fetched { user_id: "u1".into(), result: Ok(serde_json::from_str("[]").unwrap()) });
+        app.rig.library = library;
+        if signed_in {
+            sign_in(&mut app);
+        }
+        app.rig.detail = DetailStore::new();
+        app.rig.detail.open_meta(&[cinemeta], key.clone());
+        app.d.request(MachineId::Nav, NavOp::Push(arg));
+        app.frames(40);
+        app.rig.detail.land(DetailLanding::Meta { key, result: Ok(meta) });
+        let gen = app.rig.detail.gen();
+        app.notify(StoreId::Detail, gen);
+        app.frames(10);
+        app
+    }
+
+    /// Every effect the page asked for since the last call: a trailer press must be exactly one.
+    fn trailer_effects(app: &mut crate::test_support::TestApp) -> Vec<AppFx> {
+        app.take_effects()
+    }
+
+    /// The Shawshank movie page, signed in: the action row is library, watched, trailer; the
+    /// trailer disc is last, RIGHT walks to it, RIGHT off it is the list, LEFT walks back, and OK
+    /// on it asks the application to open the first trailer's YouTube id and nothing else (the
+    /// effects are exactly `[OpenTrailer(id)]`).
+    #[test]
+    fn a_movie_with_a_trailer_ends_its_action_row_with_a_disc_that_opens_it() {
+        use sn_machine::machine::Key;
+        let _g = sn_base::testlock::serial();
+        let _en = sn_platform::i18n::language_on_this_thread_for_test(sn_platform::i18n::Preference::En);
+        let mut app = detail_with_meta(movie_mode_item(), fixture("cinemeta_shawshank"), true);
+        let page = detail_page(&app);
+        assert_eq!((page.watched.is_some(), page.trailer.as_deref()), (true, Some("PLl99DlL6b4")), "the meta's first trailer");
+        let focus = |app: &crate::test_support::TestApp| app.d.focus().map(|k| k.elem);
+        assert!(!app.drawn_text().iter().any(|t| t == msg::app_detail_trailer()), "at rest the disc is its glyph alone");
+        // from the list: LEFT reaches the row at its first disc
+        app.press(Key::Left);
+        assert_eq!(focus(&app), Some(LIBRARY_KEY));
+        app.press(Key::Right);
+        assert_eq!(focus(&app), Some(WATCHED_KEY));
+        app.press(Key::Right);
+        assert_eq!(focus(&app), Some(TRAILER_KEY), "the trailer disc is last");
+        assert!(app.drawn_text().iter().any(|t| t == msg::app_detail_trailer()), "focused, it unfurls its verb");
+        app.press(Key::Left);
+        assert_eq!(focus(&app), Some(WATCHED_KEY), "LEFT walks back");
+        app.press(Key::Right);
+        app.take_effects();
+        app.press(Key::Ok);
+        assert_eq!(trailer_effects(&mut app), [AppFx::OpenTrailer("PLl99DlL6b4".into())], "OK asks for exactly the trailer, nothing else");
+        assert_eq!(app.top_name(), "detail", "and the page stays");
+        app.press(Key::Right);
+        assert!(focus(&app).is_some_and(|e| e >= EPISODE_KEY || e < SEASON_KEY), "RIGHT off the last disc is the list: {:?}", focus(&app));
+        assert_ne!(focus(&app), Some(TRAILER_KEY));
+    }
+
+    /// A movie whose meta names no trailer (or only unusable ids) has no disc: the row ends at
+    /// the watched disc and RIGHT there is the list.
+    #[test]
+    fn a_movie_without_a_trailer_has_no_trailer_disc() {
+        use sn_machine::machine::Key;
+        let _g = sn_base::testlock::serial();
+        let _en = sn_platform::i18n::language_on_this_thread_for_test(sn_platform::i18n::Preference::En);
+        let mut movie = fixture("cinemeta_shawshank");
+        movie.trailers.clear();
+        let mut app = detail_with_meta(movie_mode_item(), movie.clone(), true);
+        assert_eq!(detail_page(&app).trailer, None);
+        app.press(Key::Left);
+        app.press(Key::Right);
+        assert_eq!(app.d.focus().map(|k| k.elem), Some(WATCHED_KEY));
+        app.press(Key::Right);
+        assert_ne!(app.d.focus().map(|k| k.elem), Some(TRAILER_KEY), "no disc to walk to");
+        assert!(app.d.focus().is_some_and(|k| k.elem != WATCHED_KEY), "RIGHT off the last disc is the list");
+        // an id that is not a YouTube id is no trailer
+        movie.trailers = serde_json::from_str(r#"[{"source":"not an id!","type":"Trailer"}]"#).unwrap();
+        let app = detail_with_meta(movie_mode_item(), movie, true);
+        assert_eq!(detail_page(&app).trailer, None);
+    }
+
+    /// A series' row is library then trailer (it has no watched disc): RIGHT from the library disc
+    /// reaches the trailer, LEFT returns, OK opens the `trailerStreams` id, which wins over `trailers`.
+    #[test]
+    fn a_series_row_is_library_then_trailer() {
+        use sn_machine::machine::Key;
+        let _g = sn_base::testlock::serial();
+        let _en = sn_platform::i18n::language_on_this_thread_for_test(sn_platform::i18n::Preference::En);
+        let mut show = fixture("cinemeta_wild_last_boss");
+        show.trailers = serde_json::from_str(r#"[{"source":"AAAAAA11","type":"Trailer"}]"#).unwrap();
+        show.trailer_streams = serde_json::from_str(r#"[{"ytId":"xyXX8LXiNJ4","title":"Official"}]"#).unwrap();
+        let item = ItemRef { kind: "series".into(), id: "tt33258199".into(), name: "Boss".into(), from: String::new() };
+        let mut app = detail_with_meta(item, show, true);
+        assert_eq!(detail_page(&app).watched, None, "a series has no watched disc");
+        let focus = |app: &crate::test_support::TestApp| app.d.focus().map(|k| k.elem);
+        app.press(Key::Left);
+        assert_eq!(focus(&app), Some(LIBRARY_KEY), "LEFT from the episodes reaches the row");
+        app.press(Key::Right);
+        assert_eq!(focus(&app), Some(TRAILER_KEY));
+        app.press(Key::Left);
+        assert_eq!(focus(&app), Some(LIBRARY_KEY), "LEFT walks back");
+        app.press(Key::Right);
+        app.take_effects();
+        app.press(Key::Ok);
+        assert_eq!(trailer_effects(&mut app), [AppFx::OpenTrailer("xyXX8LXiNJ4".into())], "the trailerStreams id wins over trailers");
+        app.press(Key::Left);
+        app.press(Key::Left);
+        assert_eq!(app.top_name(), "home", "LEFT off the first disc is BACK");
+    }
+
+    /// An episode's Streams page is about one video and has no action row, so no trailer disc,
+    /// whatever trailers the show's meta carries; focus never reaches the disc's key.
+    #[test]
+    fn an_episode_page_shows_no_trailer_disc_even_when_the_meta_has_trailers() {
+        use sn_machine::machine::Key;
+        let _g = sn_base::testlock::serial();
+        let _en = sn_platform::i18n::language_on_this_thread_for_test(sn_platform::i18n::Preference::En);
+        let show = fixture("cinemeta_breaking_bad_meta");
+        assert_eq!(show.trailer_id(), Some("VFkjBy2b50Q"), "the meta has a trailer");
+        let key = MetaKey { kind: "series".into(), id: "tt0903747".into() };
+        let mut app = page_with_meta(AppArg::Streams(episode("tt0903747:1:1", "Pilot")), key.clone(), show, true);
+        assert_eq!(app.top_name(), "streams");
+        assert!(matches!(app.rig.detail.meta(&key), Some(MetaState::Ready(_))), "the show's meta is in");
+        let page = detail_page(&app);
+        assert_eq!((page.trailer.as_deref(), page.library_label()), (None, None), "no trailer, no action row");
+        for key in [Key::Left, Key::Right, Key::Up, Key::Down, Key::Left, Key::Right, Key::Ok] {
+            app.press(key);
+            assert_ne!(app.d.focus().map(|k| k.elem), Some(TRAILER_KEY), "{key:?}");
+            assert!(!app.drawn_text().iter().any(|t| t == msg::app_detail_trailer()), "{key:?}: no Trailer label drawn");
+        }
+        assert!(app.take_effects().iter().all(|fx| !matches!(fx, AppFx::OpenTrailer(_))), "no trailer is ever asked for");
+    }
+
+    /// Signed out a movie has no watched disc: the row is library then trailer.
+    #[test]
+    fn signed_out_a_movie_row_is_library_then_trailer() {
+        use sn_machine::machine::Key;
+        let _g = sn_base::testlock::serial();
+        let _en = sn_platform::i18n::language_on_this_thread_for_test(sn_platform::i18n::Preference::En);
+        let mut app = detail_with_meta(movie_mode_item(), fixture("cinemeta_shawshank"), false);
+        assert_eq!(detail_page(&app).watched, None);
+        app.press(Key::Left);
+        assert_eq!(app.d.focus().map(|k| k.elem), Some(LIBRARY_KEY));
+        app.press(Key::Right);
+        assert_eq!(app.d.focus().map(|k| k.elem), Some(TRAILER_KEY));
     }
 
     /// A movie's page, signed in: *Mark as Unwatched* (checked) under the library button while

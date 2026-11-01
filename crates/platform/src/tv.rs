@@ -6,6 +6,7 @@ pub mod secure;
 pub mod sink;
 pub mod toast;
 pub mod window;
+pub mod youtube;
 
 use std::os::raw::c_void;
 use std::sync::OnceLock;
@@ -28,6 +29,10 @@ pub struct Port {
     pub go_home: fn(),
     pub poll_home: fn(),
     pub deliver_toast: fn(&str, toast::Identity) -> toast::Sent,
+    /// Open the TV's YouTube app on a video id (`youtube::open_trailer` is the door). Makes the
+    /// `running` query and one launch over LS2 (each may wait up to three seconds), plus a
+    /// non-blocking spawn of the detached helper when YouTube is not running: never the frame thread.
+    pub open_trailer: fn(&str) -> youtube::Outcome,
     pub bind_window: fn(*mut c_void),
     pub grab_surface: fn(*mut c_void),
     /// Answers whether a surface was held (and so actually let go of).
@@ -64,6 +69,7 @@ static ABSENT: Port = Port {
     go_home: nothing,
     poll_home: nothing,
     deliver_toast: toast::deliver_without_port,
+    open_trailer: youtube::open_without_port,
     bind_window: |_| {},
     grab_surface: |_| {},
     release_surface: || false,

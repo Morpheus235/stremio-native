@@ -377,5 +377,7 @@
   "app.settings.server_version": "Version {version}",
   "app.settings.debrid_only": "Flux debrid uniquement",
   "app.settings.debrid_only_copy": "Activé : uniquement les flux d’un service debrid, en cache ou non. Les flux qui ne mentionnent pas debrid sont masqués. Désactivé : tous les flux.",
-  "app.detail.no_debrid_streams": "Aucun flux debrid"
+  "app.detail.no_debrid_streams": "Aucun flux debrid",
+  "app.detail.trailer": "Bande-annonce",
+  "app.detail.trailer_failed": "Impossible d’ouvrir YouTube"
 }

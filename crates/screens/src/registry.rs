@@ -756,6 +756,9 @@ pub enum AppFx {
     /// Say this on the television's own toast (app text; a page's passing word, e.g. why a stream
     /// does not play here).
     Toast(String),
+    /// Open the TV's own YouTube app on this trailer (a YouTube video id the screen has already
+    /// checked, `sn_stremio::types::is_youtube_id`). The application runs it on a worker.
+    OpenTrailer(String),
 }
 
 /// The application's payloads to a screen. Every store landing reaches a screen as its store's

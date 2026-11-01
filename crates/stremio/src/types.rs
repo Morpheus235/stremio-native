@@ -67,6 +67,38 @@ pub struct Meta {
     /// The TMDB addon (and AIOStreams serving it) names the work's IMDb id here.
     #[serde(default, rename = "imdb_id", deserialize_with = "lenient_string")]
     pub imdb_id: Option<String>,
+    /// Cinemeta's `trailers`: `{"source": "<YouTube id>", "type": "Trailer"}`. An entry that does
+    /// not decode is dropped alone. Read through [`Meta::trailer_id`].
+    #[serde(default, deserialize_with = "lenient_items")]
+    pub trailers: Vec<Trailer>,
+    /// The newer shape, `trailerStreams`: `{"ytId": "<YouTube id>", "title": "..."}`.
+    #[serde(default, deserialize_with = "lenient_items")]
+    pub trailer_streams: Vec<TrailerStream>,
+}
+
+/// One entry of a meta's `trailers`. Both fields are read leniently: a missing or odd one is empty.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+pub struct Trailer {
+    #[serde(default, deserialize_with = "lenient_string_or_empty")]
+    pub source: String,
+    #[serde(rename = "type", default, deserialize_with = "lenient_string_or_empty")]
+    pub kind: String,
+}
+
+/// One entry of a meta's `trailerStreams`.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TrailerStream {
+    #[serde(default, deserialize_with = "lenient_string_or_empty")]
+    pub yt_id: String,
+    #[serde(default, deserialize_with = "lenient_string_or_empty")]
+    pub title: String,
+}
+
+/// A YouTube video id as the app will hand it to the TV's YouTube app: 6 to 20 characters of
+/// `[A-Za-z0-9_-]`. The id goes into a JSON payload, so anything else is refused.
+pub fn is_youtube_id(s: &str) -> bool {
+    (6..=20).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
 /// The meta's `behaviorHints`. Only `defaultVideoId` is read: the video id streams are asked
@@ -90,6 +122,20 @@ impl Meta {
         let tt = |s: &str| s.len() > 2 && s.starts_with("tt") && s[2..].bytes().all(|b| b.is_ascii_digit());
         let link = self.links.iter().filter(|l| l.category.eq_ignore_ascii_case("imdb")).find_map(|l| l.url.split('/').find(|p| tt(p)));
         [Some(self.preview.id.as_str()), self.imdb_id.as_deref(), link, self.default_video_id()].into_iter().flatten().find(|s| tt(s))
+    }
+
+    /// The first usable trailer's YouTube id: `trailerStreams[].ytId` first, then a `trailers[]`
+    /// entry typed "Trailer" (any case), then any `trailers[].source`. Only a well-formed id
+    /// ([`is_youtube_id`]) counts.
+    pub fn trailer_id(&self) -> Option<&str> {
+        fn id(s: &str) -> Option<&str> {
+            Some(s.trim()).filter(|s| is_youtube_id(s))
+        }
+        self.trailer_streams
+            .iter()
+            .find_map(|t| id(&t.yt_id))
+            .or_else(|| self.trailers.iter().filter(|t| t.kind.trim().eq_ignore_ascii_case("trailer")).find_map(|t| id(&t.source)))
+            .or_else(|| self.trailers.iter().find_map(|t| id(&t.source)))
     }
 }
 
@@ -354,6 +400,19 @@ where
         .collect())
 }
 
+/// [`lenient_vec`] that also reads a value that is not a list at all (a string, an object) as an
+/// empty list: a trailer is an extra, so an odd field never fails the meta.
+fn lenient_items<'de, D, T>(d: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    Ok(match Option::<serde_json::Value>::deserialize(d)? {
+        Some(serde_json::Value::Array(items)) => items.into_iter().filter_map(|v| serde_json::from_value(v).ok()).collect(),
+        _ => Vec::new(),
+    })
+}
+
 /// A list of strings where `null`, a missing list or an entry that is not a string is dropped
 /// instead of failing the stream it sits on.
 fn lenient_strings<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
@@ -373,6 +432,14 @@ fn lenient_strings<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Er
 fn lenient_hints<'de, D: Deserializer<'de>>(d: D) -> Result<MetaHints, D::Error> {
     let v = Option::<serde_json::Value>::deserialize(d)?;
     Ok(v.and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default())
+}
+
+/// A string that reads as empty when it is missing, `null` or not a string.
+fn lenient_string_or_empty<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    Ok(match Option::<serde_json::Value>::deserialize(d)? {
+        Some(serde_json::Value::String(s)) => s,
+        _ => String::new(),
+    })
 }
 
 fn lenient_string<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
@@ -395,6 +462,63 @@ mod tests {
         assert_eq!(n.meta.default_video_id(), None);
         let blank: MetaResponse = serde_json::from_str(r#"{"meta":{"id":"tt1","type":"movie","name":"S","behaviorHints":{"defaultVideoId":" "}}}"#).unwrap();
         assert_eq!(blank.meta.default_video_id(), None);
+    }
+
+    fn trailer_of(extra: &str) -> Option<String> {
+        let j = format!(r#"{{"meta":{{"id":"tt1","type":"movie","name":"T"{extra}}}}}"#);
+        let m: MetaResponse = serde_json::from_str(&j).unwrap();
+        m.meta.trailer_id().map(str::to_string)
+    }
+
+    #[test]
+    fn a_trailer_reads_from_either_shape_and_streams_win() {
+        assert_eq!(trailer_of(r#","trailers":[{"source":"PLl99DlL6b4","type":"Trailer"}]"#).as_deref(), Some("PLl99DlL6b4"));
+        assert_eq!(trailer_of(r#","trailerStreams":[{"ytId":"xyXX8LXiNJ4","title":"Official"}]"#).as_deref(), Some("xyXX8LXiNJ4"));
+        let both = r#","trailers":[{"source":"PLl99DlL6b4","type":"Trailer"}],"trailerStreams":[{"ytId":"xyXX8LXiNJ4","title":"x"}]"#;
+        assert_eq!(trailer_of(both).as_deref(), Some("xyXX8LXiNJ4"));
+    }
+
+    #[test]
+    fn a_trailer_prefers_the_type_trailer_then_any_source() {
+        let mixed = r#","trailers":[{"source":"AAAAAA11","type":"Clip"},{"source":"BBBBBB22","type":"trailer"}]"#;
+        assert_eq!(trailer_of(mixed).as_deref(), Some("BBBBBB22"));
+        let clips = r#","trailers":[{"source":"AAAAAA11","type":"Clip"},{"source":"BBBBBB22"}]"#;
+        assert_eq!(trailer_of(clips).as_deref(), Some("AAAAAA11"));
+        // an unusable stream id falls through to the trailers list
+        let bad_stream = r#","trailerStreams":[{"ytId":"bad id!"}],"trailers":[{"source":"CCCCCC33","type":"Trailer"}]"#;
+        assert_eq!(trailer_of(bad_stream).as_deref(), Some("CCCCCC33"));
+    }
+
+    #[test]
+    fn no_trailer_and_odd_trailer_fields_read_as_none() {
+        assert_eq!(trailer_of("").as_deref(), None);
+        assert_eq!(trailer_of(r#","trailers":null,"trailerStreams":null"#).as_deref(), None);
+        assert_eq!(trailer_of(r#","trailers":[],"trailerStreams":[]"#).as_deref(), None);
+        assert_eq!(trailer_of(r#","trailers":"abc","trailerStreams":{"a":1}"#).as_deref(), None);
+        assert_eq!(trailer_of(r#","trailers":[7,null,{"source":5,"type":null},{"type":"Trailer"}]"#).as_deref(), None);
+        // a bad entry is dropped alone
+        assert_eq!(trailer_of(r#","trailers":[7,{"source":"DDDDDD44","type":"Trailer"}]"#).as_deref(), Some("DDDDDD44"));
+    }
+
+    #[test]
+    fn only_a_well_formed_youtube_id_is_usable() {
+        for ok in ["PLl99DlL6b4", "dQw4w9WgXcQ", "a_b-c1", "abcdefghij0123456789"] {
+            assert!(is_youtube_id(ok), "{ok}");
+        }
+        for bad in ["", "short", "abcdefghij01234567890", "has space1", "quo\"te123", "a\\b12345", "v=abcdef", "ünïcödé12", "abc/def1", "a,b,c,d,e", "{\"x\":1}"] {
+            assert!(!is_youtube_id(bad), "{bad}");
+        }
+        assert_eq!(trailer_of(r#","trailers":[{"source":"x\"}],\"id\":\"","type":"Trailer"}]"#).as_deref(), None);
+        assert_eq!(trailer_of(r#","trailers":[{"source":"https://youtu.be/abc","type":"Trailer"}]"#).as_deref(), None);
+    }
+
+    #[test]
+    fn the_shawshank_fixture_names_its_first_trailer() {
+        let m: MetaResponse = serde_json::from_str(include_str!("fixtures/cinemeta_shawshank.json")).unwrap();
+        assert_eq!(m.meta.trailers.len(), 2);
+        assert_eq!(m.meta.trailer_id(), Some("PLl99DlL6b4"));
+        let s: MetaResponse = serde_json::from_str(include_str!("fixtures/cinemeta_breaking_bad_meta.json")).unwrap();
+        assert_eq!(s.meta.trailer_id(), Some("VFkjBy2b50Q"));
     }
 
     #[test]
