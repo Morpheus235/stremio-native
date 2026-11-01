@@ -542,7 +542,8 @@ fn a_held_card_stays_drawn_while_its_menu_is_up_on_home_search_and_the_catalog_g
     app.press(Key::Down);
     app.press(Key::Right);
     app.frames(20);
-    the_held_card_stays_drawn(&mut app, "Title 2");
+    // DOWN from the row's heading lands on the card under it (the first), RIGHT the next
+    the_held_card_stays_drawn(&mut app, "Title 1");
     // the row's whole catalog, a grid
     app.press(Key::Up);
     app.press(Key::Ok);

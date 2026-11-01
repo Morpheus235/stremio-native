@@ -400,7 +400,7 @@ fn play_title(mode: &Mode) -> String {
     match mode {
         Mode::Item(i) | Mode::Resume(i) => i.name.clone(),
         Mode::Video(v) if v.title.is_empty() => v.show.clone(),
-        Mode::Video(v) => format!("{} \u{2014} {}", v.show, v.title),
+        Mode::Video(v) => format!("{} \u{b7} {}", v.show, v.title),
     }
 }
 

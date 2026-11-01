@@ -498,7 +498,7 @@ pub fn body(doc: Doc) -> String {
         .join("\n"),
         Doc::Components => {
             let mut lines = vec![msg::app_settings_components_intro().to_string(), String::new()];
-            lines.extend(COMPONENTS.iter().map(|(c, l)| format!("{c} \u{2014} {l}")));
+            lines.extend(COMPONENTS.iter().map(|(c, l)| format!("{c}: {l}")));
             lines.push(String::new());
             lines.push(msg::app_settings_components_texts().to_string());
             lines.join("\n")
@@ -511,7 +511,7 @@ pub fn body(doc: Doc) -> String {
 
 /// The key map in the viewer's words — `docs/remote-keys.md` is the engineering half.
 fn remote_body() -> String {
-    let line = |key: &str, what: &str| format!("{key} \u{2014} {what}");
+    let line = |key: &str, what: &str| format!("{key}: {what}");
     [
         msg::app_remote_navigation_head().to_uppercase(),
         line(msg::app_remote_key_arrows(), msg::app_remote_move()),

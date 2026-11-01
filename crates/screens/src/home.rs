@@ -956,7 +956,7 @@ impl HomeScreen {
             genre: row.pager.genre.clone(),
             search: None,
         };
-        fx.push(Fx::Nav(NavOp::Push(AppArg::Catalog(CatalogRef { key, title: format!("{} \u{2014} {}", row.addon_name, row.title()) }))));
+        fx.push(Fx::Nav(NavOp::Push(AppArg::Catalog(CatalogRef { key, title: format!("{} \u{b7} {}", row.addon_name, row.title()) }))));
     }
 
     /// OK or a click on one of the page's own controls; `false` when `elem` is none of them.

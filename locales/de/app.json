@@ -129,7 +129,7 @@
     "description": "Detail: chip on a stream the addon's debrid service already holds (it plays at once)."
   },
   "app.detail.stream_uncached": {
-    "value": "Nicht im Cache – lädt erst",
+    "value": "Noch nicht im Cache",
     "description": "Detail: quiet chip on a stream the debrid service does not hold yet: playing it starts the download and shows the service's placeholder clip."
   },
   "app.detail.stream_live": {
@@ -310,7 +310,7 @@
     "description": "Player: the failure read-out when the stream's own request headers cannot be sent (malformed)."
   },
   "app.player.debrid_downloading": {
-    "value": "Lädt noch bei deinem Debrid-Dienst – versuche es in ein paar Minuten erneut",
+    "value": "Lädt noch bei deinem Debrid-Dienst. Versuche es in ein paar Minuten erneut.",
     "description": "Player: the system toast after a debrid service's \"still downloading\" placeholder clip played out (the torrent is not cached yet)."
   },
   "app.player.audio": {
@@ -1272,7 +1272,7 @@
     "description": "Settings: row and picker title — the programme guide Live TV channels show now / next from."
   },
   "app.settings.tv_guide_copy": {
-    "value": "Zeigt bei Live-TV-Sendern, was gerade und als Nächstes läuft – aus einem öffentlichen Programm für die Region. Sender werden über ihren Namen zugeordnet.",
+    "value": "Zeigt bei Live-TV-Sendern, was gerade und als Nächstes läuft, aus einem öffentlichen Programm für die Region. Sender werden über ihren Namen zugeordnet.",
     "description": "TV guide picker: the line under the title."
   },
   "app.settings.tv_guide_de": {

@@ -129,7 +129,7 @@
     "description": "Detail: chip on a stream the addon's debrid service already holds (it plays at once)."
   },
   "app.detail.stream_uncached": {
-    "value": "Not cached — starts a download",
+    "value": "Not cached yet",
     "description": "Detail: quiet chip on a stream the debrid service does not hold yet: playing it starts the download and shows the service's placeholder clip."
   },
   "app.detail.stream_live": {
@@ -310,7 +310,7 @@
     "description": "Player: the failure read-out when the stream's own request headers cannot be sent (malformed)."
   },
   "app.player.debrid_downloading": {
-    "value": "Still downloading on your debrid service — try again in a few minutes",
+    "value": "Still downloading on your debrid service. Try again in a few minutes.",
     "description": "Player: the system toast after a debrid service's \"still downloading\" placeholder clip played out (the torrent is not cached yet)."
   },
   "app.player.audio": {

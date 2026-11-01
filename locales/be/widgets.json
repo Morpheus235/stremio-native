@@ -72,7 +72,7 @@
   "widgets.reason.video_unsupported": "У гэтага тэлевізара няма дэкодэра для гэтага фармату відэа; выберыце іншы паток",
   "widgets.panel.video_unsupported": "у тэлевізара няма дэкодэра для відэа",
   "widgets.failure.video_not_streamable": "Не ўдалося прайграць: гэты фармат відэа нельга трансляваць на гэтым тэлевізары",
-  "widgets.reason.video_not_streamable": "Гэты тэлевізар трансліруе толькі відэа H.264, HEVC, AV1, VP9 і VP8 — не Xvid/DivX, MPEG-2, H.263, VC-1/WMV ці RealVideo; выберыце іншы паток",
+  "widgets.reason.video_not_streamable": "Гэты тэлевізар трансліруе толькі відэа H.264, HEVC, AV1, VP9 і VP8, не Xvid/DivX, MPEG-2, H.263, VC-1/WMV ці RealVideo. Выберыце іншы паток.",
   "widgets.panel.video_not_streamable": "плэер трансляцыі тэлевізара не прымае гэты фармат відэа",
   "widgets.failure.dolby_vision": "Не ўдалося прайграць: гэты паток Dolby Vision нельга правільна паказаць тут",
   "widgets.reason.dolby_vision": "У гэтага патоку Dolby Vision няма выявы, якую гэты тэлевізар можа паказаць без Dolby Vision; выберыце іншы паток",

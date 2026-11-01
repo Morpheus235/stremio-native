@@ -23,11 +23,13 @@
 //!   toggles each addon on OK and stays open (*Select all*, *Select none* first), and at the row's
 //!   right end the *View* toggle — posters or a list (`crate::item_list`, a setting per page).
 //! - **The result rows**, in the order they found something (a row that lands never pushes the
-//!   rows above it down), then the rows still asking (the shared working read-out). A row whose
+//!   rows above it down), then the rows still asking (the shared working read-out). A row is
+//!   headed by its type and addon ("Series · Cinemeta"; the catalog's own name only to tell two
+//!   rows of one addon and type apart, [`Page::heading`]). A row whose
 //!   addon holds more than the row shows has a linked heading — OK on it opens the whole catalog
 //!   as a paginated grid (`AppArg::Catalog`), seeded with what the row already holds. The rows
 //!   that found nothing or failed are not rows: ONE closing line names them, the failures first
-//!   ("Failed: … (HTTP 502) · No results from: …", [`summary_line`]; led by *No results for
+//!   ("Search failed: … (HTTP 502) · No results from: …", [`summary_line`]; led by *No results for
 //!   “query”* once every row answered with nothing), with one Try again for the failed ones.
 //! - **Recent searches**, always reachable: a pill row (each term, then Clear) under the filter row
 //!   while there is no query, and after the last result row while there is one. OK on a term fills
@@ -420,9 +422,14 @@ impl Page {
         CARD_BASE + ((self.qgen & 0x3F) << 18) + ((r as u32 & 0xFF) << 10)
     }
 
-    fn heading(row: &SearchRow) -> (&str, String) {
+    /// A row's heading: its type, and the addon it comes from. A catalog's name ("Popular") says
+    /// nothing about search results, so it appears only to tell apart two rows of one addon and type.
+    fn heading(rows: &[SearchRow], r: usize) -> (String, String) {
+        let Some(row) = rows.get(r) else { return (String::new(), String::new()) };
         let kind = crate::registry::kind_label(&row.pager.catalog.kind).map_or_else(|| row.pager.catalog.kind.clone(), str::to_string);
-        (row.pager.catalog.display_name(), msg::app_home_row_source(&kind, &row.addon_name))
+        let twin = rows.iter().filter(|o| o.addon_id == row.addon_id && o.pager.catalog.kind == row.pager.catalog.kind).count() > 1;
+        let note = if twin { format!("{} \u{b7} {}", row.addon_name, row.pager.catalog.display_name()) } else { row.addon_name.clone() };
+        (kind, note)
     }
 
     /// The name a row goes by in the closing line: its addon and its type.
@@ -607,9 +614,9 @@ impl StackPage<Bundle> for Page {
             Sec::Summary => Self::retry_rect(cx, section.y),
             Sec::Suggest => Self::suggest_rect(n.min(self.suggest.len().saturating_sub(1)), section.y),
             Sec::More(_, r) => {
-                let (title, note) = Self::rows(cx).get(r).map(Self::heading).unwrap_or(("", String::new()));
-                let more = format!("{note} \u{b7} {}", sn_ui::text_view::more_mark().to_string_lossy());
-                let h = LinkedHeading::heading(title, &more).bounded(SCR_W - 2.0 * MARGIN_X);
+                let (title, note) = Self::heading(Self::rows(cx), r);
+                // the chevron is the link's mark, as on Home's row headings
+                let h = LinkedHeading::heading(&title, &note).bounded(SCR_W - 2.0 * MARGIN_X);
                 let m = h.measure(cx.measure);
                 h.face_rect(MARGIN_X, section.y + HEADING_TOP, 1.0, &m)
             }
@@ -650,9 +657,8 @@ impl StackPage<Bundle> for Page {
 
     fn draw_heading(&self, k: Sec, f: &mut DrawFrame<'_, '_, Bundle>, r: Rect, lift: f32) {
         let Sec::Row(_, row) = k else { return };
-        let Some(row) = Self::rows(f.cx).get(row) else { return };
-        let (title, note) = Self::heading(row);
-        sn_ui::cards::draw_heading(f.painter.alpha(f.page_alpha), title, &note, MARGIN_X, r.y + HEADING_TOP - lift, SCR_W - 2.0 * MARGIN_X, f.measure);
+        let (title, note) = Self::heading(Self::rows(f.cx), row);
+        sn_ui::cards::draw_heading(f.painter.alpha(f.page_alpha), &title, &note, MARGIN_X, r.y + HEADING_TOP - lift, SCR_W - 2.0 * MARGIN_X, f.measure);
     }
 
     fn custom_draw(&self, k: Sec, f: &mut DrawFrame<'_, '_, Bundle>, r: Rect, _scroll: f32) {
@@ -710,26 +716,23 @@ impl StackPage<Bundle> for Page {
                 }
             }
             Sec::More(_, row) => {
-                let Some(sr) = Self::rows(f.cx).get(row) else { return };
-                let (title, note) = Self::heading(sr);
-                let more = format!("{note} \u{b7} {}", sn_ui::text_view::more_mark().to_string_lossy());
-                let h = LinkedHeading::heading(title, &more).bounded(SCR_W - 2.0 * MARGIN_X);
+                let (title, note) = Self::heading(Self::rows(f.cx), row);
+                // the chevron is the link's mark, as on Home's row headings
+                let h = LinkedHeading::heading(&title, &note).bounded(SCR_W - 2.0 * MARGIN_X);
                 let m = h.measure(f.measure);
                 let t = if self.focused(f, MORE_BASE + row as u32) { 1.0 } else { 0.0 };
                 h.draw(p, MARGIN_X, r.y + HEADING_TOP, t, &m, f.measure);
             }
             Sec::Head(_, row) => {
-                let Some(sr) = Self::rows(f.cx).get(row) else { return };
-                let (title, note) = Self::heading(sr);
-                sn_ui::cards::draw_heading(p, title, &note, MARGIN_X, r.y + HEADING_TOP, SCR_W - 2.0 * MARGIN_X, f.measure);
+                let (title, note) = Self::heading(Self::rows(f.cx), row);
+                sn_ui::cards::draw_heading(p, &title, &note, MARGIN_X, r.y + HEADING_TOP, SCR_W - 2.0 * MARGIN_X, f.measure);
             }
             Sec::Note(_, row) => {
                 // still asking: the heading says so, and a row of skeleton posters shimmers where
                 // its cards will land (the search ticks the frame clock while any row asks)
-                let Some(sr) = Self::rows(f.cx).get(row) else { return };
-                let (title, note) = Self::heading(sr);
+                let (title, note) = Self::heading(Self::rows(f.cx), row);
                 let note = format!("{note} \u{b7} {}", msg::app_search_row_loading());
-                sn_ui::cards::draw_heading(p, title, &note, MARGIN_X, r.y + HEADING_TOP, SCR_W - 2.0 * MARGIN_X, f.measure);
+                sn_ui::cards::draw_heading(p, &title, &note, MARGIN_X, r.y + HEADING_TOP, SCR_W - 2.0 * MARGIN_X, f.measure);
                 let pitch = POSTER.w + POSTER.gap;
                 let y = r.y + HEAD_TO_ROW;
                 let mut x = POSTER.margin_x;
@@ -786,6 +789,8 @@ impl Page {
         };
         let caret = self.editing || hot > 0.5;
         let (run_dx, caret_dx) = run_layout(run_w, head_w, text.w, caret);
+        // the placeholder starts past where the caret stands, so the caret never strikes its first letter
+        let run_dx = if blank { run_dx + CARET_W + CARET_GAP * 2.0 } else { run_dx };
         let (cap_top, cap_base) = sn_gfx::text::text_cap_band(FIELD_TEXT, 1);
         let _clip = f.clip(p, Rect::new(text.x, text.y, text.w, text.h));
         let mut label = Label::new(run.as_ptr(), FIELD_TEXT, ink);
@@ -970,7 +975,7 @@ impl SearchScreen {
     /// The row's full grid: its addon and catalog under the same query.
     fn open_more(&self, r: usize, cx: &Cx<'_, Bundle>, fx: &mut Effects<'_, Bundle>) {
         let Some(row) = Page::rows(cx).get(r) else { return };
-        let (title, _) = Page::heading(row);
+        let (title, note) = Page::heading(Page::rows(cx), r);
         let key = GridKey {
             addon_id: row.addon_id.clone(),
             kind: row.pager.catalog.kind.clone(),
@@ -978,7 +983,7 @@ impl SearchScreen {
             genre: row.pager.genre.clone(),
             search: row.pager.search.clone(),
         };
-        fx.push(Fx::Nav(NavOp::Push(AppArg::Catalog(CatalogRef { key, title: format!("{} \u{2014} {title}", row.addon_name) }))));
+        fx.push(Fx::Nav(NavOp::Push(AppArg::Catalog(CatalogRef { key, title: format!("{note} \u{b7} {title}") }))));
     }
 
     fn item_at<'a>(&self, cx: &Cx<'a, Bundle>, elem: u32) -> Option<&'a sn_stremio::types::MetaPreview> {
@@ -1303,6 +1308,26 @@ pub const PREVIEW: usize = ROW_PREVIEW;
 mod tests {
     use super::*;
 
+    /// A row is headed by its type and addon; the catalog's name comes in only to tell apart two
+    /// rows of one addon and type.
+    #[test]
+    fn a_row_heading_names_its_type_and_addon() {
+        use sn_stremio::manifest::{Addon, Manifest};
+        let manifest = r#"{"id":"x.aio","version":"1.0.0","name":"AIO","resources":["catalog"],"types":["movie","series"],
+            "catalogs":[{"type":"movie","id":"a","name":"Popular","extra":[{"name":"search"}]},
+                        {"type":"movie","id":"b","name":"Anime","extra":[{"name":"search"}]},
+                        {"type":"series","id":"c","name":"Popular","extra":[{"name":"search"}]}]}"#;
+        let addon = Addon::new("https://a.example/aio/manifest.json", Manifest::parse(manifest.as_bytes()).unwrap());
+        let rows = sn_stremio::search::plan(&[addon], "dune", &Default::default());
+        let heads: Vec<(String, String)> = (0..rows.len()).map(|r| Page::heading(&rows, r)).collect();
+        let kind = |k: &str| crate::registry::kind_label(k).unwrap().to_string();
+        assert_eq!(heads, vec![
+            (kind("movie"), "AIO \u{b7} Popular".to_string()),
+            (kind("movie"), "AIO \u{b7} Anime".to_string()),
+            (kind("series"), "AIO".to_string()),
+        ]);
+    }
+
     #[test]
     fn the_run_slides_so_the_caret_stays_in_the_box() {
         assert_eq!(run_layout(100.0, 100.0, 500.0, true), (0.0, 106.0));
@@ -1338,7 +1363,7 @@ mod tests {
         ];
         let line = summary_line(&rows, "bat").unwrap();
         // the failures first: they are what the viewer can do something about
-        assert_eq!(line, "Failed: C (TV) (timed out), D (Movies) (HTTP 502), E (Movies) (no connection) \u{b7} No results from: B (Series)");
+        assert_eq!(line, "Search failed: C (TV) (timed out), D (Movies) (HTTP 502), E (Movies) (no connection) \u{b7} No results from: B (Series)");
         assert!(!line.contains("example"), "no host or URL reaches the screen");
         assert_eq!(summary_line(&rows[..1], "bat"), None);
         assert_eq!(summary_line(&rows[..2], "bat").as_deref(), Some("No results from: B (Series)"));
@@ -1346,7 +1371,7 @@ mod tests {
         let none = [rows[1].clone(), rows[3].clone()];
         assert_eq!(
             summary_line(&none, "bat").as_deref(),
-            Some("No results for \u{201c}bat\u{201d} \u{b7} Failed: D (Movies) (HTTP 502) \u{b7} No results from: B (Series)")
+            Some("No results for \u{201c}bat\u{201d} \u{b7} Search failed: D (Movies) (HTTP 502) \u{b7} No results from: B (Series)")
         );
         assert!(!summary_line(&[rows[1].clone(), rows[5].clone()], "bat").unwrap().contains("bat"), "no verdict while a row still asks");
     }

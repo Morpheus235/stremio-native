@@ -129,7 +129,7 @@
     "description": "Detail: chip on a stream the addon's debrid service already holds (it plays at once)."
   },
   "app.detail.stream_uncached": {
-    "value": "Non in cache — avvia un download",
+    "value": "Non ancora in cache",
     "description": "Detail: quiet chip on a stream the debrid service does not hold yet: playing it starts the download and shows the service's placeholder clip."
   },
   "app.detail.stream_live": {
