@@ -587,7 +587,7 @@ fn delivery_rows(f: &Facts<'_>, prev: Prev, stalls: Stalls, now: u32) -> Vec<Fie
         Field::new(msg::app_stats_f_feed(), format!("{fed} · {}", feed_state(d)))
             .fault(!d.pushed_any && d.load_completed || (d.fed_v == 0 && d.load_completed) || d.feed_is_fault()),
     );
-    let (cv, ca) = player::aq_caps();
+    let (cv, ca) = player::live_aq_caps();
     let mb = |b: i64, scale: i16| sn_ui::fmt::decimal(b as f64 / f64::from(1u32 << 20), scale);
     v.push(Field::new(msg::app_stats_f_queues(), msg::app_stats_queues(&mb(d.aq_audio, 2), &mb(ca, 1), &mb(cv, 1), &mb(d.aq_video, 1))));
     let (buffer, low) = buffer_text(d.playable_buffer_ms);
@@ -730,7 +730,7 @@ impl Sweep {
         if self.cells.len() != HIST_N || self.session != d.load_at {
             *self = Sweep { cells: vec![NO_CELL; HIST_N], head: 0, session: d.load_at };
         }
-        let (cv, ca) = player::aq_caps();
+        let (cv, ca) = player::live_aq_caps();
         let fill = |b: i64, cap: i64| if cap > 0 { (b.max(0) * 1000 / cap).min(1000) } else { -1 };
         self.cells[self.head] = Cell {
             buffer_ms: d.playable_buffer_ms.map_or(-1, |ms| ms.max(0)),

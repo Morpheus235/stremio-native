@@ -17,6 +17,7 @@
 //! and the adapter keeps every other seam call waiting until it is done.
 #![allow(non_upper_case_globals)]
 pub mod adapter;
+pub mod buffering; // the fill target a waiting clock needs, the network meter behind it, the queue cap
 pub mod ass; // pinned libass worker and immutable rendered frames
 pub mod ass_perf; // per-second libass cost line (`assperf:`)
 pub mod ass_timing; // libass clock reading and the validity window of a rendered frame
@@ -1104,7 +1105,7 @@ pub fn restore_state_for_test(raw: u8) {
 
 // ---- diagnostics --------------------------------------------------------------------------
 
-pub use engine::aq_caps;
+pub use engine::{aq_caps, live_aq_caps};
 /// The two feed-ahead throttles, as milliseconds.
 ///
 /// Published (with `aq_caps()`) so the reachable reserve can be computed from the pipeline's own
@@ -1202,11 +1203,22 @@ pub fn memory(adapter: &mut adapter::PlayerAdapter) -> Memory {
 }
 
 /// **How full the start buffer is**, 0..=100: the playable reserve ([`Diag::playable_buffer_ms`]'s
-/// one definition) against the prime depth the clock waits for before it starts
-/// (`engine::PRIME_NS`). `None` until a lane has published a tail. Atomics only — cheap enough for
-/// the player's working read-out to ask every frame.
+/// one definition) against the runway the clock waits for before it starts or resumes (the
+/// buffering policy's fill target, never under `engine::PRIME_NS`). `None` until a lane has
+/// published a tail. Atomics and one uncontended lock: cheap enough to ask every frame.
 pub fn prime_fill_pct() -> Option<u8> {
-    Some(prime_pct(buffer_ahead_ms()?))
+    let target_ms = buffering::target_ns().max(engine::PRIME_NS) / 1_000_000;
+    Some(fill_pct(buffer_ahead_ms()?, target_ms))
+}
+
+/// The player holds its clock to fill the runway (a refill, or a viewer Resume still priming), not
+/// the viewer's pause: the screen shows Buffering over the last picture.
+pub fn rebuffering() -> bool {
+    SHARED.rebuffering()
+}
+
+fn fill_pct(buffer_ms: i64, target_ms: i64) -> u8 {
+    (buffer_ms.max(0) * 100 / target_ms.max(1)).min(100) as u8
 }
 
 /// **How far past the playhead the pipeline holds media**, in ms — the transport's buffered range
@@ -1224,7 +1236,7 @@ pub fn buffer_ahead_ms() -> Option<i64> {
 
 /// A reserve of `buffer_ms` as a share of the prime depth, clamped to 0..=100.
 pub fn prime_pct(buffer_ms: i64) -> u8 {
-    (buffer_ms.max(0) * 100 / (engine::PRIME_NS / 1_000_000)).min(100) as u8
+    fill_pct(buffer_ms, engine::PRIME_NS / 1_000_000)
 }
 
 /// One physical reserve definition for every delivery mode. Direct-file tails already use movie
