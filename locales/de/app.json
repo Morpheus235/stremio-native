@@ -1340,5 +1340,17 @@
   "app.settings.stream_order_quality": {
     "value": "Qualität zuerst",
     "description": "Stream order option: playable at once first, then the highest resolution."
+  },
+  "app.settings.debrid_only": {
+    "value": "Nur Debrid-Streams",
+    "description": "Settings: row and picker title: whether a stream list shows only streams from a debrid service."
+  },
+  "app.settings.debrid_only_copy": {
+    "value": "An: Nur Streams eines Debrid-Dienstes, im Cache oder nicht. Streams ohne Debrid-Hinweis werden ausgeblendet. Aus: Alle Streams.",
+    "description": "Only debrid streams picker: the line under the title."
+  },
+  "app.detail.no_debrid_streams": {
+    "value": "Keine Debrid-Streams",
+    "description": "Detail: the reason on the closing row for an addon whose streams are all hidden by Only debrid streams."
   }
 }

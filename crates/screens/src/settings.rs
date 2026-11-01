@@ -140,6 +140,8 @@ pub enum RootRow {
     TvGuide,
     /// Stream order: the addon's, languages first, quality first (the picker).
     StreamOrder,
+    /// Only debrid streams: Off, On (the picker).
+    DebridOnly,
 }
 
 impl FormId for RootRow {
@@ -202,6 +204,7 @@ fn pref_copy(pref: Pref) -> &'static str {
         Pref::MultichannelAudio => msg::app_settings_multichannel_audio_copy(),
         Pref::TvGuide => msg::app_settings_tv_guide_copy(),
         Pref::StreamOrder => msg::app_settings_stream_order_copy(),
+        Pref::DebridOnly => msg::app_settings_debrid_only_copy(),
     }
 }
 
@@ -293,6 +296,7 @@ pub fn root_form(settings: &SettingsStore, account: &AccountStore, stats: bool) 
     let audio = pick(audio, RootRow::SubtitleOpacity, Pref::SubtitleOpacity);
     let audio = pick(audio, RootRow::AssStyling, Pref::AssStyling);
     let streams = pick(FormSection::new(msg::app_settings_streams()), RootRow::StreamOrder, Pref::StreamOrder);
+    let streams = pick(streams, RootRow::DebridOnly, Pref::DebridOnly);
     let streams = langs(streams, RootRow::StreamLanguages, LangList::Streams);
     let live = pick(FormSection::new(msg::app_tab_live_tv()), RootRow::TvGuide, Pref::TvGuide);
     Form::new()
@@ -1035,6 +1039,7 @@ mod tests {
                             .seeded(Pref::SubtitleOpacity, (size + position) % Pref::SubtitleOpacity.rungs())
                             .seeded(Pref::AssStyling, (size + position) % Pref::AssStyling.rungs())
                             .seeded(Pref::AutoPlay, (size + position) % Pref::AutoPlay.rungs())
+                            .seeded(Pref::DebridOnly, (size + position) % Pref::DebridOnly.rungs())
                             .seeded(Pref::UpNextAt, (size + position) % Pref::UpNextAt.rungs()), &account, stats), None);
                         let tag = format!("{tag} root {who} size={size} position={position} skip={skip} stats={stats}");
                         fit(&tag, &f.table, RouteLayout::below_top_bar(), &mut out);
@@ -1120,7 +1125,7 @@ mod tests {
                         SubtitleOpacity,
                         AssStyling,
                     ],
-                    vec![StreamOrder, StreamLanguages],
+                    vec![StreamOrder, DebridOnly, StreamLanguages],
                     vec![TvGuide],
                     vec![Language, Stats, RemoteKeys],
                     vec![About, Legal, Privacy],
@@ -1241,6 +1246,7 @@ mod tests {
                 SettingsPage::Picker(Pref::SubtitleOpacity),
                 SettingsPage::Picker(Pref::AssStyling),
                 SettingsPage::Picker(Pref::StreamOrder),
+                SettingsPage::Picker(Pref::DebridOnly),
                 SettingsPage::Languages(LangList::Streams),
                 SettingsPage::Picker(Pref::TvGuide),
                 SettingsPage::Picker(Pref::Language),
@@ -1250,6 +1256,42 @@ mod tests {
                 SettingsPage::Doc(Doc::Privacy),
             ]
         );
+    }
+
+    /// Only debrid streams: Off by default, its row sits right after Stream order in the Streams
+    /// section, and its picker offers Off and On, the current rung checked.
+    #[test]
+    fn the_only_debrid_switch_has_its_row_after_stream_order_and_a_two_rung_picker() {
+        let _en = language_on_this_thread_for_test(sn_platform::i18n::Preference::En);
+        assert_eq!((Pref::DebridOnly.rungs(), Pref::DebridOnly.default_rung()), (2, 0), "Off is the default");
+        assert_eq!(SettingsStore::default().get(Pref::DebridOnly), 0);
+        let row_labels = |s: &SettingsStore| -> Vec<(String, Option<String>)> {
+            let mut f = FormTable::<RootRow, RootRow, SettingsPage>::new(KEY_BAND);
+            f.set(root_form(s, &AccountStore::signed_out(true), false), None);
+            f.table.sections[3].rows.iter().map(|r| (r.label.clone(), r.value.clone())).collect()
+        };
+        let off = row_labels(&SettingsStore::default());
+        let at = off.iter().position(|(l, _)| l == msg::app_settings_stream_order()).expect("the Stream order row");
+        assert_eq!(off[at + 1], (msg::app_settings_debrid_only().to_string(), Some(msg::app_settings_switch_off().to_string())), "right after it, Off");
+        let mut on = SettingsStore::default();
+        assert!(on.set(Pref::DebridOnly, 1));
+        assert_eq!(row_labels(&on)[at + 1].1.as_deref(), Some(msg::app_settings_switch_on()), "the row reads On");
+        // OK on the row opens its picker; OK on a rung sets the switch and goes back
+        let mut f = FormTable::<RootRow, RootRow, SettingsPage>::new(KEY_BAND);
+        f.set(root_form(&SettingsStore::default(), &AccountStore::signed_out(true), false), None);
+        let i = f.index_of_key(sn_ui::form::FormId::key(&RootRow::DebridOnly)).expect("the row");
+        assert!(matches!(f.activate(i), Some(Activation::Push(SettingsPage::Picker(Pref::DebridOnly)))));
+        let picker = |current: u8| {
+            let mut p = FormTable::<Rung, Rung, Infallible>::new(KEY_BAND);
+            p.set(picker_form(Pref::DebridOnly, current), None);
+            p
+        };
+        let p = picker(0);
+        let rows: Vec<(&str, bool)> = p.table.sections[0].rows.iter().map(|r| (r.label.as_str(), r.checked)).collect();
+        assert_eq!(rows, [(msg::app_settings_switch_off(), true), (msg::app_settings_switch_on(), false)]);
+        let p = picker(0);
+        assert!(matches!(p.activate(1), Some(Activation::Action(Rung(1)))), "On is rung 1");
+        assert_eq!(pref_copy(Pref::DebridOnly), msg::app_settings_debrid_only_copy());
     }
 
     #[test]

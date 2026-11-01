@@ -362,5 +362,8 @@
   "app.settings.stream_order_quality": {
     "value": "Qualité d'abord",
     "description": "Stream order option: playable at once first, then the highest resolution."
-  }
+  },
+  "app.settings.debrid_only": "Flux debrid uniquement",
+  "app.settings.debrid_only_copy": "Activé : uniquement les flux d’un service debrid, en cache ou non. Les flux qui ne mentionnent pas debrid sont masqués. Désactivé : tous les flux.",
+  "app.detail.no_debrid_streams": "Aucun flux debrid"
 }

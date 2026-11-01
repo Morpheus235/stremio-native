@@ -364,5 +364,8 @@
   "app.settings.stream_order_quality": {
     "value": "Спачатку якасць",
     "description": "Stream order option: playable at once first, then the highest resolution."
-  }
+  },
+  "app.settings.debrid_only": "Толькі debrid-патокі",
+  "app.settings.debrid_only_copy": "Укл.: толькі патокі з debrid-сэрвісу, у кэшы або не. Патокі без згадкі debrid схаваны. Выкл.: усе патокі.",
+  "app.detail.no_debrid_streams": "Няма debrid-патокаў"
 }
