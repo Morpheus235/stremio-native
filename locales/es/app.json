@@ -29,6 +29,7 @@
   "app.detail.not_playable": "No se puede reproducir aquí",
   "app.detail.stream_cached": "En caché",
   "app.detail.stream_uncached": "Aún no está en caché",
+  "app.detail.stream_upscaled": "Reescalado",
   "app.detail.stream_live": "EN VIVO",
   "app.detail.stream_seeders": "{count} seeders",
   "app.settings.stream_languages": "Orden de streams",

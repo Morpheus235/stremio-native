@@ -29,6 +29,7 @@
   "app.detail.not_playable": "Тут не прайграецца",
   "app.detail.stream_cached": "У кэшы",
   "app.detail.stream_uncached": "Яшчэ не ў кэшы",
+  "app.detail.stream_upscaled": "Апскейл",
   "app.detail.stream_live": "ЭФІР",
   "app.detail.stream_seeders": "{count} сідараў",
   "app.settings.stream_languages": "Парадак патокаў",

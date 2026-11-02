@@ -607,7 +607,8 @@ fn stream_sections(out: &mut Built, groups: &[StreamGroup], mode: &Mode, prefer:
 ///   language, then the second, …, then a multi-audio release, then the rest.
 /// - `ORDER_QUALITY`: the same split, then the highest resolution first (none named: last).
 ///
-/// The addon's own order breaks every tie.
+/// In every order but the addon's, a cinema copy (CAM, telesync, …) goes after the releases in
+/// its split. The addon's own order breaks every tie.
 pub fn stream_order(facts: &[Facts], prefer: &[&str], by: u8) -> Vec<usize> {
     use crate::stores::settings::{ORDER_ADDON, ORDER_LANGUAGE};
     const RESOLUTIONS: [&str; 6] = ["4K", "1440p", "1080p", "720p", "576p", "480p"];
@@ -621,7 +622,7 @@ pub fn stream_order(facts: &[Facts], prefer: &[&str], by: u8) -> Vec<usize> {
         } else {
             f.resolution.and_then(|r| RESOLUTIONS.iter().position(|x| *x == r)).unwrap_or(RESOLUTIONS.len())
         };
-        (download, then)
+        (download, f.cinema_copy(), then)
     };
     let mut order: Vec<usize> = (0..facts.len()).collect();
     if by != ORDER_ADDON {
@@ -636,8 +637,8 @@ const CHIP_LANGUAGES: usize = 3;
 /// A stream row's facts, most telling first (the line drops them from the end), each an
 /// ICON-LED line as stremio-web's stream rows read (`Chip::icon`, drawn without a ground): ⚡ the
 /// cache state, 🎞 the picture (codec · range), ♫ the sound, 🛡 the source (and the release
-/// group), the size, 🌐 the languages, the seeders. An uncached stream's caveat stays an outlined
-/// quiet chip (a warning, not a fact). Only the cache and live chips are app text that must show;
+/// group), the size, 🌐 the languages, CC the subtitles, the seeders. An uncached or upscaled
+/// stream's caveat stays an outlined quiet chip (a warning, not a fact). Only the cache and live chips are app text that must show;
 /// the rest are facts read from the addon's text and may give way.
 pub fn stream_chips(f: &Facts) -> Vec<RowChip> {
     use sn_ui::icons::Icon;
@@ -653,6 +654,9 @@ pub fn stream_chips(f: &Facts) -> Vec<RowChip> {
         Some(true) => out.push(RowChip::new(msg::app_detail_stream_cached()).icon(Icon::Bolt)),
         Some(false) => out.push(RowChip::new(msg::app_detail_stream_uncached()).quiet()),
         None => {}
+    }
+    if f.upscaled {
+        out.push(RowChip::new(msg::app_detail_stream_upscaled()).quiet());
     }
     // the picture: the range leads (it is what a viewer chooses by), the codec follows it on the
     // same line as plain text, so the most telling word keeps its room when the line is short
@@ -671,12 +675,15 @@ pub fn stream_chips(f: &Facts) -> Vec<RowChip> {
     if let Some(b) = f.size {
         out.push(RowChip::new(sn_ui::fmt::bytes(i64::try_from(b).unwrap_or(i64::MAX), (1, 0, 0))).server().icon(Icon::Drive));
     }
+    let codes = |c: &[&str]| {
+        let more = c.len().saturating_sub(CHIP_LANGUAGES);
+        c[..c.len() - more].join(" \u{b7} ") + &if more > 0 { format!(" +{more}") } else { String::new() }
+    };
     if !f.languages.is_empty() {
-        let mut langs = f.languages.iter().take(CHIP_LANGUAGES).copied().collect::<Vec<_>>().join(" \u{b7} ");
-        if f.languages.len() > CHIP_LANGUAGES {
-            langs.push_str(&format!(" +{}", f.languages.len() - CHIP_LANGUAGES));
-        }
-        out.push(RowChip::new(langs).server().icon(Icon::Globe));
+        out.push(RowChip::new(codes(&f.languages)).server().icon(Icon::Globe));
+    }
+    if !f.subs.is_empty() {
+        out.push(RowChip::new(codes(&f.subs)).server().icon(Icon::Cc));
     }
     if let Some(n) = f.seeders {
         out.push(RowChip::new(msg::app_detail_stream_seeders(i64::from(n))).server().icon(Icon::User));
@@ -2761,6 +2768,10 @@ mod tests {
         let res: Vec<_> = facts.iter().map(|f| f.resolution).collect();
         let by_quality = stream_order(&facts, &[], ORDER_QUALITY);
         assert_eq!(by_quality.last(), Some(&0), "the download still last: {res:?}");
+        let mut cam = facts.clone();
+        cam[1].source = Some("CAM");
+        let order = stream_order(&cam, &["DE", "EN"], LANG);
+        assert_eq!(order[order.len() - 2..], [1, 0], "a cinema copy after every playable release, before the download");
         let ranks: Vec<_> = by_quality[..4].iter().map(|i| ["4K", "1440p", "1080p", "720p", "576p", "480p"].iter().position(|r| Some(*r) == res[*i]).unwrap_or(6)).collect();
         assert!(ranks.windows(2).all(|w| w[0] <= w[1]), "highest resolution first: {ranks:?} {res:?}");
         let b = build_preferring(&movie(), None, Some(&[group("AIO", GroupState::Ready(tb_streams()))]), None, "", &["DE", "EN"]);

@@ -132,6 +132,10 @@
     "value": "Noch nicht im Cache",
     "description": "Detail: quiet chip on a stream the debrid service does not hold yet: playing it starts the download and shows the service's placeholder clip."
   },
+  "app.detail.stream_upscaled": {
+    "value": "Hochskaliert",
+    "description": "Detail: quiet chip on a stream whose release says it was upscaled (an AI or upscaled 4K): the picture is not native to the resolution shown."
+  },
   "app.detail.stream_live": {
     "value": "LIVE",
     "description": "Detail: chip on a live stream (a TV channel, an addon's live stream): it has no length and no resume point."

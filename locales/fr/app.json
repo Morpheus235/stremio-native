@@ -29,6 +29,7 @@
   "app.detail.not_playable": "Lecture impossible ici",
   "app.detail.stream_cached": "En cache",
   "app.detail.stream_uncached": "Pas encore en cache",
+  "app.detail.stream_upscaled": "Upscalé",
   "app.detail.stream_live": "EN DIRECT",
   "app.detail.stream_seeders": "{count} sources",
   "app.settings.stream_languages": "Tri des flux",
