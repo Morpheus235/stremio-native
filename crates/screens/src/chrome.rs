@@ -229,6 +229,14 @@ impl ChromeBar {
         }
         let Some(glass) = glass else { return };
         let p = sn_ui::Painter::root().alpha(nav.chrome_alpha);
+        // a page scrolled up passes under the bar: the ground covers it there and fades out down
+        // to where content rests (every tab page clears to this ground), so no title shows
+        // through or between the pills
+        let (r, g, b) = sn_ui::theme::CLEAR_RGB();
+        let (ground, clear) = ([r, g, b, 1.0], [r, g, b, 0.0]);
+        let fade_to = widgets::TOP_BAR_BOTTOM + sn_ui::theme::space::MD; // home::CONTENT_TOP
+        p.rect(sn_ui::Rect::new(0.0, 0.0, sn_ui::consts::SCR_W, widgets::TOP_BAR_BOTTOM), 0.0, ground, ground, 0.0);
+        p.rect(sn_ui::Rect::new(0.0, widgets::TOP_BAR_BOTTOM, sn_ui::consts::SCR_W, fade_to - widgets::TOP_BAR_BOTTOM), 0.0, ground, clear, 0.0);
         let labels = TabLabels { generation: 1, labels: &self.labels };
         self.strip.draw(labels, p, glass.tab_band_mut());
         let face = glass.tab_band_mut().face();

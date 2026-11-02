@@ -422,9 +422,14 @@ impl Page {
         CARD_BASE + ((self.qgen & 0x3F) << 18) + ((r as u32 & 0xFF) << 10)
     }
 
+    /// Row `r`'s shelf, in the shape its addon asks for.
+    fn row_style(cx: &Cx<'_, Bundle>, r: usize) -> &'static RowStyle {
+        crate::cards::row_style(crate::cards::shape(Self::rows(cx).get(r).and_then(|row| row.preview().first())))
+    }
+
     /// A row's heading: its type, and the addon it comes from. A catalog's name ("Popular") says
     /// nothing about search results, so it appears only to tell apart two rows of one addon and type.
-    fn heading(rows: &[SearchRow], r: usize) -> (String, String) {
+fn heading(rows: &[SearchRow], r: usize) -> (String, String) {
         let Some(row) = rows.get(r) else { return (String::new(), String::new()) };
         let kind = crate::registry::kind_label(&row.pager.catalog.kind).map_or_else(|| row.pager.catalog.kind.clone(), str::to_string);
         let twin = rows.iter().filter(|o| o.addon_id == row.addon_id && o.pager.catalog.kind == row.pager.catalog.kind).count() > 1;
@@ -521,10 +526,10 @@ impl StackPage<Bundle> for Page {
                 }
                 RowView::Results { more: true, .. } => {
                     push(out, SectionSpec::new(Sec::More(q, r), Kind::Custom { height: HEAD_TO_ROW, focusable: true }, more_group(r)));
-                    push(out, SectionSpec::new(Sec::Row(q, r), Kind::Shelf { style: &POSTER, heading: 0.0 }, row_group(r)));
+                    push(out, SectionSpec::new(Sec::Row(q, r), Kind::Shelf { style: Self::row_style(cx, r), heading: 0.0 }, row_group(r)));
                 }
                 RowView::Results { .. } => {
-                    push(out, SectionSpec::new(Sec::Row(q, r), Kind::Shelf { style: &POSTER, heading: HEAD_TO_ROW }, row_group(r)));
+                    push(out, SectionSpec::new(Sec::Row(q, r), Kind::Shelf { style: Self::row_style(cx, r), heading: HEAD_TO_ROW }, row_group(r)));
                 }
                 _ => {
                     push(out, SectionSpec::new(Sec::Note(q, r), Kind::Custom { height: HEAD_TO_ROW + NOTE_BAND, focusable: false }, note_group(r)));
