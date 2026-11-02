@@ -255,13 +255,11 @@ check: selftest
 
 # ---- desktop simulator (no NDK, no television) --------------------------------------------------
 # The app in a desktop window over SDL2 + desktop GL, signed out (Cinemeta), for looking at UI work.
-# SIM_DIR is the instance root: triggers, the event log, `shot-<n>.png`. Drive it by writing
-# commands (`up down left right ok back shot`) into $(SIM_DIR)/stremionative-memcmd.
+# SIM_DIR is the instance root: settings, the event log, `shot-<n>.png`. Drive it with
+# `tools/sim.sh key|text|shot` (see the script's header).
 SIM_DIR ?= /tmp/stremionative-sim
 sim:
-	CARGO_INCREMENTAL=0 cargo build -p stremionative-app --features hostsim --bin stremionative-sim
-	mkdir -p $(SIM_DIR) && touch $(SIM_DIR)/stremionative-guest
-	SNATIVE_APP_DIR=$(CURDIR)/pkg SNATIVE_RUNTIME_DIR=$(SIM_DIR) target/debug/stremionative-sim
+	SIM_DIR=$(SIM_DIR) tools/sim.sh run
 
 icons:
 	python3 ci/make-icons.py

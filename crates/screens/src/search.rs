@@ -746,7 +746,7 @@ impl StackPage<Bundle> for Page {
                 let Some(sr) = Self::rows(f.cx).get(row) else { return };
                 let Some(item) = sr.preview().get(i) else { return };
                 let focused = self.focused(f, self.base(row) + i as u32);
-                item_list::draw(f, r, &ListRow::of_meta(item, Some(&sr.addon_name)), focused);
+                item_list::draw(f, r, &ListRow::of_meta(item, None), focused);
             }
             Sec::Row(..) => {}
         }

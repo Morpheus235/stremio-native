@@ -12,7 +12,8 @@
 //!
 //! A row is the catalog row the design system's table draws at the catalog measure
 //! (`sn_ui::table::ROW_H_ART`, the accent pill and its ink when focused): a small poster, the
-//! title, a sub-line (year · type · source) and the IMDb rating trailing. `TableView` itself owns
+//! title, a sub-line (year · genres · source), up to two lines of the plot in the row's middle and
+//! the IMDb rating trailing. The type is left out: every list's heading or filter already names it. `TableView` itself owns
 //! a selection and a scroll of its own and has no art slot, so it cannot be one of a Stack's
 //! sections; the row takes its measure, its pill and its ink instead.
 
@@ -43,6 +44,12 @@ const THUMB_RAD: f32 = 6.0;
 const TITLE_SIZE: i32 = theme::size::BODY;
 const META_SIZE: i32 = theme::size::CAPTION;
 const VALUE_SIZE: i32 = theme::size::LABEL;
+/// The title and sub-line's share of the text width when the row has a plot to show beside them.
+const TEXT_SHARE: f32 = 0.4;
+const BLURB_LINES: usize = 2;
+const BLURB_LEAD: f32 = META_SIZE as f32 * 1.3;
+/// Genres a sub-line names at most.
+const GENRES: usize = 3;
 /// Rows of look-ahead a paged list asks for its next page within (about a screenful).
 pub const AHEAD: usize = 10;
 
@@ -51,6 +58,8 @@ pub struct ListRow<'a> {
     pub art: TileFacts<'a>,
     pub title: &'a str,
     pub meta: String,
+    /// The plot, on one line (may be empty).
+    pub blurb: String,
     pub value: Option<String>,
 }
 
@@ -72,10 +81,12 @@ impl<'a> ListRow<'a> {
     /// A catalog item, with the catalog it came from where the page knows it.
     pub fn of_meta(item: &'a MetaPreview, source: Option<&str>) -> Self {
         let year = item.release_info.as_deref().unwrap_or("");
+        let genres = item.genres.iter().map(|g| g.trim()).filter(|g| !g.is_empty()).take(GENRES).collect::<Vec<_>>().join(", ");
         ListRow {
             art: crate::cards::tile_facts(item),
             title: &item.name,
-            meta: meta_line(&[year, &kind_word(&item.kind), source.unwrap_or("")]),
+            meta: meta_line(&[year, &genres, source.unwrap_or("")]),
+            blurb: item.description.as_deref().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" "),
             value: item.imdb_rating.as_deref().map(str::trim).filter(|r| !r.is_empty()).map(|r| format!("IMDb {r}")),
         }
     }
@@ -96,6 +107,7 @@ impl<'a> ListRow<'a> {
             art,
             title: &item.name,
             meta: meta_line(&[&kind_word(&item.kind), &crate::item_cards::caption(item)]),
+            blurb: String::new(),
             value: art.resume.filter(|_| item.state.duration > 0).map(|r| sn_ui::fmt::time_left(r.left_ms)),
         }
     }
@@ -157,7 +169,20 @@ pub fn draw(f: &mut DrawFrame<'_, '_, Bundle>, section: Rect, row: &ListRow<'_>,
         Label::new(c.as_ptr(), VALUE_SIZE, sub).bold().h(HAlign::Right).v(VAlign::Middle).draw(p, Rect::new(right - w, face.y, w, face.h));
         right -= w + PAD;
     }
-    let w = (right - x).max(0.0);
+    let mut w = (right - x).max(0.0);
+    if !row.blurb.is_empty() {
+        // fixed columns, so the plot starts and ends at the same x on every row, rated or not
+        let rating = face.x + face.w - PAD - f.measure.width_str("IMDb 8.8", VALUE_SIZE, true) - PAD;
+        let text_w = ((rating - x) * TEXT_SHARE).floor();
+        let bx = x + text_w + PAD * 2.0;
+        let bw = (rating.min(right) - bx).max(0.0);
+        let view = sn_ui::text_view::TextView::new(&row.blurb, META_SIZE, if focused { sub } else { theme::TEXT_TERTIARY })
+            .leading(BLURB_LEAD)
+            .max_lines(BLURB_LINES);
+        let h = view.line_count(bw) as f32 * BLURB_LEAD;
+        view.draw(p, Rect::new(bx, face.y + (face.h - h) * 0.5, bw, h));
+        w = text_w;
+    }
     let half = face.h * 0.5;
     let title = sn_gfx::text::elide_by(row.title, w, false, |t| f.measure.width_str(t, TITLE_SIZE, true));
     let c = cstring(&title);
@@ -220,7 +245,7 @@ mod tests {
     use sn_platform::i18n::{language_on_this_thread_for_test, SHIPPED};
 
     #[test]
-    fn a_catalog_row_reads_year_type_source_and_rating() {
+    fn a_catalog_row_reads_year_genres_source_plot_and_rating() {
         let _g = language_on_this_thread_for_test(sn_platform::i18n::Preference::En);
         let item = MetaPreview {
             id: "tt1".into(),
@@ -228,11 +253,14 @@ mod tests {
             name: "Heat".into(),
             release_info: Some("1995".into()),
             imdb_rating: Some("8.3".into()),
+            genres: ["Crime", "Drama", "Thriller", "Action"].map(String::from).to_vec(),
+            description: Some("A thief\n and a cop.".into()),
             poster: Some("https://img.example/p.jpg".into()),
             ..Default::default()
         };
         let row = ListRow::of_meta(&item, Some("Cinemeta"));
-        assert_eq!((row.title, row.meta.as_str(), row.value.as_deref()), ("Heat", "1995 \u{b7} Movies \u{b7} Cinemeta", Some("IMDb 8.3")));
+        assert_eq!((row.title, row.meta.as_str(), row.value.as_deref()), ("Heat", "1995 \u{b7} Crime, Drama, Thriller \u{b7} Cinemeta", Some("IMDb 8.3")));
+        assert_eq!(row.blurb, "A thief and a cop.", "the plot is one line");
         assert_eq!(row.art.thumb, "https://img.example/p.jpg");
         let bare = MetaPreview { id: "x".into(), name: "X".into(), imdb_rating: Some(" ".into()), ..Default::default() };
         let row = ListRow::of_meta(&bare, None);
