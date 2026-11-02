@@ -63,6 +63,7 @@
   "app.settings.next_same": "Той жа рэліз",
   "app.settings.next_choose": "Заўсёды выбіраць",
   "app.detail.upcoming": "Неўзабаве",
+  "app.detail.tba": "Дата невядомая",
   "app.detail.all_episodes": "Усе серыі",
   "app.detail.cast": "У ролях: {names}",
   "app.detail.director": "Рэжысёр: {names}",

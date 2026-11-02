@@ -63,6 +63,7 @@
   "app.settings.next_same": "Même version",
   "app.settings.next_choose": "Toujours choisir",
   "app.detail.upcoming": "À venir",
+  "app.detail.tba": "Date à venir",
   "app.detail.all_episodes": "Tous les épisodes",
   "app.detail.cast": "Distribution : {names}",
   "app.detail.director": "Réalisation : {names}",

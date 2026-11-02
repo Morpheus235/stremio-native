@@ -824,7 +824,8 @@ pub fn info(mode: &Mode, meta: &Meta) -> Info {
     // an episode's air day in the UI language's date; a work's release info as the addon wrote it
     let date = match video {
         Some(v) => text(v.released.as_deref().map(|d| d.get(..10).unwrap_or(d))).map(|d| sn_ui::fmt::pretty_date(&d, 0)),
-        None => text(p.release_info.as_deref()),
+        // no releaseInfo: the year of `released`, as Stremio shows it
+        None => text(p.release_info.as_deref()).or_else(|| text(meta.released.as_deref().and_then(|d| d.get(..4)).filter(|y| y.bytes().all(|b| b.is_ascii_digit())))),
     };
     // the rating with the UI language's decimal mark (`7,5` in French); text it cannot read as a
     // number stays as the addon sent it
@@ -1116,7 +1117,8 @@ fn episodes(out: &mut Built, item: &ItemRef, meta: &Meta, season: Option<u32>, t
     let Some(season) = season.filter(|s| all.contains(s)).or_else(|| all.first().copied()) else { return };
     let show = if meta.preview.name.is_empty() { item.name.clone() } else { meta.preview.name.clone() };
     // the season dropdown above the list names the season; with one season there is none
-    let mut s = Section::new(if all.len() > 1 { String::new() } else { season_label(season) });
+    let mut s = Section::new(if all.len() > 1 { String::new() } else { crate::episodes::season_name(meta, season) });
+    let today = crate::episodes::schedule_day(meta, today);
     for (i, v) in crate::episodes::of_season(meta, season) {
         let address = crate::episodes::address(season, v);
         let title = if v.title.trim().is_empty() { address.clone() } else { v.title.clone() };
@@ -3144,9 +3146,12 @@ mod tests {
     #[test]
     fn an_episode_released_after_today_reads_upcoming() {
         let _en = sn_platform::i18n::language_on_this_thread_for_test(sn_platform::i18n::Preference::En);
-        let meta = fixture("tmdb_wild_last_boss");
+        let mut meta = fixture("tmdb_wild_last_boss");
         assert_eq!(seasons(&meta), [1], "one season: no chips");
         let mode = Mode::Item(ItemRef { kind: "series".into(), id: "tmdb:280042".into(), name: "A Wild Last Boss Appeared!".into(), from: String::new() });
+        let unscheduled = build(&mode, Some(&ready(meta.clone())), None, None, "2026-10-17");
+        assert!(unscheduled.sections[0].rows.iter().all(|r| r.value.is_none()), "no hasScheduledVideos: nothing upcoming (Stremio's rule)");
+        meta.behavior_hints.has_scheduled_videos = true;
         let state = ready(meta);
         let b = build(&mode, Some(&state), None, None, "2026-10-17");
         let rows: Vec<(&str, Option<&str>, bool)> =
@@ -3192,6 +3197,18 @@ mod tests {
     /// overview, its still, its release day and the show's runtime, rating, genres and cast; one
     /// without an overview falls back to the show's description. A movie reads its year, cast and
     /// director and its background.
+    /// No `releaseInfo`: the year of `released`, as Stremio shows it.
+    #[test]
+    fn a_work_without_release_info_reads_its_release_year() {
+        let mut m = Meta::default();
+        m.preview.name = "Film".into();
+        m.released = Some("2024-02-27T00:00:00.000Z".into());
+        let mode = Mode::Item(ItemRef { kind: "movie".into(), id: "x".into(), name: "Film".into(), from: String::new() });
+        assert_eq!(info(&mode, &m).facts, "2024");
+        m.preview.release_info = Some("2023".into());
+        assert_eq!(info(&mode, &m).facts, "2023", "the addon's own words first");
+    }
+
     #[test]
     fn the_narrative_column_reads_the_meta() {
         let _en = sn_platform::i18n::language_on_this_thread_for_test(sn_platform::i18n::Preference::En);

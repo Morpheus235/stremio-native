@@ -52,6 +52,10 @@ pub struct Meta {
     pub videos: Vec<Video>,
     #[serde(default, deserialize_with = "lenient_string")]
     pub runtime: Option<String>,
+    /// The first release, an ISO date ("2024-02-27T00:00:00.000Z"); the year shown when the addon
+    /// sent no `releaseInfo`.
+    #[serde(default, deserialize_with = "lenient_string")]
+    pub released: Option<String>,
     /// Cinemeta sends `"director": null` on a series: null reads as none, not a failed meta.
     #[serde(default, deserialize_with = "lenient_vec")]
     pub cast: Vec<String>,
@@ -77,6 +81,9 @@ pub struct Meta {
 pub struct MetaHints {
     #[serde(deserialize_with = "lenient_string")]
     pub default_video_id: Option<String>,
+    /// The series has episodes announced but not out yet: only then does Stremio mark a
+    /// future-dated episode upcoming, or a dateless one "TBA".
+    pub has_scheduled_videos: bool,
 }
 
 impl Meta {
