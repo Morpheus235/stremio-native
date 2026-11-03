@@ -2944,6 +2944,18 @@ fn feed_audio_lane(mt: &MainThread, eng: &mut Engine) {
             audio_note("held: ahead of the presented position", fp, eng.max_fed_video_pts, pres);
             break;
         }
+        // Nothing presented yet (an in-place seek clears `pres_fed` until its first frame): hold
+        // against the fed video instead, inside the stale bound above. Unheld, the audio ran past
+        // a decoder-stopped video lane, and every AU after was dropped as stale for good.
+        if !eng.prime_play
+            && !lead_in
+            && pres == PRES_NONE
+            && eng.max_fed_video_pts > 0
+            && fp - eng.max_fed_video_pts > MAX_FEED_AHEAD_NS + AUDIO_SLACK_NS
+        {
+            audio_note("held: ahead of the fed video", fp, eng.max_fed_video_pts, pres);
+            break;
+        }
         // Exempt until the lane holds its own prime depth: an audio gap longer than the limit
         // would otherwise hold the AU the prime is waiting for, and the clock with it.
         if eng.prime_play
@@ -5878,6 +5890,39 @@ mod late_audio_start_tests {
         assert!(eng.max_fed_video_pts > 0, "PRECONDITION FAILED: the host sink fed no video");
         assert_eq!(eng.max_fed_audio_pts, 0, "stale audio must not reach the sink");
         assert_eq!(eng.audio_start_fp, None);
+    }
+
+    /// **After an in-place seek, audio waits for the video instead of racing past it.** The C1 log
+    /// (E-AC-3, 2026-11-03): `seek(in-place): av_seek t=0`, `primed … -> Play`, the video lane
+    /// stopped by the decoder at 11.3 s (`reply=B`), and the audio lane, with no frame presented
+    /// yet (`pres_fed` is [`PRES_NONE`] until one is), fed on to 16 s and then dropped every AU
+    /// after as `far ahead of the video`. From then on each AU popped was the demuxer's newest,
+    /// minutes past the picture: no sound for the rest of the episode, `Feed V−A +162 s`.
+    #[test]
+    fn audio_after_a_seek_is_held_near_the_fed_video_until_a_frame_presents() {
+        let _serial = sn_base::testlock::serial();
+        let _restore = arm();
+        let mut eng = super::prime_livelock_tests::engine_after_reload();
+        eng.prime_play = false;
+        eng.max_fed_video_pts = 11_344_000_000;
+        SHARED.pres_fed.store(PRES_NONE, Ordering::Relaxed);
+        let au = [0u8; 64];
+        let qa = &mut **eng.aq_audio.as_mut().unwrap() as *mut crate::aq::AuQueue;
+        for i in 0..1_800 {
+            crate::aq::aq_push(qa, au.as_ptr(), au.len() as c_int, 16_000_000 + i * A_STEP_NS, 1, 2);
+        }
+        SHARED.first_audio_pts.store(16_000_000, Ordering::Relaxed);
+        run_ticks(&mut eng);
+
+        let bound = eng.max_fed_video_pts + MAX_FEED_AHEAD_NS + AUDIO_SLACK_NS;
+        assert!(eng.max_fed_audio_pts > 0, "PRECONDITION FAILED: the host sink fed no audio");
+        assert!(
+            eng.max_fed_audio_pts <= bound,
+            "audio fed to {}ns, past the fed video's lead ({bound}ns)",
+            eng.max_fed_audio_pts
+        );
+        let next = eng.pending_audio.as_ref().map(|n| unsafe { crate::aq::au_fields(n.0) }.2);
+        assert_eq!(next, Some(eng.max_fed_audio_pts + A_STEP_NS), "the next AU is held, none dropped");
     }
 }
 
