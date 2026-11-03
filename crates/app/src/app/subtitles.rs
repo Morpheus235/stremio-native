@@ -290,7 +290,8 @@ const UNKNOWN_ALIGNS: ass::AlignSet = ass::AlignSet { bottom: true, middle: true
 
 impl AssSubtitles {
     pub fn update(&mut self, ps: &sn_media::session::PlaybackSession, now: u32) {
-        let source = if sn_media::player::loading(ps) {
+        // A refill holds the clock over the last picture: its cue stays with it.
+        let source = if sn_media::player::loading(ps) && !sn_media::player::rebuffering() {
             None
         } else {
             sidecar::ass_source().or_else(|| ass_source::selected(sn_media::player::desired_sub_idx()))

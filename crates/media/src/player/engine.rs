@@ -138,9 +138,23 @@ pub const fn feed_leads_ms() -> (i64, i64) {
 // the last minute of an anime episode — the high-bitrate ending outran the debrid link, the lane
 // fell from 10.5 MB to 0.3 MB and the sink dropped 180 frames. 48 MiB is ~13 s at 30 Mbit/s and
 // ~27 s at 15 Mbit/s (a 4K HEVC web-dl); a 60-80 Mbit/s UHD remux still gets ~5-6 s.
-// ponytail: fixed bytes, not seconds; size it from the probed bitrate if RAM gets tight.
+//
+// **48 MiB is now the floor, not the cap.** A session raises the video lane toward
+// `AQ_VIDEO_CEILING` from the memory the kernel reports free (`buffering::video_queue_cap`): 30 s
+// of a 25 Mbit/s 4K web-dl is ~94 MB, and the dev set has ~200 MB available with swap in use, so
+// memory is the bound. The audio lane is 4 MiB: the demuxer is one thread, so a full audio lane
+// parks the video lane too, and at 1 MiB a 768 kbit/s E-AC-3 track capped the runway at ~11 s.
 const AQ_VIDEO_BYTES: c_long = 48 * 1024 * 1024;
-const AQ_AUDIO_BYTES: c_long = 1024 * 1024;
+const AQ_VIDEO_CEILING: c_long = 96 * 1024 * 1024;
+const AQ_AUDIO_BYTES: c_long = 4 * 1024 * 1024;
+
+/// The video lane's base cap for the current session (see `AQ_VIDEO_CEILING`).
+static LIVE_VIDEO_CAP: AtomicI64 = AtomicI64::new(AQ_VIDEO_BYTES as i64);
+
+/// [`aq_caps`] as this session sized them: the read-out's denominators.
+pub fn live_aq_caps() -> (i64, i64) {
+    (LIVE_VIDEO_CAP.load(Ordering::Relaxed), AQ_AUDIO_BYTES as i64)
+}
 
 pub struct SampleBuf {
     pub data: Vec<u8>,
@@ -214,6 +228,12 @@ pub struct Engine {
     // gap is what makes video "fast-forward" to catch the audio clock on resume). feed_stream
     // fires Play once max_fed_pts reaches PRIME_NS.
     pub prime_play: bool,
+    /// A start from the top primes on a timeline nobody rebased: its base is the first video AU
+    /// Starfish accepts, which this sets as `seek_base_pts`.
+    pub prime_base_pending: bool,
+    /// Fed pts of the first video AU Starfish accepted in the prime now waiting: the feed limit
+    /// while the throttle is off ([`PRIME_FEED_AHEAD_NS`]) counts from it. `None` between primes.
+    pub prime_feed_floor: Option<i64>,
     // Two-lane feed (Kodi m_messageQueueVideo/Audio): the demuxer routes es=1 video to aq_video
     // and es=2 audio to aq_audio; each lane is fed independently so a video BufferFull can't stall
     // the audio lane (the audioSync master clock). Both are allocated for a stream. (None only
@@ -1587,7 +1607,22 @@ fn start_bufferfeed_inner(ps: &mut crate::session::PlaybackSession, pa: &mut sup
         log(&stream_open_log_line(&origin.log_form(), path));
         // Two-lane feed: the demuxer routes es=1 video to aq_video and es=2 audio to
         // aq_audio, each with its own cap + feeder.
-        let mut qv = crate::aq::aq_new(AQ_VIDEO_BYTES);
+        // A trailer preview keeps the base cap and the old prime: it is not the item being watched.
+        super::buffering::begin_item(&url, !ps.is_preview());
+        let mem = super::buffering::mem_available();
+        let video_cap = if ps.is_preview() {
+            AQ_VIDEO_BYTES as i64
+        } else {
+            super::buffering::video_queue_cap(AQ_VIDEO_BYTES as i64, AQ_VIDEO_CEILING as i64, mem)
+        };
+        LIVE_VIDEO_CAP.store(video_cap, Ordering::Relaxed);
+        log(&format!(
+            "aq: video cap {} MiB (memory available {} MiB), audio cap {} MiB",
+            video_cap >> 20,
+            mem.map_or(-1, |m| m >> 20),
+            AQ_AUDIO_BYTES >> 20
+        ));
+        let mut qv = crate::aq::aq_new(video_cap as c_long);
         let mut qa = crate::aq::aq_new(AQ_AUDIO_BYTES);
         let aqv_raw = &mut *qv as *mut AuQueue;
         let aqa_raw = &mut *qa as *mut AuQueue;
@@ -1696,6 +1731,8 @@ fn start_bufferfeed_inner(ps: &mut crate::session::PlaybackSession, pa: &mut sup
         video_frame_ns: frame_ns_of(decl.fps),
         seek_base_pts: 0,
         prime_play: false,
+        prime_base_pending: false,
+        prime_feed_floor: None,
         aq_video: aqv_box,
         aq_audio: aqa_box,
         hs,
@@ -2049,8 +2086,27 @@ const PRIME_VIDEO_MAX_NS: i64 = 2_500_000_000;
 // ~1.6s (was ~10-20s: aq 6MB + the pipeline's own ~8MB) makes seeks flush far less, keeps the
 // clock from running ahead, and cuts latency. AUDIO gets a looser bound so it can ride slightly
 // ahead (audio buffer is cheap and it's the master clock) without unbounded race on odd muxes.
+// The runway against network dips is the application queues behind this, not this lead.
 pub(crate) const MAX_FEED_AHEAD_NS: i64 = 1_600_000_000;
 const AUDIO_SLACK_NS: i64 = 2_000_000_000;
+// The throttle is off while a prime waits, and a prime now waits for the network's runway (up to
+// `buffering::MAX_FILL_NS`), not only the decoder's depth. Past its base the pipeline is fed just
+// enough for the video-only escape plus one ordinary lead; the rest of the runway waits in the
+// application queues, as it does while playing.
+const PRIME_FEED_AHEAD_NS: i64 = PRIME_VIDEO_MAX_NS + MAX_FEED_AHEAD_NS;
+
+/// Whether the prime feed limit applies yet: no audio demuxed past the prime's base (none at all,
+/// or a track that ended before it), or audio already accepted to its own prime depth. Until then
+/// both lanes feed as the old prime did. An audio gap past the limit would otherwise hold the audio
+/// AU the prime waits for, and the video limit would keep the audio after a wider gap beyond
+/// [`AUDIO_STALE_AHEAD_NS`] of the video fed, where it is dropped.
+fn prime_audio_settled(eng: &Engine) -> bool {
+    let tail = SHARED.audio_tail_ns.load(Ordering::Acquire);
+    let shift = SHARED.pts_shift.load(Ordering::Relaxed);
+    tail < 0
+        || tail.saturating_add(shift) <= eng.seek_base_pts
+        || eng.max_fed_audio_pts - eng.seek_base_pts >= PRIME_AUDIO_NS
+}
 // A fed pts this far below a lane's high-water is a stale pre-seek AU (past the B-frame reorder
 // distance) → drop it rather than feed a backward jump.
 const STALE_BACKJUMP_NS: i64 = 2_000_000_000;
@@ -2342,6 +2398,41 @@ fn pts_nudge_ns() -> i64 {
     v
 }
 
+pub(crate) fn lane_ptrs(eng: &mut Engine) -> (*mut AuQueue, *mut AuQueue) {
+    let p = |q: Option<&mut Box<AuQueue>>| q.map_or(std::ptr::null_mut(), |q| &mut **q as *mut AuQueue);
+    (p(eng.aq_video.as_mut()), p(eng.aq_audio.as_mut()))
+}
+
+/// An audio tail this far behind the video tail, with nothing left in its queue, is a track that
+/// went quiet (it ended early, or the file has a long gap), not a lane the network starves.
+const AUDIO_QUIET_NS: i64 = 10_000_000_000;
+
+/// The demuxed tail the runway is measured to, in content ns: the earlier lane's when the Load
+/// carries audio, except an audio lane gone quiet ([`AUDIO_QUIET_NS`]), which would otherwise
+/// hold the runway near zero to the end of the file. `None` until the lanes have published tails.
+pub(crate) fn runway_tail_ns(eng: &mut Engine) -> Option<i64> {
+    let video = SHARED.video_tail_ns.load(Ordering::Acquire);
+    let audio = SHARED.audio_tail_ns.load(Ordering::Acquire);
+    if video < 0 {
+        return None;
+    }
+    if SHARED.dg_load_a.load(Ordering::Relaxed) == 0 {
+        return Some(video);
+    }
+    if audio < 0 {
+        return None;
+    }
+    let (_, qa) = lane_ptrs(eng);
+    let quiet = audio < video.saturating_sub(AUDIO_QUIET_NS) && crate::aq::aq_bytes(qa) == 0;
+    Some(if quiet { video } else { video.min(audio) })
+}
+
+/// Media queued past the prime's base, in fed ns ([`runway_tail_ns`] on the fed timeline).
+fn queued_runway_ns(eng: &mut Engine, shift: i64) -> Option<i64> {
+    let tail = runway_tail_ns(eng)?;
+    Some(tail.saturating_add(shift).saturating_sub(eng.seek_base_pts))
+}
+
 /// Arm a prime at the current physical playhead without moving the clock. A viewer Resume from a
 /// queued stream is this boundary: Starfish is already Paused, accepted media may remain ahead of
 /// the presented tail, and both application queues may continue the same validated timeline
@@ -2354,6 +2445,7 @@ pub fn arm_live_clock_prime(eng: &mut Engine) {
         presented
     };
     eng.prime_play = true;
+    eng.prime_feed_floor = None;
 }
 
 /// **Start the clock once both lanes are buffered past the seek base** — video to [`PRIME_NS`]
@@ -2375,7 +2467,7 @@ pub fn arm_live_clock_prime(eng: &mut Engine) {
 /// so the in-loop call is kept for the case it already served: a direct-play stream that reaches
 /// the threshold mid-lane should start on that AU, not a tick later.
 pub fn try_prime(mt: &MainThread, eng: &mut Engine) {
-    if !eng.prime_play {
+    if !eng.prime_play || eng.prime_base_pending {
         return;
     }
     let Some(prime_kind) = SHARED.prime_kind() else {
@@ -2406,7 +2498,17 @@ pub fn try_prime(mt: &MainThread, eng: &mut Engine) {
     } else {
         accepted_vbuf >= PRIME_VIDEO_MAX_NS
     };
-    if decoder_ready && TX.feed_allowed() {
+    // The decoder holds ~1.6 s at most; the runway the network has to beat is the whole queued
+    // tail. A paused seek decodes one still for a viewer who is not watching it play: no runway.
+    let target = super::buffering::target_ns();
+    let runway = queued_runway_ns(eng, shift);
+    let runway_ready = TX.seek_preroll_active() || {
+        let (qv, qa) = lane_ptrs(eng);
+        let producer_done = crate::aq::aq_producer_done(qv);
+        let lanes_full = crate::aq::aq_would_park(qv) || crate::aq::aq_would_park(qa);
+        super::buffering::fill_ready(runway, target, producer_done, lanes_full)
+    };
+    if decoder_ready && runway_ready && TX.feed_allowed() {
         let Some(play_token) = SHARED.reserve_prime_play(prime_kind) else {
             return;
         };
@@ -2421,11 +2523,16 @@ pub fn try_prime(mt: &MainThread, eng: &mut Engine) {
                     super::acb_mirror_playstate_at(mt, eng.stage, true);
                 }
                 eng.prime_play = false;
+                eng.prime_feed_floor = None;
                 SHARED.seeking.store(false, Ordering::Relaxed); // playback resumed at the new position → HUD spinner off
+                super::buffering::note_started();
                 log(&format!(
-                    "primed: v={}ms a={}ms -> Play",
+                    "primed: v={}ms a={}ms runway={}ms target={}ms net={} -> Play",
                     accepted_vbuf / 1_000_000,
                     playable_abuf / 1_000_000,
+                    runway.map_or(-1, |r| r / 1_000_000),
+                    target / 1_000_000,
+                    super::buffering::rate_text(super::buffering::rate()),
                 ));
             }
             PlayCompletion::Refused => {
@@ -2653,6 +2760,13 @@ fn feed_stream(mt: &MainThread, eng: &mut Engine) {
                 SHARED.dg_feed_state.store(4, Ordering::Relaxed); // waiting for a frame
                 break;
             }
+        } else if prime_audio_settled(eng)
+            && eng
+                .prime_feed_floor
+                .is_some_and(|floor| fp - floor > video_span_ns(PRIME_FEED_AHEAD_NS, eng.video_frame_ns))
+        {
+            SHARED.dg_feed_state.store(4, Ordering::Relaxed);
+            break;
         }
         // Out of this tick's slice: the AU stays pending, as on a throttle stop, for the next tick.
         // A lane short of media is exempt: it is priming or its lead is nearly gone.
@@ -2693,6 +2807,13 @@ fn feed_stream(mt: &MainThread, eng: &mut Engine) {
         // for as long as the check lived inside this loop — where it was video-only, and one
         // frame early. `feed_both_lanes` made the same slip reachable from the AUDIO lane, which
         // the old check could not prime from at all, so the latent sloppiness became a defect.
+        if (r as u8) == b'O' && eng.prime_base_pending {
+            eng.prime_base_pending = false;
+            eng.seek_base_pts = fp;
+        }
+        if (r as u8) == b'O' && eng.prime_play && eng.prime_feed_floor.is_none() {
+            eng.prime_feed_floor = Some(fp);
+        }
         if (r as u8) == b'O' && fp > eng.max_fed_video_pts {
             eng.max_fed_video_pts = fp;
         }
@@ -2821,6 +2942,16 @@ fn feed_audio_lane(mt: &MainThread, eng: &mut Engine) {
             && fp - pres > MAX_FEED_AHEAD_NS + AUDIO_SLACK_NS
         {
             audio_note("held: ahead of the presented position", fp, eng.max_fed_video_pts, pres);
+            break;
+        }
+        // Exempt until the lane holds its own prime depth: an audio gap longer than the limit
+        // would otherwise hold the AU the prime is waiting for, and the clock with it.
+        if eng.prime_play
+            && !lead_in
+            && prime_audio_settled(eng)
+            && eng.prime_feed_floor.is_some_and(|floor| fp - floor > PRIME_FEED_AHEAD_NS + AUDIO_SLACK_NS)
+        {
+            audio_note("held: ahead of the prime's first video", fp, eng.max_fed_video_pts, pres);
             break;
         }
         let starved = lane_starved(eng.prime_play, eng.max_fed_audio_pts, eng.seek_base_pts, PRIME_AUDIO_NS, pres);
@@ -3629,6 +3760,8 @@ mod prime_livelock_tests {
             video_frame_ns: 0,
             seek_base_pts: 0,
             prime_play: true,
+            prime_base_pending: false,
+            prime_feed_floor: None,
             aq_video: Some(crate::aq::aq_new(AQ_VIDEO_BYTES)),
             aq_audio: Some(crate::aq::aq_new(AQ_AUDIO_BYTES)),
             hs: sn_net::stream::http_stream_boxed(),
@@ -3651,9 +3784,14 @@ mod prime_livelock_tests {
     }
 
     fn push_segment_at(eng: &mut Engine, base_ns: i64) {
+        push_segment_with_audio_at(eng, base_ns, Some(base_ns), VIDEO_AUS);
+    }
+
+    /// `audio_base_ns: None` queues no audio: the demuxer has not reached it yet.
+    fn push_segment_with_audio_at(eng: &mut Engine, base_ns: i64, audio_base_ns: Option<i64>, video_aus: i64) {
         let au = [0u8; 64];
         let qv = &mut **eng.aq_video.as_mut().unwrap() as *mut crate::aq::AuQueue;
-        for i in 0..VIDEO_AUS {
+        for i in 0..video_aus {
             crate::aq::aq_push(
                 qv,
                 au.as_ptr(),
@@ -3663,13 +3801,14 @@ mod prime_livelock_tests {
                 1,
             );
         }
+        let Some(audio_base_ns) = audio_base_ns else { return };
         let qa = &mut **eng.aq_audio.as_mut().unwrap() as *mut crate::aq::AuQueue;
         for i in 0..AUDIO_AUS {
             crate::aq::aq_push(
                 qa,
                 au.as_ptr(),
                 au.len() as c_int,
-                base_ns + i * A_STEP_NS,
+                audio_base_ns + i * A_STEP_NS,
                 1,
                 2,
             );
@@ -3918,46 +4057,53 @@ mod prime_livelock_tests {
         SHARED.pres_fed.store(PRES_NONE, Ordering::Relaxed);
     }
 
-    /// Reproduces the device sequence: Pause, let the demux queues fill, then Resume. The user
-    /// intent may reopen feeding, but it must not run the native/ACB clock until Starfish has
-    /// accepted a balanced decoder prime. The measured runway may extend into the validated queue
-    /// tails because a paused native source buffer is finite and cannot accept the whole runway.
-    #[test]
-    fn pause_to_fill_resume_primes_both_lanes_before_native_play() {
-        let _serial = sn_base::testlock::serial();
-        struct Restore {
-            video_tail: i64,
-            audio_tail: i64,
-            pts_shift: i64,
-            presented: i64,
-            paused: bool,
+    struct ResumeRestore {
+        video_tail: i64,
+        audio_tail: i64,
+        pts_shift: i64,
+        presented: i64,
+        paused: bool,
+    }
+    impl Drop for ResumeRestore {
+        fn drop(&mut self) {
+            SHARED
+                .video_tail_ns
+                .store(self.video_tail, Ordering::Relaxed);
+            SHARED
+                .audio_tail_ns
+                .store(self.audio_tail, Ordering::Relaxed);
+            SHARED.pts_shift.store(self.pts_shift, Ordering::Relaxed);
+            SHARED.pres_fed.store(self.presented, Ordering::Relaxed);
+            TX.commit_paused(self.paused);
+            SHARED.reset_clock_for_test();
+            crate::player::ffi_host::force_clocksink_for_test(false);
+            super::super::buffering::reset_for_test();
         }
-        impl Drop for Restore {
-            fn drop(&mut self) {
-                SHARED
-                    .video_tail_ns
-                    .store(self.video_tail, Ordering::Relaxed);
-                SHARED
-                    .audio_tail_ns
-                    .store(self.audio_tail, Ordering::Relaxed);
-                SHARED.pts_shift.store(self.pts_shift, Ordering::Relaxed);
-                SHARED.pres_fed.store(self.presented, Ordering::Relaxed);
-                TX.commit_paused(self.paused);
-                SHARED.reset_clock_for_test();
-                crate::player::ffi_host::force_clocksink_for_test(false);
-            }
-        }
+    }
 
+    const RESUME_BASE: i64 = 10_000_000_000;
+
+    /// The device sequence: Pause, let the demux queues fill to `RESUME_BASE + queued_ns`, then
+    /// Resume and feed one tick. Returns the engine, the restore guard and the Play count before
+    /// the tick.
+    fn resume_after_a_fill(
+        metered: bool,
+        queued_ns: i64,
+        audio_gap_ns: Option<i64>,
+        video_aus: i64,
+    ) -> (Engine, ResumeRestore, u64) {
+        super::super::buffering::reset_for_test();
+        super::super::buffering::begin_item("fixture://resume", metered);
         crate::player::ffi_host::force_clocksink_for_test(true);
         SHARED.reset_clock_for_test();
-        let base = 10_000_000_000;
-        let _restore = Restore {
+        let base = RESUME_BASE;
+        let restore = ResumeRestore {
             video_tail: SHARED
                 .video_tail_ns
-                .swap(base + 3_500_000_000, Ordering::Relaxed),
+                .swap(base + queued_ns, Ordering::Relaxed),
             audio_tail: SHARED
                 .audio_tail_ns
-                .swap(base + 3_500_000_000, Ordering::Relaxed),
+                .swap(base + queued_ns, Ordering::Relaxed),
             pts_shift: SHARED.pts_shift.swap(0, Ordering::Relaxed),
             presented: SHARED.pres_fed.swap(base, Ordering::Relaxed),
             paused: TX.paused.swap(true, Ordering::Relaxed),
@@ -3981,7 +4127,7 @@ mod prime_livelock_tests {
         eng.prime_play = false;
         arm_live_clock_prime(&mut eng);
         assert_eq!(eng.seek_base_pts, base);
-        push_segment_at(&mut eng, base);
+        push_segment_with_audio_at(&mut eng, base, audio_gap_ns.map(|gap| base + gap), video_aus);
         let before = crate::player::ffi_host::play_calls_for_test();
         try_prime(&mt, &mut eng);
         assert_eq!(
@@ -3992,9 +4138,20 @@ mod prime_livelock_tests {
 
         TX.commit_paused(false);
         tick(&mt, &mut eng);
+        (eng, restore, before)
+    }
 
-        let accepted_video = eng.max_fed_video_pts - base;
-        let accepted_audio = eng.max_fed_audio_pts - base;
+    /// Reproduces the device sequence: Pause, let the demux queues fill, then Resume. The user
+    /// intent may reopen feeding, but it must not run the native/ACB clock until Starfish has
+    /// accepted a balanced decoder prime. The measured runway may extend into the validated queue
+    /// tails because a paused native source buffer is finite and cannot accept the whole runway.
+    /// (Unmetered: the network runway the policy adds is graded on its own below.)
+    #[test]
+    fn pause_to_fill_resume_primes_both_lanes_before_native_play() {
+        let _serial = sn_base::testlock::serial();
+        let (eng, _restore, before) = resume_after_a_fill(false, 3_500_000_000, Some(0), VIDEO_AUS);
+        let accepted_video = eng.max_fed_video_pts - RESUME_BASE;
+        let accepted_audio = eng.max_fed_audio_pts - RESUME_BASE;
         assert!(accepted_video >= PRIME_NS && accepted_audio >= PRIME_AUDIO_NS);
         assert!(
             accepted_video < 3_000_000_000 && accepted_audio < 3_000_000_000,
@@ -4007,6 +4164,89 @@ mod prime_livelock_tests {
         );
     }
 
+    /// The audit's deadlock: a resume prime expects audio (the queued tail has it), and the next
+    /// audio AU sits past the prime's feed limit behind a gap. The limit must not hold the AU the
+    /// prime waits for.
+    /// A resume whose queued tail promises audio, with the next audio AU `gap_ns` past the base.
+    /// `audio_late`: the demuxer delivers the video through the gap first and the audio after it.
+    fn audio_gap_releases_the_resume(gap_ns: i64, video_aus: i64, audio_late: bool) {
+        let _serial = sn_base::testlock::serial();
+        let early = (!audio_late).then_some(gap_ns);
+        let (mut eng, _restore, before) = resume_after_a_fill(false, gap_ns + 2_500_000_000, early, video_aus);
+        let mt = unsafe { sn_base::task::MainThread::assume() };
+        for _ in 0..40 {
+            tick(&mt, &mut eng);
+        }
+        if audio_late {
+            assert!(eng.prime_play, "no audio yet: the prime waits for it");
+            let au = [0u8; 64];
+            let qa = &mut **eng.aq_audio.as_mut().unwrap() as *mut crate::aq::AuQueue;
+            for i in 0..AUDIO_AUS {
+                crate::aq::aq_push(qa, au.as_ptr(), au.len() as c_int, RESUME_BASE + gap_ns + i * A_STEP_NS, 1, 2);
+            }
+            for _ in 0..40 {
+                if !eng.prime_play {
+                    break;
+                }
+                tick(&mt, &mut eng);
+            }
+        }
+        assert!(eng.max_fed_audio_pts - RESUME_BASE >= gap_ns, "the audio after the gap was fed");
+        assert_eq!(crate::player::ffi_host::play_calls_for_test(), before + 1, "the resume played");
+    }
+
+    /// The limit is lifted only while audio past the base is still to come: not for a video-only
+    /// stream, not for a track that ended before the base, and not once audio holds its prime.
+    #[test]
+    fn the_prime_feed_limit_waits_only_for_audio_still_to_come() {
+        let _serial = sn_base::testlock::serial();
+        let (mut eng, _restore, _) = resume_after_a_fill(false, 3_500_000_000, Some(0), VIDEO_AUS);
+        eng.max_fed_audio_pts = 0;
+        SHARED.audio_tail_ns.store(-1, Ordering::Relaxed);
+        assert!(prime_audio_settled(&eng), "no audio demuxed");
+        SHARED.audio_tail_ns.store(RESUME_BASE - 1_000_000_000, Ordering::Relaxed);
+        assert!(prime_audio_settled(&eng), "a track that ended before the base");
+        SHARED.audio_tail_ns.store(RESUME_BASE + 5_000_000_000, Ordering::Relaxed);
+        assert!(!prime_audio_settled(&eng), "audio still to come past the base");
+        eng.max_fed_audio_pts = RESUME_BASE + PRIME_AUDIO_NS;
+        assert!(prime_audio_settled(&eng), "audio at its prime depth");
+    }
+
+    /// 6.5 s: past the 6.1 s audio limit, within the stale guard's 5 s past the ~2 s of video.
+    #[test]
+    fn an_audio_gap_past_the_prime_feed_limit_still_releases_the_resume() {
+        audio_gap_releases_the_resume(6_500_000_000, VIDEO_AUS, false);
+    }
+
+    /// 12 s, the video through the gap demuxed first: a 4.1 s video limit would keep the audio
+    /// past the stale guard's reach (video fed + 5 s), where it is dropped, not fed.
+    #[test]
+    fn a_wide_audio_gap_with_video_through_it_still_releases_the_resume() {
+        audio_gap_releases_the_resume(12_000_000_000, 350, true);
+    }
+
+    /// The reported "plays quick, runs out quick": a decoder prime is not a runway. A metered item
+    /// with an unmeasured network holds the clock until the queued tail is
+    /// `buffering::UNKNOWN_FILL_NS` past the base, then plays.
+    #[test]
+    fn a_metered_resume_waits_for_the_network_runway_then_plays() {
+        let _serial = sn_base::testlock::serial();
+        let (mut eng, _restore, before) = resume_after_a_fill(true, 3_500_000_000, Some(0), VIDEO_AUS);
+        assert!(eng.max_fed_video_pts - RESUME_BASE >= PRIME_NS, "the decoder itself is primed");
+        assert_eq!(
+            crate::player::ffi_host::play_calls_for_test(),
+            before,
+            "3.5 s queued is short of the 6 s an unmeasured network waits for",
+        );
+        assert!(eng.prime_play, "the prime is still owed");
+        let mt = unsafe { sn_base::task::MainThread::assume() };
+        let runway = super::super::buffering::UNKNOWN_FILL_NS;
+        SHARED.video_tail_ns.store(RESUME_BASE + runway, Ordering::Relaxed);
+        SHARED.audio_tail_ns.store(RESUME_BASE + runway, Ordering::Relaxed);
+        tick(&mt, &mut eng);
+        assert_eq!(crate::player::ffi_host::play_calls_for_test(), before + 1, "the runway is in");
+        assert!(!eng.prime_play);
+    }
 }
 
 #[cfg(all(test, feature = "hostsim"))]
@@ -4441,6 +4681,88 @@ mod load_in_flight_tests {
             "once Load has genuinely returned, Play must eventually be reached — the gate must \
              not simply stay closed forever"
         );
+    }
+
+    /// The reported "plays quick, runs out quick": a stream started from the top used to Play at
+    /// loadCompleted, before a single AU, so its runway was whatever arrived while it played. It
+    /// now primes like a seek: the base is its first accepted video AU (here 5 s in, a timeline
+    /// that does not start at 0), and the clock waits for the network runway past it.
+    #[test]
+    fn a_stream_started_from_the_top_waits_for_its_runway_before_play() {
+        let mut ps = crate::session::PlaybackSession::IDLE;
+        let _serial = sn_base::testlock::serial();
+        SHARED.reset_session();
+        crate::player::ffi_host::reset_native_lifecycle_for_test();
+        crate::player::ffi_host::force_clocksink_for_test(true);
+        let _cleanup = Cleanup;
+        super::super::buffering::reset_for_test();
+        super::super::buffering::begin_item("fixture://from-the-top", true);
+        struct PolicyReset;
+        impl Drop for PolicyReset {
+            fn drop(&mut self) {
+                super::super::buffering::reset_for_test();
+            }
+        }
+        let _policy = PolicyReset;
+        SHARED.reset_clock_for_test();
+        assert!(SHARED.arm_initial_clock_hold(false, false));
+
+        let mut pa = crate::player::adapter::PlayerAdapter::new(unsafe {
+            sn_base::task::MainThread::assume()
+        });
+        let epoch = SHARED.begin_native_session().expect("native session");
+        let mut eng = engine_loading(epoch);
+        eng.rebase_pending = false;
+        eng.seek_base_pts = 0;
+        pa.install(eng);
+
+        const START_NS: i64 = 5_000_000_000;
+        const V_STEP_NS: i64 = 41_666_666;
+        const A_STEP_NS: i64 = 21_333_333;
+        {
+            let eng = pa.engine().expect("engine installed above");
+            let au = [0u8; 32];
+            let qv = &mut **eng.aq_video.as_mut().unwrap() as *mut crate::aq::AuQueue;
+            for i in 0..48 {
+                crate::aq::aq_push(qv, au.as_ptr(), au.len() as c_int, START_NS + i * V_STEP_NS, c_int::from(i == 0), 1);
+            }
+            let qa = &mut **eng.aq_audio.as_mut().unwrap() as *mut crate::aq::AuQueue;
+            for i in 0..94 {
+                crate::aq::aq_push(qa, au.as_ptr(), au.len() as c_int, START_NS + i * A_STEP_NS, 1, 2);
+            }
+        }
+        SHARED.dg_load_a.store(1, Ordering::Relaxed);
+        SHARED.video_tail_ns.store(START_NS + 2_000_000_000, Ordering::Relaxed);
+        SHARED.audio_tail_ns.store(START_NS + 2_000_000_000, Ordering::Relaxed);
+
+        let payload = std::ffi::CString::new("{}").unwrap();
+        let payload_ptr = threads::SendPtr(payload.as_ptr() as *mut c_char);
+        threads::load_thread(payload_ptr, epoch);
+
+        let plays = crate::player::ffi_host::play_calls_for_test();
+        for _ in 0..20 {
+            crate::player::pump::pump(&mut ps, &mut pa, 1_000);
+        }
+        let eng = pa.engine().expect("engine");
+        assert!(eng.stage != Stage::Loading, "loadCompleted was taken");
+        assert!(
+            (eng.seek_base_pts - START_NS).abs() < 1_000_000,
+            "the base is the first accepted video AU (fed pts carry the feed nudge)"
+        );
+        assert!(eng.max_fed_video_pts - START_NS >= PRIME_NS, "the decoder itself is primed");
+        assert_eq!(
+            crate::player::ffi_host::play_calls_for_test(),
+            plays,
+            "2 s demuxed is short of the 6 s an unmeasured network waits for"
+        );
+        assert!(eng.prime_play);
+
+        let runway = super::super::buffering::UNKNOWN_FILL_NS;
+        SHARED.video_tail_ns.store(START_NS + runway, Ordering::Relaxed);
+        SHARED.audio_tail_ns.store(START_NS + runway, Ordering::Relaxed);
+        crate::player::pump::pump(&mut ps, &mut pa, 1_000);
+        assert_eq!(crate::player::ffi_host::play_calls_for_test(), plays + 1, "the runway is in");
+        SHARED.dg_load_a.store(0, Ordering::Relaxed);
     }
 
     /// `load-budget-skipped-when-the-gate-can-never-open` (a fix-wave finding, not a P1a
