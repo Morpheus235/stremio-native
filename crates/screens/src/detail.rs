@@ -2831,7 +2831,7 @@ mod tests {
         assert!(!StreamView::default().debrid_only, "every stream is listed until the switch is on");
         let groups = [group("AIO", GroupState::Ready(mixed_streams()))];
         let b = build_marked(&movie(), None, Some(&groups), None, "", &[], None, &StreamView::default());
-        assert_eq!(stream_labels(&b, 0), ["Film.2024.720p.WEB", "Film.2024.2160p.WEB-DL", "Film.2024.1080p.BluRay"]);
+        assert_eq!(stream_labels(&b, 0), ["Film 2024 720p WEB", "Film 2024 2160p WEB-DL", "Film 2024 1080p BluRay"]);
         assert_eq!(b.sections[0].accessory, "3");
         assert_eq!(b.keys, [RowKey(STREAM_KEY), RowKey(STREAM_KEY + 1), RowKey(STREAM_KEY + 2)]);
     }
@@ -2848,10 +2848,10 @@ mod tests {
         ];
         let groups = [group("AIO", GroupState::Ready(mixed_streams())), group("Torrentio", GroupState::Ready(other))];
         let b = build_marked(&movie(), None, Some(&groups), None, "", &[], None, &debrid_only());
-        assert_eq!(stream_labels(&b, 0), ["Film.2024.2160p.WEB-DL", "Film.2024.1080p.BluRay"], "the uncached one stays, in the addon's order");
+        assert_eq!(stream_labels(&b, 0), ["Film 2024 2160p WEB-DL", "Film 2024 1080p BluRay"], "the uncached one stays, in the addon's order");
         assert_eq!(b.sections[0].accessory, "2", "the header counts what is listed");
         assert_eq!(b.keys[..2], [RowKey(STREAM_KEY + 1), RowKey(STREAM_KEY + 2)], "the original positions");
-        assert_eq!(stream_labels(&b, 1), ["Film.2024.2160p.BluRay"]);
+        assert_eq!(stream_labels(&b, 1), ["Film 2024 2160p BluRay"]);
         assert_eq!(b.sections[1].accessory, "1");
         assert_eq!(b.keys[2], RowKey(STREAM_KEY + (1 << 12)));
         assert_eq!(b.actions.iter().filter(|a| matches!(a, Some(Action::Play(_)))).count(), 3);
@@ -2871,7 +2871,7 @@ mod tests {
         let off = build_marked(&movie(), None, Some(&groups), None, "", &[], None, &StreamView::default());
         assert_eq!(off.sections.iter().map(|s| s.header.as_str()).collect::<Vec<_>>(), ["Direct", "AIO"], "off: both are sections");
         let b = build_marked(&movie(), None, Some(&groups), None, "", &[], None, &debrid_only());
-        assert_eq!(texts(&b), vec![("AIO".into(), vec!["Film.2024.2160p.WEB-DL".into(), "Film.2024.1080p.BluRay".into()]), (String::new(), vec![msg::app_detail_quiet_addons(1)])]);
+        assert_eq!(texts(&b), vec![("AIO".into(), vec!["Film 2024 2160p WEB-DL".into(), "Film 2024 1080p BluRay".into()]), (String::new(), vec![msg::app_detail_quiet_addons(1)])]);
         assert_eq!(b.actions.last(), Some(&Some(Action::ToggleQuiet)));
         let open = StreamView { quiet_open: true, ..debrid_only() };
         let b = build_marked(&movie(), None, Some(&groups), None, "", &[], None, &open);
@@ -2915,19 +2915,19 @@ mod tests {
         let _en = sn_platform::i18n::language_on_this_thread_for_test(sn_platform::i18n::Preference::En);
         let mut app = two_addon_movie();
         let labels = |app: &crate::test_support::TestApp| detail_page(app).sections().iter().flat_map(|s| s.rows.iter().map(|r| r.label.clone())).collect::<Vec<_>>();
-        assert!(labels(&app).contains(&"Film.One".to_string()), "off: the plain link is listed");
+        assert!(labels(&app).contains(&"Film One".to_string()), "off: the plain link is listed");
         app.rig.settings.set(Pref::DebridOnly, 1);
         let gen = app.rig.settings.gen();
         app.notify(StoreId::Settings, gen);
         app.frames(20);
         let on = labels(&app);
-        assert!(!on.contains(&"Film.One".to_string()) && !on.contains(&"Film.Two".to_string()), "on: nothing says debrid, nothing is listed: {on:?}");
+        assert!(!on.contains(&"Film One".to_string()) && !on.contains(&"Film Two".to_string()), "on: nothing says debrid, nothing is listed: {on:?}");
         assert!(on.contains(&msg::app_detail_quiet_addons(2)), "both addons are quiet: {on:?}");
         app.rig.settings.set(Pref::DebridOnly, 0);
         let gen = app.rig.settings.gen();
         app.notify(StoreId::Settings, gen);
         app.frames(20);
-        assert!(labels(&app).contains(&"Film.One".to_string()), "off again: listed again");
+        assert!(labels(&app).contains(&"Film One".to_string()), "off again: listed again");
     }
 
     /// Every piece of text a stream row draws: the side column, the title, the chips.
