@@ -14,6 +14,11 @@ name = "stremionative_app"
 # An rlib by default; the Makefile asks `cargo rustc --crate-type staticlib` for the television.
 crate-type = ["rlib"]
 
+[[bin]]
+name = "stremionative-sim"
+path = "src/bin/sim.rs"
+required-features = ["hostsim"]
+
 [features]
 # A development build carries the dev triggers (`/tmp/stremionative-*` and the instruments behind
 # them). `make RELEASE=1` builds with `--no-default-features`: nothing a release ships reads a
@@ -28,6 +33,16 @@ devtriggers = [
     "sn_ui/devtriggers",
     "sn_media/devtriggers",
     "sn_screens/devtriggers",
+]
+# The desktop simulator (`stremionative-sim`, macOS/Linux with SDL2 + desktop GL): the platform's
+# host arms instead of Starfish, Luna and Wayland. A preview tool for UI work, never a shipped build.
+hostsim = [
+    "devtriggers",
+    "sn_base/hostsim",
+    "sn_machine/hostsim",
+    "sn_platform/hostsim",
+    "sn_gfx/hostsim",
+    "sn_media/hostsim",
 ]
 # The main-thread blocking guard's fatal mode and the runtime warning surface (developer builds).
 threadcheck = ["sn_base/threadcheck", "sn_ui/threadcheck"]

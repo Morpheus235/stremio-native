@@ -28,7 +28,8 @@
   "app.detail.streams": "Flux",
   "app.detail.not_playable": "Lecture impossible ici",
   "app.detail.stream_cached": "En cache",
-  "app.detail.stream_uncached": "Pas en cache — lance un téléchargement",
+  "app.detail.stream_uncached": "Pas encore en cache",
+  "app.detail.stream_upscaled": "Upscalé",
   "app.detail.stream_live": "EN DIRECT",
   "app.detail.stream_seeders": "{count} sources",
   "app.settings.stream_languages": "Tri des flux",
@@ -62,6 +63,7 @@
   "app.settings.next_same": "Même version",
   "app.settings.next_choose": "Toujours choisir",
   "app.detail.upcoming": "À venir",
+  "app.detail.tba": "Date à venir",
   "app.detail.all_episodes": "Tous les épisodes",
   "app.detail.cast": "Distribution : {names}",
   "app.detail.director": "Réalisation : {names}",
@@ -70,7 +72,7 @@
   "app.detail.director_label": "Réalisation",
   "app.detail.summary_label": "Résumé",
   "app.player.refused": "Impossible de lire ce flux",
-  "app.player.debrid_downloading": "Toujours en téléchargement sur votre service debrid — réessayez dans quelques minutes",
+  "app.player.debrid_downloading": "Toujours en téléchargement sur votre service debrid. Réessayez dans quelques minutes.",
   "app.player.audio": "Audio",
   "app.player.subtitles": "Sous-titres",
   "app.player.subtitles_off": "Désactivés",
@@ -362,6 +364,42 @@
   "app.settings.stream_order_quality": {
     "value": "Qualité d'abord",
     "description": "Stream order option: playable at once first, then the highest resolution."
+  },
+  "app.settings.theme": {
+    "value": "Thème",
+    "description": "Settings: row and picker title — the app's colour theme."
+  },
+  "app.settings.theme_copy": {
+    "value": "Les couleurs de l'application : la teinte du fond et la couleur d'accent. Noir OLED éteint les pixels du fond sur un écran OLED.",
+    "description": "Theme picker: the line under the title."
+  },
+  "app.settings.theme_stremio": {
+    "value": "Stremio",
+    "description": "Theme option: Stremio's own violet (the default)."
+  },
+  "app.settings.theme_graphite": {
+    "value": "Graphite",
+    "description": "Theme option: neutral grey with a white accent."
+  },
+  "app.settings.theme_ocean": {
+    "value": "Océan",
+    "description": "Theme option: deep blue."
+  },
+  "app.settings.theme_crimson": {
+    "value": "Cramoisi",
+    "description": "Theme option: deep red."
+  },
+  "app.settings.theme_emerald": {
+    "value": "Émeraude",
+    "description": "Theme option: deep green."
+  },
+  "app.settings.theme_gold": {
+    "value": "Or",
+    "description": "Theme option: warm dark with a gold accent."
+  },
+  "app.settings.theme_oled": {
+    "value": "Noir OLED",
+    "description": "Theme option: a true black background for OLED screens."
   },
   "app.settings.debrid_only": "Flux debrid uniquement",
   "app.settings.debrid_only_copy": "Activé : uniquement les flux d’un service debrid, en cache ou non. Les flux qui ne mentionnent pas debrid sont masqués. Désactivé : tous les flux.",

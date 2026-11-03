@@ -33,7 +33,110 @@ pub const fn rgb8(r: u8, g: u8, b: u8) -> [f32; 4] {
 /// Stremio's `41deg` page gradient rather than its near-black `#0c0b11` end, so a focused card's
 /// drop shadow still has a ground to darken. (Was Apple TV's shelf gray `#2c2c2e`; the name stays
 /// so the stop keeps its one home.)
-pub const NEUTRAL_500: [f32; 4] = rgb8(0x1a, 0x17, 0x3e);
+#[allow(non_snake_case)]
+pub fn NEUTRAL_500() -> [f32; 4] {
+    palette().ground
+}
+
+/// The **hue-carrying stops**: the only ones a colour theme swaps. The white/black alpha ramps,
+/// the semantic amber/red/green and the caption greys are shared by every theme, so a theme is a
+/// ground tint plus an accent, not a whole palette (the nuvio TV client reached the same verdict:
+/// its greys are tuned against one dark ground).
+#[derive(Clone, Copy)]
+pub struct Palette {
+    /// The app ground (`NEUTRAL_500`).
+    pub ground: [f32; 4],
+    /// The panel stops, both darker than the ground: `NEUTRAL_650`, `NEUTRAL_750`.
+    pub panel: [[f32; 4]; 2],
+    /// The accent and its one-step-deeper focus pill: `VIOLET_500`, `VIOLET_550`.
+    pub accent: [[f32; 4]; 2],
+    /// Label ink ON the accent: white on a deep accent, near-black on a light one.
+    pub accent_ink: [f32; 4],
+    /// The pre-content wash's corners: `ATMOS_NIGHT`, `_DUSK`, `_VIOLET`, `_INDIGO`.
+    pub atmos: [[f32; 4]; 4],
+}
+
+/// Text inks, lightest first: `theme`'s `COOL_0/50/150/200/300/400`. One set for every theme:
+/// they are all dark.
+pub const TEXT_INKS: [[f32; 4]; 6] = [
+    rgb8(0xf7, 0xfa, 0xfc),
+    rgb8(0xeb, 0xf0, 0xf7),
+    rgb8(0xdb, 0xe0, 0xeb),
+    rgb8(0xcd, 0xd3, 0xdd),
+    rgb8(0xb8, 0xbf, 0xcc),
+    rgb8(0x94, 0x99, 0xa3),
+];
+const INK_WHITE: [f32; 4] = rgb8(0xff, 0xff, 0xff);
+const INK_DARK: [f32; 4] = rgb8(0x12, 0x13, 0x16);
+
+/// Every theme by name, the shipped one first. Accents other than Stremio's are nuvio's TV-tuned
+/// values; each ground is the Stremio ladder (ground, darker modal, darkest) re-hued.
+pub const PALETTES: &[(&str, Palette)] = &[
+    ("stremio", Palette {
+        ground: rgb8(0x1a, 0x17, 0x3e),
+        panel: [rgb8(0x0f, 0x0d, 0x20), rgb8(0x0c, 0x0b, 0x11)],
+        accent: [rgb8(0x7b, 0x5b, 0xf5), rgb8(0x6e, 0x4e, 0xe8)],
+        accent_ink: INK_WHITE,
+        atmos: [rgb8(0x0c, 0x0b, 0x11), rgb8(0x26, 0x20, 0x5e), rgb8(0x2e, 0x28, 0x73), rgb8(0x0f, 0x0d, 0x20)],
+    }),
+    ("graphite", Palette {
+        ground: rgb8(0x1c, 0x1c, 0x1e),
+        panel: [rgb8(0x11, 0x11, 0x13), rgb8(0x0b, 0x0b, 0x0c)],
+        accent: [rgb8(0xf4, 0xf2, 0xee), rgb8(0xdc, 0xda, 0xd5)],
+        accent_ink: INK_DARK,
+        atmos: [rgb8(0x0b, 0x0b, 0x0c), rgb8(0x2a, 0x2a, 0x2d), rgb8(0x33, 0x33, 0x36), rgb8(0x11, 0x11, 0x13)],
+    }),
+    ("ocean", Palette {
+        ground: rgb8(0x12, 0x23, 0x3a),
+        panel: [rgb8(0x0b, 0x16, 0x26), rgb8(0x08, 0x0e, 0x17)],
+        accent: [rgb8(0x12, 0x76, 0xce), rgb8(0x0f, 0x68, 0xb8)],
+        accent_ink: INK_WHITE,
+        atmos: [rgb8(0x08, 0x0e, 0x17), rgb8(0x17, 0x35, 0x56), rgb8(0x1b, 0x41, 0x70), rgb8(0x0b, 0x16, 0x26)],
+    }),
+    ("crimson", Palette {
+        ground: rgb8(0x2e, 0x14, 0x18),
+        panel: [rgb8(0x1c, 0x0c, 0x0f), rgb8(0x12, 0x08, 0x09)],
+        accent: [rgb8(0xd5, 0x3b, 0x45), rgb8(0xc0, 0x31, 0x3b)],
+        accent_ink: INK_WHITE,
+        atmos: [rgb8(0x12, 0x08, 0x09), rgb8(0x4a, 0x1d, 0x24), rgb8(0x5c, 0x20, 0x28), rgb8(0x1c, 0x0c, 0x0f)],
+    }),
+    ("emerald", Palette {
+        ground: rgb8(0x10, 0x29, 0x1d),
+        panel: [rgb8(0x09, 0x1a, 0x12), rgb8(0x06, 0x10, 0x0b)],
+        accent: [rgb8(0x21, 0x86, 0x49), rgb8(0x1b, 0x78, 0x40)],
+        accent_ink: INK_WHITE,
+        atmos: [rgb8(0x06, 0x10, 0x0b), rgb8(0x1a, 0x44, 0x30), rgb8(0x1d, 0x55, 0x38), rgb8(0x09, 0x1a, 0x12)],
+    }),
+    ("gold", Palette {
+        ground: rgb8(0x28, 0x22, 0x0f),
+        panel: [rgb8(0x18, 0x14, 0x0a), rgb8(0x0f, 0x0d, 0x07)],
+        accent: [rgb8(0xf2, 0xcd, 0x64), rgb8(0xe0, 0xbb, 0x52)],
+        accent_ink: INK_DARK,
+        atmos: [rgb8(0x0f, 0x0d, 0x07), rgb8(0x41, 0x38, 0x1a), rgb8(0x52, 0x46, 0x1c), rgb8(0x18, 0x14, 0x0a)],
+    }),
+    // True black for OLED: the ground's pixels switch off. Nothing is darker than black, so the
+    // panels lift slightly above it instead, and the pre-content wash stays black.
+    ("oled", Palette {
+        ground: rgb8(0x00, 0x00, 0x00),
+        panel: [rgb8(0x0e, 0x0e, 0x11), rgb8(0x08, 0x08, 0x0a)],
+        accent: [rgb8(0x7b, 0x5b, 0xf5), rgb8(0x6e, 0x4e, 0xe8)],
+        accent_ink: INK_WHITE,
+        atmos: [rgb8(0x00, 0x00, 0x00), rgb8(0x06, 0x05, 0x0c), rgb8(0x0a, 0x08, 0x16), rgb8(0x00, 0x00, 0x00)],
+    }),
+];
+
+/// The theme in force: an index into [`PALETTES`] (Settings > Theme, `set_theme`).
+static ACTIVE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// The palette in force. Read on every draw: a theme change is the next frame's colours.
+pub fn palette() -> &'static Palette {
+    &PALETTES[usize::from(ACTIVE.load(std::sync::atomic::Ordering::Relaxed)).min(PALETTES.len() - 1)].1
+}
+
+/// Switch to theme `i` (an index into [`PALETTES`]; past the end: the last).
+pub fn set_theme(i: u8) {
+    ACTIVE.store(i.min(PALETTES.len() as u8 - 1), std::sync::atomic::Ordering::Relaxed);
+}
 /// The scrim ink, near-black `#050508` (`theme::scrim`'s stop). It is NOT merged into `NEUTRAL_950`
 /// (`#08080a`, two perceptual units lighter): the hero-text legibility floor
 /// (`widgets::hero_scrim_tests::the_hero_text_reads_over_bright_artwork`) has 0.02:1 of headroom and the
@@ -46,7 +149,11 @@ pub const NEUTRAL_1000: [f32; 4] = rgb8(0x05, 0x05, 0x08);
 /// seamless dip. Home overdraws it with `SURFACE_APP` (the identical colour). Two punches through to
 /// the hardware video plane use transparent black instead: the player route, and the detail page
 /// while a trailer preview has presented a frame (`gfx::frame_clear_through`).
-pub const CLEAR_RGB: (f32, f32, f32) = (NEUTRAL_500[0], NEUTRAL_500[1], NEUTRAL_500[2]);
+#[allow(non_snake_case)]
+pub fn CLEAR_RGB() -> (f32, f32, f32) {
+    let g = NEUTRAL_500();
+    (g[0], g[1], g[2])
+}
 
 /// Hero/scroll scrim ink; use via `theme::scrim`.
 pub const SCRIM_INK: [f32; 3] = [NEUTRAL_1000[0], NEUTRAL_1000[1], NEUTRAL_1000[2]];

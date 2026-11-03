@@ -231,7 +231,7 @@ fn a_corner_envelope_reproduces_the_bilinear_wash_it_stands_in_for() {
     let mut field = UnderlayField::new();
     field.latch_from_corners(corners, Grade::Ground);
 
-    let mut wash = AmbientWash::flat(theme::SURFACE_APP);
+    let mut wash = AmbientWash::flat(theme::SURFACE_APP());
     wash.jump(AmbientWash::keyed(corners, [AmbientWash::GROUND_W; 4]));
 
     for &u in &[0.05f32, 0.25, 0.5, 0.75, 0.95] {
@@ -512,7 +512,7 @@ fn text_contrast_floors_hold_over_a_bright_and_a_dark_underlay() {
             panic!("latched");
         };
         let field = [0, 1, 2].map(|i| under[i] * tint[i]);
-        for stop in [theme::PANEL_FROST_TOP, theme::PANEL_FROST_BOT] {
+        for stop in [theme::PANEL_FROST_TOP(), theme::PANEL_FROST_BOT()] {
             let ground = [0, 1, 2].map(|i| stop[i] * a + field[i] * (1.0 - a));
             for (ink, floor, name) in [
                 (theme::TEXT_PRIMARY, 4.5, "primary"),

@@ -308,7 +308,8 @@ impl CardSource<Bundle> for RowCards<'_> {
     }
     fn art(&self, i: usize) -> Art<'_> {
         let watched = |item: &MetaPreview| self.watched.and_then(|l| l.item(&item.id)).is_some_and(|i| i.watched());
-        Art::Poster(self.row.items().get(i).map(|item| sn_ui::tile::TileFacts { watched: watched(item), ..tile_facts(item) }))
+        let item = self.row.items().get(i);
+        crate::cards::art(item, item.is_some_and(watched))
     }
     fn label(&self, i: usize) -> TileLabel {
         match self.row.items().get(i) {
@@ -563,8 +564,8 @@ impl StackPage<Bundle> for Page {
         let heading = |k: Sec, group: GroupId| SectionSpec::new(k, Kind::Custom { height: HEAD_TO_ROW, focusable: true }, group).ranked(LAST_RANK);
         let item = |k: Sec, group: GroupId, rank: u32| SectionSpec::new(k, Kind::Custom { height: item_list::ROW_H, focusable: true }, group).ranked(rank);
         // LEFT past a shelf's first card is re-delivered to the page, which opens the row's See all
-        let shelf = |k: Sec, group: GroupId, rank: u32| {
-            SectionSpec::new(k, Kind::Shelf { style: &POSTER, heading: 0.0 }, group)
+        let shelf = |k: Sec, group: GroupId, rank: u32, style: &'static RowStyle| {
+            SectionSpec::new(k, Kind::Shelf { style, heading: 0.0 }, group)
                 .ranked(rank)
                 .edges([EdgeRule::Geometric, EdgeRule::Geometric, EdgeRule::Screen, EdgeRule::Geometric])
         };
@@ -582,7 +583,7 @@ impl StackPage<Bundle> for Page {
                     out.push(item(Sec::ContinueSeeAll, CW_SEE_ALL_GROUP, 0));
                 }
             } else {
-                out.push(shelf(Sec::Continue, CW_GROUP, 0));
+                out.push(shelf(Sec::Continue, CW_GROUP, 0, &POSTER));
             }
             // the install list's read-out keeps out of Continue Watching's way: a band under it
             if status.is_some() {
@@ -608,7 +609,7 @@ impl StackPage<Bundle> for Page {
                     out.push(item(Sec::SeeAll(row.id), see_all_group(row.id), rank));
                 }
             } else {
-                out.push(shelf(Sec::Row(row.id), row_group(row.id), rank));
+                out.push(shelf(Sec::Row(row.id), row_group(row.id), rank, crate::cards::row_style(crate::cards::shape(row.items().first()))));
             }
         }
     }
@@ -956,7 +957,7 @@ impl HomeScreen {
             genre: row.pager.genre.clone(),
             search: None,
         };
-        fx.push(Fx::Nav(NavOp::Push(AppArg::Catalog(CatalogRef { key, title: format!("{} \u{2014} {}", row.addon_name, row.title()) }))));
+        fx.push(Fx::Nav(NavOp::Push(AppArg::Catalog(CatalogRef { key, title: format!("{} \u{b7} {}", row.addon_name, row.title()) }))));
     }
 
     /// OK or a click on one of the page's own controls; `false` when `elem` is none of them.
@@ -1276,7 +1277,7 @@ impl Screen<Bundle> for HomeScreen {
     }
     fn prepare(&mut self, _b: &mut sn_ui::frame::Budget, _cx: &Cx<'_, Bundle>) {}
     fn draw(&mut self, f: &mut DrawFrame<'_, '_, Bundle>) {
-        sn_gfx::gfx::frame_clear(theme::CLEAR_RGB.0, theme::CLEAR_RGB.1, theme::CLEAR_RGB.2);
+        sn_gfx::gfx::frame_clear(theme::CLEAR_RGB().0, theme::CLEAR_RGB().1, theme::CLEAR_RGB().2);
         self.stack.view(&self.page).paint(f);
         self.stack.draw_hold_hint(f.painter.alpha(f.page_alpha), f.measure);
     }

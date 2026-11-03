@@ -290,7 +290,9 @@ fn attr(attrs: &str, key: &str) -> Option<String> {
     None
 }
 
-fn unescape(s: &str) -> String {
+/// XML/HTML character references (`&amp;`, `&apos;`, `&#39;`, `&#x27;`) decoded; anything else
+/// after an `&` is kept as written. Also read by `types` and `links`: Cinemeta sends `O&apos;Dea`.
+pub(crate) fn unescape(s: &str) -> String {
     if !s.contains('&') {
         return s.to_string();
     }

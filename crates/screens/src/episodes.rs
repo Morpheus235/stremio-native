@@ -5,8 +5,9 @@
 //!
 //! A row is a `sn_ui::table` STILL row: the episode's title (server text), its address and air
 //! date under it, its own still in the leading column (decoded at the row's size, only while the
-//! row is drawn) and its overview as a third quiet line. An episode whose release date is still
-//! ahead reads *Upcoming*, dimmed, instead of looking playable.
+//! row is drawn) and its overview as a third quiet line. When the addon says the series has
+//! scheduled episodes, one whose release date is still ahead reads *Upcoming* and one with no date
+//! *TBA*, dimmed, instead of looking playable (Stremio's rule).
 //!
 //! **Watched marks** ([`Watch`], read off the library entry by [`Watched`]): an episode whose bit
 //! is set in the entry's `state.watched` (`sn_stremio::watched`) reads *Watched*; the entry's
@@ -28,6 +29,24 @@ pub fn seasons(meta: &Meta) -> Vec<u32> {
     seasons
 }
 
+/// A series whose videos carry no season at all (a YouTube channel's, a podcast's): one list,
+/// named *Episodes*, not a season of specials.
+pub fn unseasoned(meta: &Meta) -> bool {
+    !meta.videos.is_empty() && meta.videos.iter().all(|v| v.season.is_none())
+}
+
+/// `season`'s name in `meta`: [`season_label`], or *Episodes* for an [`unseasoned`] list.
+pub fn season_name(meta: &Meta, season: u32) -> String {
+    if unseasoned(meta) { msg::app_detail_episodes().to_string() } else { season_label(season) }
+}
+
+/// The `today` an episode row of `meta` is built against: `today` when the addon says the series
+/// has scheduled episodes (`behaviorHints.hasScheduledVideos`), else empty, so nothing reads
+/// *Upcoming* or *TBA* (Stremio's rule).
+pub fn schedule_day<'a>(meta: &Meta, today: &'a str) -> &'a str {
+    if meta.behavior_hints.has_scheduled_videos { today } else { "" }
+}
+
 /// A season's label (its dropdown option and its section heading).
 pub fn season_label(season: u32) -> String {
     if season == 0 { msg::app_detail_specials().to_string() } else { msg::app_detail_season(i64::from(season)) }
@@ -45,10 +64,11 @@ pub fn address(season: u32, v: &Video) -> String {
     sn_ui::fmt::episode_ordinal(i64::from(season), i64::from(v.episode.unwrap_or(0)))
 }
 
-/// Has `v` not been released yet, on `today` (`YYYY-MM-DD`; empty marks nothing upcoming)?
+/// Has `v` not been released yet, on `today` (`YYYY-MM-DD`; empty marks nothing upcoming)? An
+/// episode with no date at all is not out yet either (*TBA*).
 pub fn upcoming(v: &Video, today: &str) -> bool {
     let date = v.released.as_deref().map(|d| d.get(..10).unwrap_or(d)).unwrap_or("");
-    !today.is_empty() && date > today
+    !today.is_empty() && (date.is_empty() || date > today)
 }
 
 /// The row of episode `v` of `season`: its number and air date under the title (the season is the
@@ -68,7 +88,11 @@ pub fn row(v: &Video, season: u32, today: &str) -> Row {
         .server_detail()
         .still(v.thumbnail.as_deref().map(str::trim).unwrap_or(""))
         .blurb(v.overview.as_deref().map(|o| o.split_whitespace().collect::<Vec<_>>().join(" ")).unwrap_or_default());
-    if upcoming(v, today) { row.value(msg::app_detail_upcoming()).dim(true) } else { row }
+    match (upcoming(v, today), date.is_empty()) {
+        (true, true) => row.value(msg::app_detail_tba()).dim(true),
+        (true, false) => row.value(msg::app_detail_upcoming()).dim(true),
+        _ => row,
+    }
 }
 
 /// What the library says of one episode.
@@ -180,6 +204,27 @@ mod tests {
     }
 
     const NOW: &str = "2026-10-17T00:00:00.000Z";
+
+    #[test]
+    fn a_dateless_scheduled_episode_reads_tba_and_a_seasonless_list_is_episodes() {
+        let _en = sn_platform::i18n::language_on_this_thread_for_test(sn_platform::i18n::Preference::En);
+        let mut m = meta();
+        m.behavior_hints.has_scheduled_videos = true;
+        let dateless = Video { released: None, ..ep(1, 9) };
+        let row = row(&dateless, 1, schedule_day(&m, "2026-11-02"));
+        assert_eq!((row.value.as_deref(), row.dim), (Some("TBA"), true));
+        m.behavior_hints.has_scheduled_videos = false;
+        assert_eq!(row_value(&dateless, schedule_day(&m, "2026-11-02")), None, "no schedule: no TBA");
+        assert_eq!(season_name(&m, 1), "Season 1");
+        let mut channel = Meta::default();
+        channel.videos = vec![Video { id: "yt:a".into(), title: "A".into(), ..Default::default() }];
+        assert!(unseasoned(&channel));
+        assert_eq!(season_name(&channel, 0), msg::app_detail_episodes(), "not Specials");
+    }
+
+    fn row_value(v: &Video, today: &str) -> Option<String> {
+        row(v, 1, today).value
+    }
 
     #[test]
     fn a_series_opens_on_the_next_unwatched_episode_after_the_last_watched() {

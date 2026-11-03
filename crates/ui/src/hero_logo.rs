@@ -140,6 +140,16 @@ pub fn place(band: Rect, w: f32, h: f32, align: HAlign) -> Rect {
     Rect::new(x, band.y + band.h - h, w, h)
 }
 
+/// A `w`×`h` logo bottom-anchored in `band`, scaled down (aspect kept) so its top does not rise
+/// above `ceiling`. A ceiling at or below the band's bottom leaves the size alone.
+pub fn under_ceiling(w: f32, h: f32, band: Rect, ceiling: f32) -> (f32, f32) {
+    let room = band.y + band.h - ceiling;
+    if room <= 0.0 || h <= room {
+        return (w, h);
+    }
+    (w * room / h, room)
+}
+
 /// The title band itself: the item's clearLogo if it has resolved, else its title as text. Owning
 /// both halves here is what makes the swap consistent across the three sites — and is why the two
 /// fallbacks that used to paint an unbounded run now elide like home's always did.
@@ -153,6 +163,8 @@ pub struct HeroLogo<'a> {
     title: &'a str,
     rung: LogoRung,
     align: HAlign,
+    /// The highest line the logo may paint up to ([`HeroLogo::ceiling`]); `None` lets it spill.
+    ceiling: Option<f32>,
     /// `rk` is the logo IMAGE's own URL (an addon's `logo`), resolved through the art source like
     /// any other picture, rather than a key the source's clearLogo store looks up.
     by_url: bool,
@@ -174,6 +186,7 @@ impl<'a> HeroLogo<'a> {
             title,
             rung,
             align: HAlign::Left,
+            ceiling: None,
             by_url: false,
         }
     }
@@ -206,6 +219,14 @@ impl<'a> HeroLogo<'a> {
         self
     }
 
+    /// Never paint above `y`: a logo taller than the room from `y` to the band's bottom is scaled
+    /// down, aspect kept ([`under_ceiling`]). For a page whose band has something drawn right above
+    /// it (the detail page's back crumb); layout is unchanged, so nothing below moves.
+    pub fn ceiling(mut self, y: f32) -> Self {
+        self.ceiling = Some(y);
+        self
+    }
+
     /// Draw into `band` — `band.w` is the column the logo is contained to, `band.y + band.h` the
     /// anchor line, and `band.h` should be [`band_h`] of the same rung. Ink is [`theme::TEXT_PRIMARY`]
     /// for both the logo tint and the fallback text (the value all three sites passed already).
@@ -223,6 +244,7 @@ impl<'a> HeroLogo<'a> {
         // somewhere else (a merged Continue Watching row) names its own, once items carry one.
         if let Some((tex, sw, sh)) = self.texture() {
             let (w, h) = fit(self.rung, sw, sh, band.w);
+            let (w, h) = self.ceiling.map_or((w, h), |c| under_ceiling(w, h, band, c));
             // NOT pixel-snapped: a logo is SCALED content, and the crispness contract snaps
             // 1:1-texel content only (see the note above `theme.rs`'s size ladder).
             p.tex(tex, place(band, w, h, self.align), 0.0, theme::TEXT_PRIMARY);
@@ -432,6 +454,17 @@ mod tests {
             floor.x, tall.x,
             "…and the left edge does not move with the height"
         );
+    }
+
+    /// A ceiling caps the spill: a square emblem shrinks to the room under it, aspect kept; a logo
+    /// that already fits is untouched.
+    #[test]
+    fn a_ceiling_scales_a_tall_logo_into_the_room_under_it() {
+        let band = Rect::new(90.0, 200.0, 660.0, band_h(Hero));
+        assert_eq!(under_ceiling(268.0, 268.0, band, 180.0), (140.0, 140.0));
+        assert_eq!(under_ceiling(600.0, 120.0, band, 180.0), (600.0, 120.0), "a wordmark fits");
+        let (w, h) = under_ceiling(268.0, 268.0, band, 180.0);
+        assert!(place(band, w, h, HAlign::Left).y >= 180.0);
     }
 
     /// The compact title is centred on the panel — identical to the `SCR_W * 0.5` anchor the old

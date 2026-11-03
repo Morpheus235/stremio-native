@@ -27,13 +27,17 @@ pub struct Facts {
     pub live: bool,
     /// "4K", "1440p", "1080p", "720p", "576p", "480p".
     pub resolution: Option<&'static str>,
-    /// "DV", "HDR10+", "HDR".
+    /// "DV", "HDR10+", "HDR", or Dolby Vision with its fallback layer: "DV HDR10+", "DV HDR"
+    /// (a "DV | HDR10" release plays as HDR10 where Dolby Vision cannot).
     pub range: Option<&'static str>,
+    /// The release says it was upscaled ("AI", "Upscaled"): its resolution is not native.
+    pub upscaled: bool,
     /// "HEVC", "AV1", "H.264", "VP9".
     pub codec: Option<&'static str>,
     /// "TrueHD Atmos 7.1", "DD+ 5.1", "DTS-HD", …
     pub audio: Option<String>,
-    /// "REMUX", "BluRay", "WEB-DL", "WEBRip", "HDTV".
+    /// "REMUX", "BluRay", "WEB-DL", "WEBRip", "HDTV", "HDRip", "DVDRip", or a cinema copy
+    /// ([`Facts::cinema_copy`]): "CAM", "TS", "TC", "SCR".
     pub source: Option<&'static str>,
     /// The file size in bytes (the text's "12.3 GB", else the addon's `videoSize` hint).
     pub size: Option<u64>,
@@ -41,6 +45,8 @@ pub struct Facts {
     /// Two-letter language codes ("EN", "DE"), in the order the text names them; "MULTI" for a
     /// multi-audio release.
     pub languages: Vec<&'static str>,
+    /// The subtitle languages, as codes: what AIOStreams writes after a 📝.
+    pub subs: Vec<&'static str>,
     /// The debrid service's cache: `Some(true)` plays at once, `Some(false)` is a torrent the
     /// service first downloads (a placeholder clip plays meanwhile), `None` the text does not say.
     pub cached: Option<bool>,
@@ -80,7 +86,16 @@ const SOURCES: &[(&[&str], &str)] = &[
     (&["web-dl", "webdl"], "WEB-DL"),
     (&["webrip"], "WEBRip"),
     (&["hdtv"], "HDTV"),
+    (&["hdrip"], "HDRip"),
+    (&["dvdrip"], "DVDRip"),
+    // cinema copies ([`Facts::cinema_copy`]); a bare "ts" is a file extension as often
+    (&["cam", "camrip", "hdcam"], "CAM"),
+    (&["telesync", "hdts", "tsrip"], "TS"),
+    (&["telecine", "hdtc"], "TC"),
+    (&["screener", "dvdscr", "scr"], "SCR"),
 ];
+/// The sources that are a copy made in or for a cinema, not the release itself.
+const CINEMA: [&str; 4] = ["CAM", "TS", "TC", "SCR"];
 /// Language words and the code a chip shows.
 const LANGUAGES: &[(&str, &str)] = &[
     ("english", "EN"), ("eng", "EN"), ("german", "DE"), ("ger", "DE"), ("deutsch", "DE"), ("french", "FR"),
@@ -101,7 +116,8 @@ const FLAGS: &[(&str, &str)] = &[
 /// The facts of `s` (see the module doc).
 pub fn facts(s: &Stream) -> Facts {
     let name = s.name.as_deref().unwrap_or("");
-    let body = s.title.as_deref().or(s.description.as_deref()).unwrap_or("");
+    // `title` is the protocol's old name for `description` (Stremio reads it only as a fallback)
+    let body = s.description.as_deref().or(s.title.as_deref()).unwrap_or("");
     let file = s.behavior_hints.filename.as_deref().unwrap_or("");
     let text = format!("{name}\n{body}\n{file}");
     let lower = text.to_lowercase();
@@ -115,15 +131,18 @@ pub fn facts(s: &Stream) -> Facts {
         .find(|(w, _)| w.iter().any(|w| has_word(&name_lower, w)))
         .or_else(|| RESOLUTIONS.iter().find(|(w, _)| w.iter().any(|w| !matches!(*w, "hd" | "sd") && has_word(&lower, w))))
         .map(|(_, r)| *r);
-    let range = if has(&["dv", "dovi", "dolby-vision", "dolbyvision", "dolby vision"]) {
-        Some("DV")
-    } else if has(&["hdr10+", "hdr10plus"]) {
-        Some("HDR10+")
-    } else if has(&["hdr", "hlg"]) {
-        Some("HDR")
-    } else {
-        None
+    let dv = has(&["dv", "dovi", "dolby-vision", "dolbyvision", "dolby vision"]);
+    let range = match (dv, has(&["hdr10+", "hdr10plus"]), has(&["hdr", "hdr10", "hlg"])) {
+        (true, true, _) => Some("DV HDR10+"),
+        (true, false, true) => Some("DV HDR"),
+        (true, false, false) => Some("DV"),
+        (false, true, _) => Some("HDR10+"),
+        (false, false, true) => Some("HDR"),
+        (false, false, false) => None,
     };
+    // a bare "AI" counts only as an item of a "|" list, as Comet's visual tags write it
+    // ("📺 DV | HDR10 | AI"): in a title it is a word or a film
+    let upscaled = has(&["upscale", "upscaled", "upscaling"]) || text.split('|').skip(1).any(|item| item.split_whitespace().next() == Some("AI"));
     let mut audio: Vec<&str> = AUDIO.iter().filter(|(w, _)| has(w)).map(|(_, n)| *n).take(1).collect();
     if has(&["atmos"]) {
         audio.push("Atmos");
@@ -138,27 +157,12 @@ pub fn facts(s: &Stream) -> Facts {
     if let Some(ch) = channels {
         audio.push(ch);
     }
-    let mut languages: Vec<&'static str> = Vec::new();
-    let mut add = |code: &'static str| {
-        if !languages.contains(&code) {
-            languages.push(code);
-        }
-    };
-    // in the order the text names them. Audio only: AIOStreams writes the subtitle languages
-    // after a 📝 on the same line ("🌎 German | English📝 English | Greek"), so each line is read
-    // up to its 📝.
+    // AIOStreams writes the subtitle languages after a 📝 on the same line ("🌎 German |
+    // English📝 English | Greek"): each line up to its 📝 is audio, the rest subtitles
     let audio_text = text.lines().map(|l| l.split('📝').next().unwrap_or("")).collect::<Vec<_>>().join("\n");
-    let audio_lower = audio_text.to_lowercase();
-    let mut named: Vec<(usize, &'static str)> =
-        LANGUAGES.iter().filter_map(|(w, code)| first_word_at(&audio_lower, w).map(|at| (at, *code))).collect();
-    named.extend(CODES.iter().filter_map(|c| first_word_at(&audio_text, c).map(|at| (at, *c))));
-    named.sort_by_key(|(at, _)| *at);
-    for (_, code) in named {
-        add(code);
-    }
-    for code in flags(&audio_text) {
-        add(code);
-    }
+    let subs_text = text.lines().filter_map(|l| l.split_once('📝').map(|(_, r)| r)).collect::<Vec<_>>().join("\n");
+    let languages = language_codes(&audio_text);
+    let subs = language_codes(&subs_text).into_iter().filter(|c| *c != "MULTI").collect();
     let title = title(name, body, file);
     Facts {
         group: group(&text, &title),
@@ -167,12 +171,14 @@ pub fn facts(s: &Stream) -> Facts {
         live: s.behavior_hints.is_live,
         resolution,
         range,
+        upscaled,
         codec: first(CODECS),
         audio: (!audio.is_empty()).then(|| audio.join(" ")),
         source: first(SOURCES),
         size: size(&lower).or(s.behavior_hints.video_size.filter(|b| *b > 0)),
         seeders: seeders(&text),
         languages,
+        subs,
         cached: cached(&lower),
     }
 }
@@ -189,6 +195,22 @@ fn first_word_at(hay: &str, w: &str) -> Option<usize> {
 
 fn has_word(hay: &str, w: &str) -> bool {
     first_word_at(hay, w).is_some()
+}
+
+/// The languages `text` names, as codes, in the order it names them (words, capital codes, flags).
+fn language_codes(text: &str) -> Vec<&'static str> {
+    let lower = text.to_lowercase();
+    let mut named: Vec<(usize, &'static str)> =
+        LANGUAGES.iter().filter_map(|(w, code)| first_word_at(&lower, w).map(|at| (at, *code))).collect();
+    named.extend(CODES.iter().filter_map(|c| first_word_at(text, c).map(|at| (at, *c))));
+    named.sort_by_key(|(at, _)| *at);
+    let mut out: Vec<&'static str> = Vec::new();
+    for code in named.into_iter().map(|(_, c)| c).chain(flags(text)) {
+        if !out.contains(&code) {
+            out.push(code);
+        }
+    }
+    out
 }
 
 /// AIOStreams' failure mark: its error streams are named "[❌] <upstream>".
@@ -249,6 +271,15 @@ fn title(name: &str, body: &str, file: &str) -> String {
     if let Some(f) = lines(file).next() {
         return f.to_string();
     }
+    // AIOStreams' templates end on a "📁 folder/filename" line: the release, whatever the
+    // lines above it say ("🎥 BluRay 🎞️ HEVC 🏷️ GRP" is facts, not a name)
+    if let Some(f) = lines(body).find_map(|l| l.strip_prefix('\u{1f4c1}')) {
+        let f = f.trim();
+        let f = f.rsplit('/').next().unwrap_or(f).trim();
+        if !f.is_empty() {
+            return f.to_string();
+        }
+    }
     // the first line that says anything: a run of marks alone ("⚡ ✓") is no name
     lines(body)
         .find(|l| l.chars().any(char::is_alphanumeric))
@@ -263,6 +294,49 @@ impl Facts {
         let named = self.name.to_lowercase();
         let says = RESOLUTIONS.iter().any(|(w, _)| w.iter().any(|w| has_word(&named, w)));
         if says { "" } else { self.resolution.unwrap_or("") }
+    }
+
+    /// [`Facts::title`] as a row reads it: a leading mark run dropped ("📄 Film" → "Film"; a
+    /// bracketed "[🛰️] SKY 1" stays), and a scene name (one dotted word, "Film.2024.2160p.DDP5.1.H.265-GRP.mkv")
+    /// spaced into words without its file extension: "Film 2024 2160p DDP5.1 H.265-GRP". A dot
+    /// between digits ("5.1") or in "H.264" stays, so the line wraps between words, not inside one.
+    pub fn label(&self) -> String {
+        let t = self.title.trim_start_matches(|c: char| c.is_whitespace() || !(c.is_ascii() || c.is_alphanumeric()));
+        let t = t
+            .rsplit_once('.')
+            .filter(|(_, ext)| matches!(ext.to_ascii_lowercase().as_str(), "mkv" | "mp4" | "avi" | "ts" | "m4v" | "webm"))
+            .map_or(t, |(stem, _)| stem);
+        if t.contains(char::is_whitespace) || !t.contains(['.', '_']) {
+            return t.to_string();
+        }
+        let c: Vec<char> = t.chars().collect();
+        c.iter()
+            .enumerate()
+            .map(|(i, &ch)| {
+                // "5.1": one digit each side ("S01E01.2160p" is two words)
+                let digit = |j: usize| c.get(j).is_some_and(char::is_ascii_digit);
+                let digits = i > 0 && digit(i - 1) && digit(i + 1) && !(i > 1 && digit(i - 2)) && !digit(i + 2);
+                let h26x = i > 0 && matches!(c[i - 1], 'h' | 'H') && c.get(i + 1).is_some_and(char::is_ascii_digit);
+                match ch {
+                    '_' => ' ',
+                    '.' if !digits && !h26x => ' ',
+                    _ => ch,
+                }
+            })
+            .collect()
+    }
+
+    /// A copy made in or for a cinema (CAM, telesync, telecine, screener), not the release itself.
+    pub fn cinema_copy(&self) -> bool {
+        self.source.is_some_and(|s| CINEMA.contains(&s))
+    }
+
+    /// The debrid service the stream's name marks ("[RD+] Torrentio", "[TB⚡] Comet",
+    /// "MediaFusion | ⚡️ TB 4K"): its short code, as the addons write it.
+    pub fn service(&self) -> Option<&'static str> {
+        const SERVICES: [&str; 8] = ["RD", "AD", "PM", "TB", "DL", "ED", "OC", "PKP"];
+        let name = self.name.to_ascii_uppercase();
+        SERVICES.into_iter().find(|s| has_word(&name, s))
     }
 
     /// Does the "Only debrid streams" switch keep this stream? A debrid stream stays, cached or
@@ -452,6 +526,44 @@ mod tests {
         Stream { url: Some("https://example.com/s".into()), name: Some(name.into()), title: Some(title.into()), ..Default::default() }
     }
 
+    /// Comet's rows through TorBox, as Stremio prints them raw.
+    #[test]
+    fn comet_rows_read_range_layers_upscale_and_subtitles() {
+        let comet = |description: &str| Stream {
+            url: Some("https://example.com/s".into()),
+            name: Some("[TB⚡] Comet\n2160p".into()),
+            description: Some(description.into()),
+            ..Default::default()
+        };
+        let f = facts(&comet("🎞️ HEVC 🏷️ DirtyHippie\n📺 DV | HDR10 | AI 🎧 TrueHD | Atmos 🔊 7.1\n📦 24.8 GB (19.9 Mbps) ⏱️ 2h:46m\n🌎 German | English | French 📝 English | German\n📁 Dune Part Two 2024 2160p UHD AI x265-DirtyHippie.mkv"));
+        assert_eq!((f.resolution, f.range, f.codec, f.upscaled), (Some("4K"), Some("DV HDR"), Some("HEVC"), true));
+        assert_eq!((f.group.as_deref(), f.audio.as_deref()), (Some("DirtyHippie"), Some("TrueHD Atmos 7.1")));
+        assert_eq!((f.languages.clone(), f.subs.clone()), (vec!["DE", "EN", "FR"], vec!["EN", "DE"]));
+        assert_eq!(f.label(), "Dune Part Two 2024 2160p UHD AI x265-DirtyHippie", "a spaced name loses its extension too");
+        assert_eq!((f.cached, f.service()), (Some(true), Some("TB")));
+        let f = facts(&comet("🎥 BluRay 🎞️ AV1 🏷️ dAV1nci\n📺 DV | HDR10 🎧 OPUS 🔊 7.1\n🌎 German | English | French\n📁 Dune.Part.Two.2024.2160p.BluRay.AV1-dAV1nci.mkv"));
+        assert_eq!((f.range, f.codec, f.source, f.upscaled), (Some("DV HDR"), Some("AV1"), Some("BluRay"), false));
+        assert!(f.subs.is_empty());
+        let f = facts(&comet("📺 HDR10+\n📁 Ai.no.Kusabi.2012.1080p.WEB-DL.mkv"));
+        assert_eq!((f.range, f.upscaled), (Some("HDR10+"), false), "a title's \"Ai\" is not an upscale");
+    }
+
+    #[test]
+    fn a_cinema_copy_is_named_and_a_title_word_is_not() {
+        let f = facts(&stream("Torrentio\n720p", "Film.2026.HDCAM.x264-GRP\n👤 900"));
+        assert_eq!(f.source, Some("CAM"));
+        assert!(f.cinema_copy());
+        let f = facts(&stream("Torrentio\n1080p", "Cam.2018.1080p.WEB-DL.x264-GRP"));
+        assert_eq!(f.source, Some("WEB-DL"), "the film \"Cam\": the release's own source wins");
+        assert!(!f.cinema_copy());
+    }
+
+    #[test]
+    fn description_outranks_the_old_title_field() {
+        let s = Stream { name: Some("X".into()), title: Some("Old.720p".into()), description: Some("New.2160p".into()), ..Default::default() };
+        assert_eq!(facts(&s).title, "New.2160p");
+    }
+
     #[test]
     fn a_torrentio_debrid_row() {
         let f = facts(&stream(
@@ -460,7 +572,7 @@ mod tests {
         ));
         assert_eq!(f.title, "Movie.Name.2023.2160p.UHD.BluRay.REMUX.DV.HDR.HEVC.TrueHD.Atmos.7.1-GRP");
         assert_eq!(f.resolution, Some("4K"));
-        assert_eq!(f.range, Some("DV"));
+        assert_eq!(f.range, Some("DV HDR"));
         assert_eq!(f.codec, Some("HEVC"));
         assert_eq!(f.audio.as_deref(), Some("TrueHD Atmos 7.1"));
         assert_eq!(f.source, Some("REMUX"));
@@ -468,6 +580,48 @@ mod tests {
         assert_eq!(f.seeders, Some(42));
         assert_eq!(f.languages, vec!["MULTI", "EN", "DE"]);
         assert_eq!(f.cached, Some(true));
+    }
+
+    #[test]
+    fn an_aiostreams_default_template_row() {
+        // the output of AIOStreams' stock name and description templates
+        let s = Stream {
+            url: Some("https://example.com/s".into()),
+            name: Some("🔑 [TB⚡] AIOStreams 2160p (Best)".into()),
+            description: Some(
+                "🎥 BluRay REMUX 🎞️ HEVC 🏷️ FGT 🏆 Extended\n📺 DV | HDR10 🎧 Atmos | TrueHD 🔊 7.1\n📦 58.3 GB (62 Mbps) ⏱️ 2h:43m 👥 41 🔍 Torrentio\n🌎 German | English📝 English | Greek\n📁 Film (2024)/Film.2024.2160p.BluRay.REMUX.DV.HEVC.TrueHD.Atmos.7.1-FGT.mkv"
+                    .into(),
+            ),
+            ..Default::default()
+        };
+        let f = facts(&s);
+        assert_eq!(f.title, "Film.2024.2160p.BluRay.REMUX.DV.HEVC.TrueHD.Atmos.7.1-FGT.mkv", "the 📁 line, without its folder");
+        assert_eq!(f.label(), "Film 2024 2160p BluRay REMUX DV HEVC TrueHD Atmos 7.1-FGT");
+        assert_eq!((f.resolution, f.range, f.codec, f.source), (Some("4K"), Some("DV HDR"), Some("HEVC"), Some("REMUX")));
+        assert_eq!(f.audio.as_deref(), Some("TrueHD Atmos 7.1"));
+        assert_eq!(f.group.as_deref(), Some("FGT"));
+        assert_eq!(f.subs, vec!["EN"], "the 📝 run is the subtitles (Greek has no code here)");
+        assert_eq!(f.seeders, Some(41));
+        assert_eq!(f.languages, vec!["DE", "EN"], "audio only: the 📝 subtitles are not counted");
+        assert_eq!((f.cached, f.service()), (Some(true), Some("TB")));
+        let uncached = Stream { name: Some("[RD⏳] AIOStreams 1080p".into()), ..s };
+        assert_eq!((facts(&uncached).cached, facts(&uncached).service()), (Some(false), Some("RD")));
+    }
+
+    #[test]
+    fn a_row_reads_a_spaced_label_and_the_service() {
+        let label = |t: &str| Facts { title: t.into(), ..Default::default() }.label();
+        assert_eq!(label("Film.2024.2160p.WEB-DL.DDP5.1.Atmos.H.265-GRP.mkv"), "Film 2024 2160p WEB-DL DDP5.1 Atmos H.265-GRP");
+        assert_eq!(label("Film_2024_1080p_x264"), "Film 2024 1080p x264");
+        assert_eq!(label("Show.S01E01.2160p.TrueHD.7.1"), "Show S01E01 2160p TrueHD 7.1");
+        assert_eq!(label("📄 Film 2024 2160p WEB-DL"), "Film 2024 2160p WEB-DL", "a leading mark is dropped");
+        assert_eq!(label("[🛰️] SKY 1"), "[🛰️] SKY 1", "a bracketed mark stays");
+        assert_eq!(label("Mr. Robot S01E01 720p"), "Mr. Robot S01E01 720p", "spaced text is left alone");
+        let service = |n: &str| facts(&stream(n, "x")).service();
+        assert_eq!(service("[RD+] Torrentio\n4k"), Some("RD"));
+        assert_eq!(service("[TB⚡] Comet 2160p"), Some("TB"));
+        assert_eq!(service("MediaFusion | ⚡️ TB 4K"), Some("TB"));
+        assert_eq!(service("Torrentio\n720p"), None);
     }
 
     #[test]

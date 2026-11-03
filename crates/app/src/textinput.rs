@@ -147,9 +147,8 @@ const TEXT_CAP: usize = 32;
 /// `cfg!` and not `#[cfg]`, matching `app::decode_key`: both arms stay compiled on both platforms,
 /// so the one nobody is building cannot rot into a compile error nobody sees for a month.
 ///
-/// StremioNative builds for the television alone (no desktop simulator yet), so this is the
-/// fork's `+16`; `decode_text_at` still takes the offset as an argument so both layouts stay graded.
-const TEXT_OFF: usize = 16;
+/// The fork's `+16` on the television, stock SDL2's `+12` in the desktop simulator (`hostsim`).
+const TEXT_OFF: usize = if cfg!(feature = "hostsim") { 12 } else { 16 };
 
 /// How many un-drained commits to hold before dropping the oldest.
 ///

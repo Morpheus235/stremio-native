@@ -78,23 +78,23 @@
     }
   },
   "widgets.failure.jail": {
-    "value": "Riproduzione non riuscita — la sandbox di questa TV blocca il video nativo",
+    "value": "Riproduzione non riuscita: la sandbox di questa TV blocca il video nativo",
     "description": "failure jail"
   },
   "widgets.failure.no_video": {
-    "value": "Riproduzione non riuscita — nessun video nel file",
+    "value": "Riproduzione non riuscita: nessun video nel file",
     "description": "Player error caption or supporting subscription fact."
   },
   "widgets.failure.open": {
-    "value": "Riproduzione non riuscita — impossibile aprire il flusso multimediale",
+    "value": "Riproduzione non riuscita: impossibile aprire il flusso multimediale",
     "description": "Player error caption or supporting subscription fact."
   },
   "widgets.failure.stopped": {
-    "value": "Riproduzione non riuscita — la riproduzione si è interrotta dopo l'avvio",
+    "value": "Riproduzione non riuscita: la riproduzione si è interrotta dopo l'avvio",
     "description": "Player error caption or supporting subscription fact."
   },
   "widgets.failure.tv_rejected": {
-    "value": "Riproduzione non riuscita — la TV ha rifiutato il flusso",
+    "value": "Riproduzione non riuscita: la TV ha rifiutato il flusso",
     "description": "Player error caption or supporting subscription fact."
   },
   "widgets.reason.jail": {
@@ -179,7 +179,7 @@
     "description": "Player diagnostic reason; preserve technical device paths and protocol endpoints."
   },
   "widgets.failure.load_timeout": {
-    "value": "Riproduzione non riuscita — la TV non ha completato l'avvio del flusso",
+    "value": "Riproduzione non riuscita: la TV non ha completato l'avvio del flusso",
     "description": "failure load_timeout"
   },
   "widgets.panel.load_timeout": {

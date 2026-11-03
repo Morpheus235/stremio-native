@@ -3,13 +3,13 @@
 //!
 //! Everything outside this module reaches the television through `sn_platform::tv`; this is the
 //! only place that names `webos`, `keymanager`, `system` and `player::ffi` together. Under
-//! `cfg(test)` the sink is the platform's `NoSink`, so the host suite links no Starfish symbol.
+//! `cfg(test)` and the desktop simulator (`hostsim`) the sink is the platform's `NoSink`, so the host suite links no Starfish symbol.
 
 use std::os::raw::c_int;
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "hostsim")))]
 const SINK: &dyn sn_platform::tv::sink::VideoSink = &sn_media::player::ffi::StarfishSink;
-#[cfg(test)]
+#[cfg(any(test, feature = "hostsim"))]
 const SINK: &dyn sn_platform::tv::sink::VideoSink = &sn_platform::tv::sink::NoSink;
 
 static PORT: sn_platform::tv::Port = sn_platform::tv::Port {

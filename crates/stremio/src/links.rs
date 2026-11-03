@@ -79,9 +79,9 @@ pub fn routed(links: &[Link]) -> Vec<(Category, String, Target)> {
     links
         .iter()
         .filter_map(|l| {
-            let name = l.name.trim();
+            let name = crate::epg::unescape(l.name.trim());
             (!name.is_empty()).then_some(())?;
-            Some((Category::of(&l.category)?, name.to_string(), target(&l.url)?))
+            Some((Category::of(&l.category)?, name, target(&l.url)?))
         })
         .collect()
 }
@@ -157,6 +157,12 @@ mod tests {
         .unwrap();
         let got: Vec<(Category, String)> = routed(&links).into_iter().map(|(c, n, _)| (c, n)).collect();
         assert_eq!(got, [(Category::Genres, "Drama".into()), (Category::Cast, "Tim Robbins".into()), (Category::Director, "Frank Darabont".into())]);
+    }
+
+    #[test]
+    fn a_name_reads_with_its_character_references_decoded() {
+        let links: Vec<Link> = serde_json::from_str(r#"[{"name":"Judith O&apos;Dea","category":"Cast","url":"stremio:///search?search=Judith%20O'Dea"}]"#).unwrap();
+        assert_eq!(routed(&links)[0].1, "Judith O'Dea", "Cinemeta's spelling of Night of the Living Dead's cast");
     }
 
     #[test]
