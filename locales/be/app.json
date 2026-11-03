@@ -418,5 +418,7 @@
   },
   "app.settings.debrid_only": "Толькі debrid-патокі",
   "app.settings.debrid_only_copy": "Укл.: толькі патокі з debrid-сэрвісу, у кэшы або не. Патокі без згадкі debrid схаваны. Выкл.: усе патокі.",
-  "app.detail.no_debrid_streams": "Няма debrid-патокаў"
+  "app.detail.no_debrid_streams": "Няма debrid-патокаў",
+  "app.detail.trailer": "Трэйлер",
+  "app.detail.trailer_failed": "Не ўдалося адкрыць YouTube"
 }

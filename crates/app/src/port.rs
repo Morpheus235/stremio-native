@@ -24,6 +24,7 @@ static PORT: sn_platform::tv::Port = sn_platform::tv::Port {
     go_home: sn_platform::webos::go_home,
     poll_home: sn_platform::webos::poll_home,
     deliver_toast: sn_platform::webos::toast::deliver,
+    open_trailer: sn_platform::webos::youtube::open,
     bind_window: sn_platform::webos::bind_window,
     grab_surface: crate::system::sys_grab_wayland,
     release_surface: crate::system::sys_release_wayland,

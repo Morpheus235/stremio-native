@@ -478,6 +478,24 @@ impl Bridge {
         self.send_progress();
     }
 
+    /// Open the TV's YouTube app on a trailer: a few bus round trips (and, when YouTube is not
+    /// running, the start of the detached helper that sends the second launch, because this app is
+    /// closed by webOS right after the first), so it runs on a worker. A refused first launch or a
+    /// bus failure is the television's toast; the words are read here, on the frame thread, in the
+    /// viewer's language.
+    fn open_trailer(&mut self, id: String) {
+        let failed = sn_platform::i18n::msg::app_detail_trailer_failed().to_string();
+        let Some(job) = trailer_job(id.clone(), failed, sn_platform::tv::youtube::open_trailer, |text| {
+            let _ = sn_platform::tv::toast::toast(text);
+        }) else {
+            sn_base::eventlog::log("youtube: a trailer id that is not a YouTube id was refused");
+            return;
+        };
+        if !sn_base::task::spawn_off_frame("trailer", move |_off| job()) {
+            sn_base::eventlog::log(&format!("youtube: no worker thread for trailer {id} - not opened"));
+        }
+    }
+
     /// A library write the account refused (already rolled back by the store): the television's
     /// toast says so, once.
     fn toast_refused(&mut self) {
@@ -754,6 +772,7 @@ impl Rig<Bundle> for Bridge {
                     let _ = sn_platform::tv::toast::toast(&text);
                 });
             }
+            AppFx::OpenTrailer(id) => self.open_trailer(id),
             AppFx::Library(LibraryCmd::Reload) => {
                 let jobs = self.library.reload();
                 self.run_library(jobs);
@@ -910,8 +929,93 @@ pub fn text_field_on_top(pages: &Dispatcher<Bundle>) -> bool {
     ) && pages.nav.modals.surfaces.is_empty()
 }
 
+/// The worker's whole job for a trailer: open it (`open`) and, when the launch was refused or the
+/// bus failed, say so (`toast`, with `failed`, read on the frame thread in the viewer's language).
+/// `None` for an id that is not a YouTube id: nothing is spawned for it.
+fn trailer_job(
+    id: String,
+    failed: String,
+    open: impl FnOnce(&str) -> sn_platform::tv::youtube::Outcome + Send + 'static,
+    toast: impl FnOnce(&str) + Send + 'static,
+) -> Option<impl FnOnce() + Send + 'static> {
+    if !sn_stremio::types::is_youtube_id(&id) {
+        return None;
+    }
+    Some(move || {
+        let outcome = open(&id);
+        sn_base::eventlog::log(&format!("youtube: trailer {id} ended {outcome:?}"));
+        if outcome.failed() {
+            toast(&failed);
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    use super::trailer_job;
+    use sn_platform::tv::youtube::Outcome;
+    use std::sync::Mutex;
+
+    fn toasts() -> (Arc<Mutex<Vec<String>>>, impl FnOnce(&str) + Send + 'static) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        (seen, move |t: &str| sink.lock().unwrap().push(t.to_string()))
+    }
+
+    /// A malformed id spawns nothing: no job, so neither the bus nor the toast is ever reached.
+    #[test]
+    fn a_malformed_trailer_id_builds_no_job() {
+        for bad in ["", "short", "has space1", "a\"b\\c12345", "abcdefghij01234567890", "v=abcdef"] {
+            let (seen, toast) = toasts();
+            let job = trailer_job(bad.into(), "failed".into(), |_| panic!("the bus is not reached"), toast);
+            assert!(job.is_none(), "{bad:?}");
+            assert!(seen.lock().unwrap().is_empty());
+        }
+    }
+
+    /// Off-device the real door ends in no bus, and nothing is toasted.
+    #[test]
+    fn a_valid_trailer_id_off_device_ends_in_no_bus_and_no_toast() {
+        let _g = sn_base::testlock::serial();
+        let (seen, toast) = toasts();
+        let ended = Arc::new(Mutex::new(None));
+        let sink = ended.clone();
+        let job = trailer_job(
+            "PLl99DlL6b4".into(),
+            "failed".into(),
+            move |id| {
+                let outcome = sn_platform::tv::youtube::open_trailer(id);
+                *sink.lock().unwrap() = Some(format!("{outcome:?}"));
+                outcome
+            },
+            toast,
+        )
+        .expect("a valid id builds a job");
+        job();
+        assert_eq!(ended.lock().unwrap().as_deref(), Some("NoBus"));
+        assert!(seen.lock().unwrap().is_empty(), "no toast");
+    }
+
+    /// A refused first launch or a bus failure is the toast, with the words it was given; every
+    /// quiet outcome is not.
+    #[test]
+    fn only_a_refusal_or_a_bus_failure_is_toasted() {
+        let cases = [
+            (Outcome::Refused { error_text: "no".into() }, true),
+            (Outcome::Bus { detail: "x".into() }, true),
+            (Outcome::Opened, false),
+            (Outcome::Busy, false),
+            (Outcome::NoBus, false),
+        ];
+        for (outcome, shown) in cases {
+            let (seen, toast) = toasts();
+            let label = format!("{outcome:?}");
+            trailer_job("PLl99DlL6b4".into(), "Couldn't open YouTube".into(), move |_| outcome, toast).unwrap()();
+            let seen = seen.lock().unwrap();
+            assert_eq!(*seen, if shown { vec!["Couldn't open YouTube".to_string()] } else { Vec::new() }, "{label}");
+        }
+    }
+
     /// The audio sync is remembered per stream source: a live channel by its own id (TvVoo's
     /// `vavoo_…`), anything else by its item; a playback of no item remembers nothing.
     #[test]

@@ -1044,5 +1044,13 @@
   "app.detail.no_debrid_streams": {
     "value": "Nessun flusso debrid",
     "description": "Detail: the reason on the closing row for an addon whose streams are all hidden by Only debrid streams."
+  },
+  "app.detail.trailer": {
+    "value": "Trailer",
+    "description": "Detail: the label of the action row's Trailer disc, which opens the title's trailer in the TV's YouTube app."
+  },
+  "app.detail.trailer_failed": {
+    "value": "Impossibile aprire YouTube",
+    "description": "Detail: the toast when the TV's YouTube app could not be opened on a trailer."
   }
 }
