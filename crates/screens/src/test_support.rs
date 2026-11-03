@@ -15,7 +15,7 @@ use sn_ui::fixture::{key, key_up, FixtureMeasure};
 use sn_ui::frame::Budget;
 
 use crate::chrome::ChromeBar;
-use crate::registry::{AddonsCmd, AppArg, AppFx, AppMounter, AppMsg, Bundle, GridCmd, PlaybackView, SearchCmd, SessionView, SettingsCmd, Views};
+use crate::registry::{AddonsCmd, AppArg, AppFx, AppMounter, AppMsg, Bundle, GridCmd, PlaybackView, SearchCmd, ServerCmd, SessionView, SettingsCmd, Views};
 use crate::stores::catalog::CatalogStore;
 use crate::stores::account::AccountStore;
 use crate::stores::addons::AddonsStore;
@@ -39,6 +39,9 @@ pub struct TestRig {
     pub grid: GridStore,
     pub settings: SettingsStore,
     pub epg: crate::stores::epg::EpgStore,
+    pub server: crate::stores::server::ServerStore,
+    /// The jobs the applied server commands handed out (a test lands them by hand).
+    pub server_jobs: Vec<crate::stores::server::ServerJob>,
     pub chrome: ChromeBar,
     /// Every application effect the screens emitted, in order.
     pub effects: Vec<AppFx>,
@@ -71,6 +74,8 @@ impl TestRig {
             grid: GridStore::new(),
             settings: SettingsStore::default(),
             epg: crate::stores::epg::EpgStore::new(),
+            server: crate::stores::server::ServerStore::new(),
+            server_jobs: Vec::new(),
             chrome: ChromeBar::new(),
             effects: Vec::new(),
             search_jobs: Vec::new(),
@@ -142,6 +147,20 @@ impl TestRig {
             AppFx::Settings(SettingsCmd::Languages(l, op)) => {
                 self.settings.edit(*l, *op);
             }
+            // as the bridge applies it: a new server is checked at once
+            AppFx::Settings(SettingsCmd::StreamingServer(server)) => {
+                if self.settings.set_streaming_server(server.clone()) {
+                    let job = self.server.check(self.settings.streaming_server());
+                    self.server_jobs.extend(job);
+                }
+            }
+            AppFx::Server(cmd) => {
+                let job = match cmd {
+                    ServerCmd::Check => self.server.check(self.settings.streaming_server()),
+                    ServerCmd::Scan => self.server.scan(),
+                };
+                self.server_jobs.extend(job);
+            }
             _ => {}
         }
     }
@@ -162,6 +181,7 @@ impl Rig<Bundle> for TestRig {
                 grid: &self.grid,
                 settings: &self.settings,
                 epg: &self.epg,
+                server: &self.server,
                 session: SessionView { signed_in: self.account.account().is_some() },
             },
             measure: &self.measure,
@@ -203,7 +223,7 @@ pub struct TestApp {
     pub rig: TestRig,
     ms: u32,
     /// The generation each network-free store last announced.
-    told: [Option<u32>; 4],
+    told: [Option<u32>; 5],
 }
 
 /// **A GL context for this test thread, on macOS.** A screen's draw reaches the GL through
@@ -243,7 +263,7 @@ fn headless_cgl() {
 impl TestApp {
     pub fn boot(catalog: CatalogStore) -> Self {
         headless_gl();
-        let mut app = TestApp { d: Dispatcher::new(), rig: TestRig::new(catalog), ms: 0, told: [None; 4] };
+        let mut app = TestApp { d: Dispatcher::new(), rig: TestRig::new(catalog), ms: 0, told: [None; 5] };
         app.d.request(MachineId::Nav, NavOp::Root(AppArg::Home));
         app.frame();
         app
@@ -289,6 +309,7 @@ impl TestApp {
             (StoreId::Grid, self.rig.grid.gen()),
             (StoreId::Settings, self.rig.settings.gen()),
             (StoreId::Addons, self.rig.addons.gen()),
+            (StoreId::Server, self.rig.server.gen()),
         ];
         for (i, (id, gen)) in gens.into_iter().enumerate() {
             if self.told[i] != Some(gen) {

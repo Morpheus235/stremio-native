@@ -819,8 +819,12 @@
     "description": "A short failure cause: the Stremio account service answered with error number {code}."
   },
   "app.detail.why_torrent": {
-    "value": "I torrent non si possono riprodurre qui: configura un servizio debrid in questo addon per ottenere link riproducibili",
-    "description": "Toast when OK is pressed on a torrent stream: this app has no torrent engine; a debrid service in the addon turns torrents into playable links."
+    "value": "I torrent richiedono un server di streaming: configuralo in Impostazioni > Stream",
+    "description": "Toast when OK is pressed on a torrent stream and no streaming server is set: where to set one up."
+  },
+  "app.detail.why_torrent_offline": {
+    "value": "Il server di streaming non risponde: controlla che sia attivo o scegline un altro in Impostazioni > Stream",
+    "description": "Toast when OK is pressed on a torrent stream while the streaming server set in Settings did not answer its check."
   },
   "app.detail.why_youtube": {
     "value": "I video di YouTube non si possono riprodurre in questa app",
@@ -941,6 +945,57 @@
   "app.settings.stream_order_quality": {
     "value": "Prima la qualità",
     "description": "Stream order option: playable at once first, then the highest resolution."
+  },
+  "app.settings.streaming_server": {
+    "value": "Server di streaming",
+    "description": "Settings: the Streams row and the page title for the streaming server that plays torrents."
+  },
+  "app.settings.streaming_server_copy": {
+    "value": "Riproduce i torrent tramite un server di streaming Stremio sulla tua rete o sul tuo computer. Scegline uno trovato sulla rete o digita il suo indirizzo.",
+    "description": "Streaming server page: the line under the title."
+  },
+  "app.settings.server_network_header": {
+    "value": "Sulla tua rete",
+    "description": "Streaming server page: section header over the Find row and the servers a scan found."
+  },
+  "app.settings.server_find": {
+    "value": "Cerca sulla mia rete",
+    "description": "Streaming server page: the row that scans the home network for streaming servers."
+  },
+  "app.settings.server_searching": {
+    "value": "Ricerca…",
+    "description": "Streaming server page: the Find row's value while the scan runs."
+  },
+  "app.settings.server_none_found": {
+    "value": "Nessun server trovato",
+    "description": "Streaming server page: the note when a finished scan found no server."
+  },
+  "app.settings.server_type": {
+    "value": "Digita un indirizzo…",
+    "description": "Streaming server page: the row that opens the keyboard to type the server's address."
+  },
+  "app.settings.server_invalid": {
+    "value": "Questo non è un indirizzo di server",
+    "description": "Toast when the typed streaming server address is not a web address a server could have."
+  },
+  "app.settings.server_connected": {
+    "value": "Connesso",
+    "description": "Streaming server status: the server answered its check."
+  },
+  "app.settings.server_unreachable": {
+    "value": "Non raggiungibile",
+    "description": "Streaming server status: the server did not answer its check."
+  },
+  "app.settings.server_checking": {
+    "value": "Verifica…",
+    "description": "Streaming server status: the check is running."
+  },
+  "app.settings.server_version": {
+    "value": "Versione {version}",
+    "description": "Streaming server: the version the server reported, under its address.",
+    "args": {
+      "version": "str"
+    }
   },
   "app.settings.theme": {
     "value": "Tema",

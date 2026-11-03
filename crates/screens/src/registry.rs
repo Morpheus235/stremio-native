@@ -125,6 +125,8 @@ pub enum SettingsPage {
     Legal,
     /// A document to read.
     Doc(Doc),
+    /// The streaming server torrents play through: off, found on the home network, or typed.
+    StreamingServer,
 }
 
 /// A Settings document (`crate::settings`).
@@ -154,6 +156,7 @@ impl SettingsPage {
             SettingsPage::Legal => 0x10,
             SettingsPage::Doc(d) => 0x20 + d as u32,
             SettingsPage::Languages(l) => 0x30 + l as u32,
+            SettingsPage::StreamingServer => 0x40,
         }
     }
 }
@@ -610,7 +613,7 @@ pub enum GridCmd {
 }
 
 /// A Settings page's word to the settings store. Every change is persisted by the application.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SettingsCmd {
     /// Set `pref` to rung `index` of its ladder.
     Set(Pref, u8),
@@ -620,6 +623,19 @@ pub enum SettingsCmd {
     Languages(LangList, LangOp),
     /// The Library page's order (`sn_stremio::library::Sort`).
     LibrarySort(sn_stremio::library::Sort),
+    /// The streaming server torrents play through: an address (normalized by the store, one
+    /// that is not an address changes nothing) or `None` for off. The application checks the
+    /// server it is now.
+    StreamingServer(Option<String>),
+}
+
+/// A Settings page's word to the streaming server store's jobs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ServerCmd {
+    /// Ask the server in use whether it answers (the page opening).
+    Check,
+    /// Look for servers on the home network.
+    Scan,
 }
 
 /// A stream to play: an HTTP(S) URL and the request headers its addon names.
@@ -730,6 +746,7 @@ pub enum AppFx {
     Search(SearchCmd),
     Grid(GridCmd),
     Settings(SettingsCmd),
+    Server(ServerCmd),
     /// Start a playback; the application pushes the player page when the start is accepted.
     Play(PlayRequest),
     Player(PlayerCmd),
@@ -942,6 +959,8 @@ pub struct Views<'a> {
     pub settings: &'a SettingsStore,
     /// The TV guide: Live TV's now / next.
     pub epg: &'a crate::stores::epg::EpgStore,
+    /// The streaming server's last check and the scan's finds.
+    pub server: &'a crate::stores::server::ServerStore,
     /// Signed in or not (the item menu's Add to library reads it); the account is `account`.
     pub session: SessionView,
 }

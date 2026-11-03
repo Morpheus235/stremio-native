@@ -439,6 +439,12 @@ pub struct StreamView {
     pub quiet_open: bool,
     /// `Pref::StreamOrder`'s rung (`settings::ORDER_*`).
     pub order: u8,
+    /// The streaming server in use (`SettingsStore::streaming_server`): with one, a torrent plays
+    /// through it; without, a torrent row only explains.
+    pub server: Option<String>,
+    /// The server is set but did not answer its last check: a torrent row only explains, as
+    /// without one, and says the server is down.
+    pub server_down: bool,
     /// `Pref::DebridOnly`: a stream whose text says nothing about debrid is not listed (cached and
     /// uncached debrid streams are, [`Facts::debrid_only_keeps`]).
     pub debrid_only: bool,
@@ -496,7 +502,9 @@ pub fn unplayable_reason(p: Option<&Playable>) -> &'static str {
     match p {
         Some(Playable::Torrent { .. }) => msg::app_detail_why_torrent(),
         Some(Playable::YouTube(_)) => msg::app_detail_why_youtube(),
-        _ => msg::app_detail_why_external(),
+        Some(Playable::External(_)) => msg::app_detail_why_external(),
+        // nothing usable (a malformed torrent hash, an empty stream): no promise of elsewhere
+        Some(Playable::Http { .. }) | None => msg::app_detail_not_playable(),
     }
 }
 
@@ -545,8 +553,14 @@ fn stream_sections(out: &mut Built, groups: &[StreamGroup], mode: &Mode, prefer:
         s = s.accessory((0..streams.len()).filter(|si| !is_note(*si) && !hidden(*si)).count().to_string());
         let playable: Vec<Option<Playable>> = streams.iter().map(sn_stremio::types::Stream::playable).collect();
         let mut order: Vec<usize> = stream_order(&facts, prefer, view.order).into_iter().filter(|si| !is_note(*si) && !hidden(*si)).collect();
-        // what plays here before what cannot (a torrent with no debrid, a link elsewhere)
-        order.sort_by_key(|si| !matches!(playable[*si], Some(Playable::Http { .. })));
+        // what plays here before what cannot (a torrent with no streaming server, a link
+        // elsewhere); a torrent with one is a stream like any other and keeps the addon's order
+        let plays = |p: &Option<Playable>| match p {
+            Some(Playable::Http { .. }) => true,
+            Some(Playable::Torrent { .. }) => view.server.is_some() && !view.server_down,
+            _ => false,
+        };
+        order.sort_by_key(|si| !plays(&playable[*si]));
         for si in order {
             let f = &facts[si];
             let label = if f.title.is_empty() { group.addon_name.clone() } else { f.label() };
@@ -563,8 +577,18 @@ fn stream_sections(out: &mut Built, groups: &[StreamGroup], mode: &Mode, prefer:
             for c in stream_chips(f) {
                 row = row.chip(c);
             }
-            let action = match playable[si].clone() {
-                Some(Playable::Http { url, headers }) => {
+            // the URL the player opens: the link itself, or the torrent through the server
+            let source = match playable[si].clone() {
+                Some(Playable::Http { url, headers }) => Some((url, headers)),
+                Some(Playable::Torrent { info_hash, file_idx, sources }) => view
+                    .server
+                    .as_deref()
+                    .filter(|_| !view.server_down)
+                    .map(|base| (sn_stremio::streaming_server::torrent_url(base, &info_hash, file_idx, &sources), Vec::new())),
+                _ => None,
+            };
+            let action = match source {
+                Some((url, headers)) => {
                     let start_ms = if let Mode::Video(v) = mode { v.resume_ms } else { 0 };
                     Action::Play(PlayRequest {
                         url,
@@ -583,10 +607,13 @@ fn stream_sections(out: &mut Built, groups: &[StreamGroup], mode: &Mode, prefer:
                         hints: sn_stremio::subtitles::FileHints::of(&streams[si]),
                     })
                 }
-                other => {
+                None => {
                     // still a stop: OK says why it does not play here
                     row = row.value(msg::app_detail_not_playable()).dim(true);
-                    Action::Explain(unplayable_reason(other.as_ref()))
+                    Action::Explain(match &playable[si] {
+                        Some(Playable::Torrent { .. }) if view.server.is_some() => msg::app_detail_why_torrent_offline(),
+                        p => unplayable_reason(p.as_ref()),
+                    })
                 }
             };
             out.row(&mut s, row, STREAM_KEY + ((gi as u32) << 12) + si as u32, Some(action));
@@ -1742,7 +1769,7 @@ pub struct DetailScreen {
     table: TableView,
     built: Built,
     /// What the store held at the last build, and the settings it was ordered by.
-    built_gen: Option<(u32, u32, u32)>,
+    built_gen: Option<(u32, u32, u32, u32)>,
     /// The streams this page holds open: the item's own, or a series' that listed no video.
     streams: Option<StreamKey>,
     /// The meta this page holds open.
@@ -2348,7 +2375,7 @@ impl DetailScreen {
                 self.streams = Some(key);
             }
         }
-        let gens = (store.gen(), cx.views.settings.gen(), cx.views.library.gen());
+        let gens = (store.gen(), cx.views.settings.gen(), cx.views.library.gen(), cx.views.server.gen());
         if self.built_gen == Some(gens) {
             return;
         }
@@ -2390,6 +2417,8 @@ impl DetailScreen {
         let view = StreamView {
             order: cx.views.settings.get(crate::stores::settings::Pref::StreamOrder),
             debrid_only: cx.views.settings.get(crate::stores::settings::Pref::DebridOnly) != 0,
+            server: cx.views.settings.streaming_server().map(str::to_string),
+            server_down: *cx.views.server.status() == crate::stores::server::ServerStatus::Unreachable,
             ..self.stream_view.clone()
         };
         let built = build_marked(&self.mode, meta, streams, self.season, &today(), &prefer, marks.as_ref(), &view);
@@ -2443,6 +2472,11 @@ impl Machine<Bundle> for DetailScreen {
         match ev {
             ScreenEvent::Mount => {
                 self.open(fx);
+                // a fresh answer on the streaming server, so a torrent row does not offer one that
+                // has gone away since the last check
+                if cx.views.settings.streaming_server().is_some() {
+                    fx.push(Fx::App(AppFx::Server(crate::registry::ServerCmd::Check)));
+                }
                 self.sync(cx, fx);
                 self.sync_library(cx, fx);
                 Handled::Yes
@@ -3127,7 +3161,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        let torrent = Stream { info_hash: Some("ABC".into()), name: Some("Torrent".into()), ..Default::default() };
+        let torrent = Stream { info_hash: Some("0123456789abcdef0123456789abcdef01234567".into()), name: Some("Torrent".into()), ..Default::default() };
         let groups = vec![group("TV", GroupState::Ready(vec![live, torrent]))];
         let b = build(&movie(), None, Some(&groups), None, "");
         match &b.actions[0] {
@@ -3141,6 +3175,87 @@ mod tests {
         assert_eq!(b.actions[1], Some(Action::Explain(msg::app_detail_why_torrent())), "a torrent needs a streaming server: OK says so");
         assert!(b.sections[0].rows[1].dim);
         assert_eq!(b.sections[0].rows[1].value.as_deref(), Some(msg::app_detail_not_playable()));
+    }
+
+    /// A torrent whose hash is malformed plays nowhere: OK says it cannot play here, not that it
+    /// opens in another app.
+    #[test]
+    fn a_malformed_torrent_hash_does_not_promise_another_app() {
+        let bad = Stream { info_hash: Some("removeall?x=".into()), name: Some("Torrent".into()), ..Default::default() };
+        let groups = vec![group("TV", GroupState::Ready(vec![bad]))];
+        let b = build(&movie(), None, Some(&groups), None, "");
+        assert_eq!(b.actions[0], Some(Action::Explain(msg::app_detail_not_playable())));
+        assert_eq!(unplayable_reason(Some(&Playable::External("https://x.example".into()))), msg::app_detail_why_external());
+    }
+
+    /// With a streaming server set, a torrent is a stream like any other: it plays the server's
+    /// URL (info hash lowercased, file index, one `tr=` per source), is not dimmed, and keeps the
+    /// addon's order instead of going after the links. Only what cannot play goes last.
+    #[test]
+    fn with_a_streaming_server_a_torrent_plays_through_it_in_its_own_place() {
+        let torrent = Stream {
+            info_hash: Some("0123456789ABCDEF0123456789ABCDEF01234567".into()),
+            file_idx: Some(2),
+            sources: vec!["tracker:udp://t.example:80".into(), "dht:ABCDEF0123".into()],
+            name: Some("Torrent".into()),
+            title: Some("Film.Torrent".into()),
+            ..Default::default()
+        };
+        let link = http("Link", "Film.Link", "https://cdn.example/a.mkv");
+        let elsewhere = Stream { external_url: Some("https://example.com/watch".into()), title: Some("Film.Elsewhere".into()), ..Default::default() };
+        let groups = vec![group("One", GroupState::Ready(vec![torrent, elsewhere, link]))];
+        let view = StreamView { order: crate::stores::settings::ORDER_LANGUAGE, server: Some("http://192.168.1.40:11470/".into()), ..StreamView::default() };
+        let b = build_marked(&movie(), None, Some(&groups), None, "", &[], None, &view);
+        let labels: Vec<&str> = b.sections[0].rows.iter().map(|r| r.label.as_str()).collect();
+        assert_eq!(labels, ["Film Torrent", "Film Link", "Film Elsewhere"], "the torrent keeps its place; what cannot play is last");
+        match &b.actions[0] {
+            Some(Action::Play(req)) => {
+                assert_eq!(
+                    req.url,
+                    "http://192.168.1.40:11470/0123456789abcdef0123456789abcdef01234567/2?tr=tracker%3Audp%3A%2F%2Ft.example%3A80&tr=dht%3AABCDEF0123"
+                );
+                assert!(req.headers.is_empty());
+            }
+            other => panic!("expected a play action, got {other:?}"),
+        }
+        assert!(!b.sections[0].rows[0].dim, "a torrent with a server is not dimmed");
+        assert_eq!(b.sections[0].rows[0].value, None, "…and does not say it is not playable");
+        assert!(b.sections[0].rows[2].dim, "a link elsewhere still is");
+        // a file index the addon left out is -1: the server picks the largest file
+        let bare = Stream { info_hash: Some("0123456789abcdef0123456789abcdef01234567".into()), ..Default::default() };
+        let b = build_marked(&movie(), None, Some(&[group("One", GroupState::Ready(vec![bare]))]), None, "", &[], None, &view);
+        assert!(matches!(&b.actions[0], Some(Action::Play(req)) if req.url == "http://192.168.1.40:11470/0123456789abcdef0123456789abcdef01234567/-1"));
+    }
+
+    #[test]
+    fn a_torrent_through_a_server_that_did_not_answer_only_explains() {
+        let torrent = Stream { info_hash: Some("0123456789abcdef0123456789abcdef01234567".into()), name: Some("Torrent".into()), ..Default::default() };
+        let groups = vec![group("One", GroupState::Ready(vec![torrent, http("Link", "Film.Link", "https://cdn.example/a.mkv")]))];
+        let down = StreamView { server: Some("http://192.168.1.40:11470/".into()), server_down: true, ..StreamView::default() };
+        let b = build_marked(&movie(), None, Some(&groups), None, "", &[], None, &down);
+        assert!(matches!(&b.actions[0], Some(Action::Play(req)) if req.url == "https://cdn.example/a.mkv"), "the link plays first");
+        assert_eq!(b.actions[1], Some(Action::Explain(msg::app_detail_why_torrent_offline())), "OK says the server is down, not that none is set");
+        assert!(b.sections[0].rows[1].dim);
+    }
+
+    #[test]
+    fn the_streaming_server_changes_nothing_for_a_link() {
+        let groups = vec![group("One", GroupState::Ready(vec![http("Link", "Film.Link", "https://cdn.example/a.mkv")]))];
+        let on = StreamView { server: Some("http://192.168.1.40:11470/".into()), ..StreamView::default() };
+        let a = build_marked(&movie(), None, Some(&groups), None, "", &[], None, &on);
+        let b = build_marked(&movie(), None, Some(&groups), None, "", &[], None, &StreamView::default());
+        assert_eq!(a.actions, b.actions);
+    }
+
+    #[test]
+    fn the_torrent_explanation_points_to_settings_and_streams_in_every_language() {
+        for language in sn_platform::i18n::SHIPPED {
+            let _g = sn_platform::i18n::language_on_this_thread_for_test(language);
+            for text in [msg::app_detail_why_torrent(), msg::app_detail_why_torrent_offline()] {
+                assert!(!text.contains('\u{2014}'), "{}: no em dash", language.tag());
+                assert!(text.contains(msg::app_tab_settings()) && text.contains(msg::app_settings_streams()), "{}: {text} names Settings and Streams", language.tag());
+            }
+        }
     }
 
     #[test]
@@ -4296,7 +4411,7 @@ mod tests {
         app.rig.detail.open_streams(&addons, &Default::default(), stream_key.clone());
         app.d.request(MachineId::Nav, NavOp::Push(AppArg::Detail(ItemRef { kind: "movie".into(), id: "tt1".into(), name: "Film".into(), from: String::new() })));
         app.frames(20);
-        let torrent = Stream { info_hash: Some("ABC".into()), name: Some("Torrent".into()), title: Some("Film.Torrent".into()), ..Default::default() };
+        let torrent = Stream { info_hash: Some("0123456789abcdef0123456789abcdef01234567".into()), name: Some("Torrent".into()), title: Some("Film.Torrent".into()), ..Default::default() };
         let one = GroupState::Ready(vec![torrent, http("One 1080p", "Film.One", "https://cdn.example/one.mkv")]);
         app.rig.detail.land(DetailLanding::Streams { key: stream_key.clone(), index: 0, state: one });
         app.rig.detail.land(DetailLanding::Streams { key: stream_key, index: 1, state: GroupState::Ready(vec![http("Two 720p", "Film.Two", "https://cdn.example/two.mkv")]) });
@@ -4324,6 +4439,31 @@ mod tests {
         let effects = app.take_effects();
         assert!(effects.contains(&AppFx::Toast(msg::app_detail_why_torrent().into())), "{effects:?}");
         assert!(!effects.iter().any(|e| matches!(e, AppFx::Play(_))));
+    }
+
+    /// The same page with a streaming server set: the torrent keeps its place (first, as its addon
+    /// sent it), and OK on it plays the server's URL through the real dispatcher.
+    #[test]
+    fn with_a_streaming_server_ok_on_a_torrent_plays_the_servers_url() {
+        use sn_machine::machine::Key;
+        let _g = sn_base::testlock::serial();
+        let _en = sn_platform::i18n::language_on_this_thread_for_test(sn_platform::i18n::Preference::En);
+        let mut app = two_addon_movie();
+        app.rig.settings.set_streaming_server(Some("192.168.1.40".into()));
+        let gen = app.rig.settings.gen();
+        app.notify(StoreId::Settings, gen);
+        app.frames(20);
+        let page = detail_page(&app);
+        assert_eq!(page.sections()[0].rows.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(), ["Film Torrent", "Film One"], "the torrent is not sorted after the links");
+        assert_eq!(app.d.focus().map(|k| k.elem), Some(STREAM_KEY), "…and is the first seat");
+        app.take_effects();
+        app.press(Key::Ok);
+        let effects = app.take_effects();
+        assert!(
+            effects.iter().any(|e| matches!(e, AppFx::Play(req) if req.url == "http://192.168.1.40:11470/0123456789abcdef0123456789abcdef01234567/-1")),
+            "{effects:?}"
+        );
+        assert!(!effects.iter().any(|e| matches!(e, AppFx::Toast(_))), "no explanation: it plays");
     }
 
     /// The addon dropdown over the list: UP from the first stream reaches it, it says which addons

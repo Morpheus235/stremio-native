@@ -272,7 +272,8 @@
   "app.reason.bad_response": "нечаканы адказ",
   "app.reason.cancelled": "скасавана",
   "app.reason.api_error": "памылка {code}",
-  "app.detail.why_torrent": "Торэнты тут не прайграюцца: наладзьце debrid-сэрвіс у гэтым дадатку, каб атрымаць спасылкі для прайгравання",
+  "app.detail.why_torrent": "Торэнтам патрэбны струменевы сервер: наладзьце яго ў Налады > Патокі",
+  "app.detail.why_torrent_offline": "Струменевы сервер не адказвае: праверце, ці працуе ён, або выберыце іншы ў Налады > Патокі",
   "app.detail.why_youtube": "Відэа YouTube не прайграюцца ў гэтай праграме",
   "app.detail.why_external": "Гэты паток адкрываецца ў іншай праграме ці на сайце, не тут",
   "app.detail.quiet_addons": {
@@ -367,6 +368,18 @@
     "value": "Спачатку якасць",
     "description": "Stream order option: playable at once first, then the highest resolution."
   },
+  "app.settings.streaming_server": "Струменевы сервер",
+  "app.settings.streaming_server_copy": "Прайгравае торэнты праз струменевы сервер Stremio у вашай сетцы або на кампутары. Абярыце знойдзены ў сетцы або ўвядзіце яго адрас.",
+  "app.settings.server_network_header": "У вашай сетцы",
+  "app.settings.server_find": "Знайсці ў маёй сетцы",
+  "app.settings.server_searching": "Пошук…",
+  "app.settings.server_none_found": "Сервер не знойдзены",
+  "app.settings.server_type": "Увесці адрас…",
+  "app.settings.server_invalid": "Гэта не адрас сервера",
+  "app.settings.server_connected": "Злучана",
+  "app.settings.server_unreachable": "Недаступны",
+  "app.settings.server_checking": "Праверка…",
+  "app.settings.server_version": "Версія {version}",
   "app.settings.theme": {
     "value": "Тэма",
     "description": "Settings: row and picker title — the app's colour theme."

@@ -12,6 +12,7 @@ pub mod epg; // the TV guide: what Live TV's channels show now and next
 pub mod library; // the account's library: Continue Watching and the Library page
 pub mod grid;
 pub mod search;
+pub mod server; // the streaming server: its last check and the scan of the home network
 pub mod settings;
 
 use sn_machine::machine::StoreOrd;
@@ -31,6 +32,8 @@ pub enum StoreId {
     Settings,
     /// The TV guide (`epg::EpgStore`).
     Epg,
+    /// The streaming server's status and scan (`server::ServerStore`).
+    Server,
 }
 
 impl StoreId {
@@ -46,6 +49,7 @@ impl StoreId {
             StoreId::Grid => 4,
             StoreId::Settings => 5,
             StoreId::Epg => 9,
+            StoreId::Server => 10,
         })
     }
 }

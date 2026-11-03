@@ -23,7 +23,7 @@ use sn_machine::present::Present;
 use sn_screens::chrome::ChromeBar;
 use sn_screens::registry::{
     AddonsCmd, AppArg, AppFx, AppMounter, AppMsg, Bundle, CatalogCmd, DetailCmd, GridCmd, LibraryCmd, PlayerArg, SearchCmd,
-    SessionView, SettingsCmd, Views,
+    ServerCmd, SessionView, SettingsCmd, Views,
 };
 use sn_screens::stores::account::{AccountJob, AccountLanding, AccountStore, SessionState};
 use sn_screens::stores::addons::{AddonsJob, AddonsStore};
@@ -32,6 +32,7 @@ use sn_screens::stores::detail::DetailStore;
 use sn_screens::stores::grid::GridStore;
 use sn_screens::stores::library::{LibraryJob, LibraryStore};
 use sn_screens::stores::search::SearchStore;
+use sn_screens::stores::server::ServerStore;
 use sn_screens::stores::settings::SettingsStore;
 use sn_screens::stores::StoreId;
 use sn_stremio::manifest::Addon;
@@ -45,7 +46,7 @@ use crate::art::Art;
 use crate::work::{Done, Runner, Threads, Work};
 
 /// The stores the tree hears about, in [`Bridge::notify`]'s order.
-const TOLD: [StoreId; 9] = [
+const TOLD: [StoreId; 10] = [
     StoreId::Catalog,
     StoreId::Detail,
     StoreId::Search,
@@ -55,6 +56,7 @@ const TOLD: [StoreId; 9] = [
     StoreId::Addons,
     StoreId::Library,
     StoreId::Epg,
+    StoreId::Server,
 ];
 
 pub struct Bridge {
@@ -70,6 +72,8 @@ pub struct Bridge {
     pub settings: SettingsStore,
     /// The TV guide Live TV's cards and the player read now / next from.
     pub epg: sn_screens::stores::epg::EpgStore,
+    /// The streaming server's last check and the scan's finds (the settings hold the address).
+    pub server: ServerStore,
     pub chrome: ChromeBar,
     pub playback: Playback,
     measure: Box<dyn sn_machine::machine::Measure>,
@@ -78,7 +82,7 @@ pub struct Bridge {
     services: Services,
     art: Option<&'static Art>,
     /// The generation each store last announced to the tree ([`TOLD`]'s order).
-    told: [Option<u32>; 9],
+    told: [Option<u32>; 10],
     /// The playback view changed since the tree was last told.
     playback_moved: bool,
     /// The last stream started, for the failure read-out's *Try again*.
@@ -125,6 +129,7 @@ impl Bridge {
             grid: GridStore::new(),
             settings: SettingsStore::default(),
             epg: sn_screens::stores::epg::EpgStore::new(),
+            server: ServerStore::new(),
             chrome: ChromeBar::new(),
             playback,
             measure,
@@ -132,7 +137,7 @@ impl Bridge {
             runner,
             services: Services::device(),
             art,
-            told: [None; 9],
+            told: [None; 10],
             playback_moved: false,
             last_play: None,
             built_epoch: 0,
@@ -162,6 +167,26 @@ impl Bridge {
         let jobs = self.addons.boot();
         self.run_addons(jobs);
         self.start_catalog_jobs();
+        self.check_server();
+    }
+
+    /// Ask the streaming server the settings name (if any) whether it answers.
+    fn check_server(&mut self) {
+        if let Some(job) = self.server.check(self.settings.streaming_server()) {
+            self.work.server(&*self.runner, job);
+        }
+    }
+
+    /// A page's word to the streaming server store's jobs.
+    fn server_cmd(&mut self, cmd: ServerCmd) {
+        match cmd {
+            ServerCmd::Check => self.check_server(),
+            ServerCmd::Scan => {
+                if let Some(job) = self.server.scan() {
+                    self.work.server(&*self.runner, job);
+                }
+            }
+        }
     }
 
     /// Seed the settings and the search store from the settings file, and persist every later
@@ -396,6 +421,7 @@ impl Bridge {
                 Done::Search(l) => self.search.land(l),
                 Done::Grid(l) => self.grid.land(l),
                 Done::Epg(l) => self.epg.land(l),
+                Done::Server(l) => self.server.land(l),
                 Done::Skips { gen, source, result } => {
                     // one line per lookup: the service and what it knew, never the URL
                     match &result {
@@ -502,6 +528,7 @@ impl Bridge {
             self.addons.gen(),
             self.library.gen(),
             self.epg.gen(),
+            self.server.gen(),
         ];
         for (i, (id, gen)) in TOLD.into_iter().zip(gens).enumerate() {
             if self.told[i] != Some(gen) {
@@ -611,6 +638,12 @@ impl Bridge {
             SettingsCmd::LibrarySort(sort) => {
                 self.settings.set_library_sort(sort);
             }
+            SettingsCmd::StreamingServer(server) => {
+                // a new server is asked at once; the same one again is no change and asks nothing
+                if self.settings.set_streaming_server(server) {
+                    self.check_server();
+                }
+            }
         }
         self.persist();
     }
@@ -662,6 +695,7 @@ impl Rig<Bundle> for Bridge {
                 grid: &self.grid,
                 settings: &self.settings,
                 epg: &self.epg,
+                server: &self.server,
                 session: SessionView { signed_in: self.account.account().is_some() },
             },
             measure: &*self.measure,
@@ -682,6 +716,7 @@ impl Rig<Bundle> for Bridge {
             AppFx::Search(cmd) => self.search_cmd(cmd),
             AppFx::Grid(cmd) => self.grid_cmd(cmd),
             AppFx::Settings(cmd) => self.settings_cmd(cmd),
+            AppFx::Server(cmd) => self.server_cmd(cmd),
             AppFx::Play(req) => {
                 self.playback.start(&req, self.settings.track_prefs());
                 self.playback.set_audio_offset(self.settings.audio_offset(&audio_key(&req)));
@@ -866,10 +901,13 @@ pub fn search_on_top(pages: &Dispatcher<Bundle>) -> bool {
     matches!(pages.top_arg(), Some(AppArg::Search)) && pages.nav.modals.surfaces.is_empty()
 }
 
-/// Is a page with a text field (Search, Sign in) on top, with no menu over it? Text goes only
-/// to one of those.
+/// Is a page with a text field (Search, Sign in, the streaming server's address) on top, with no
+/// menu over it? Text goes only to one of those.
 pub fn text_field_on_top(pages: &Dispatcher<Bundle>) -> bool {
-    matches!(pages.top_arg(), Some(AppArg::Search | AppArg::SignIn)) && pages.nav.modals.surfaces.is_empty()
+    matches!(
+        pages.top_arg(),
+        Some(AppArg::Search | AppArg::SignIn | AppArg::SettingsPage(sn_screens::registry::SettingsPage::StreamingServer))
+    ) && pages.nav.modals.surfaces.is_empty()
 }
 
 #[cfg(test)]
@@ -1004,7 +1042,7 @@ mod tests {
                         };
                         bridge.detail.land(crate::work::run_detail_with(&net, job));
                     }
-                    Done::Account(_) | Done::Addons(_) | Done::Library(_) | Done::Skips { .. } | Done::Subtitles { .. } | Done::Epg(_) => {}
+                    Done::Account(_) | Done::Addons(_) | Done::Library(_) | Done::Skips { .. } | Done::Subtitles { .. } | Done::Epg(_) | Done::Server(_) => {}
                     Done::Search(sn_screens::stores::search::SearchLanding { qgen, row, .. }) => {
                         let url = bridge.search.rows()[row].pager.next_url().unwrap();
                         let result = sn_stremio::get_json(&net, &url, &[]);
@@ -1081,6 +1119,70 @@ mod tests {
         assert_eq!(back.search.recents(), ["batman"]);
         bridge.settings_cmd(SettingsCmd::Set(Pref::SubtitleSize, 1));
         sn_base::storage_worker::drain_for_test();
+    }
+
+    /// The streaming server setting: a new address is checked at once (one job, for the
+    /// normalized address), the same again asks nothing, Off asks nothing, and the setting is
+    /// written with the others.
+    #[test]
+    fn a_streaming_server_is_checked_when_set_and_written() {
+        use sn_screens::registry::SettingsCmd;
+        use sn_screens::stores::server::{ServerLanding, ServerStatus};
+        let _g = sn_base::testlock::serial();
+        let dir = sn_base::testscratch::process_dir("bridge-streaming-server");
+        let path = dir.join("settings.json");
+        // SAFETY: as above.
+        let playback = Playback::new(unsafe { MainThread::assume() });
+        let scripted = Arc::new(Scripted::default());
+        let loaded = super::super::prefs::load(&path);
+        let mut bridge = Bridge::with_runner(CatalogStore::new(Vec::<String>::new()), playback, Box::new(sn_ui::fixture::FixtureMeasure), None, Box::new(scripted.clone()))
+            .with_settings(loaded, path.clone());
+        let pending = |scripted: &Scripted| -> Vec<ServerLanding> {
+            std::mem::take(&mut *scripted.pending.lock().unwrap()).into_iter().filter_map(|d| if let Done::Server(l) = d { Some(l) } else { None }).collect()
+        };
+        bridge.settings_cmd(SettingsCmd::StreamingServer(Some("192.168.1.40".into())));
+        assert_eq!(bridge.settings.streaming_server(), Some("http://192.168.1.40:11470/"));
+        assert_eq!(bridge.server.status(), &ServerStatus::Checking);
+        let jobs = pending(&scripted);
+        assert!(matches!(jobs.as_slice(), [ServerLanding::Checked { base, .. }] if base == "http://192.168.1.40:11470/"), "{jobs:?}");
+        bridge.settings_cmd(SettingsCmd::StreamingServer(Some("http://192.168.1.40:11470".into())));
+        assert!(pending(&scripted).is_empty(), "the same server again asks nothing");
+        sn_base::storage_worker::drain_for_test();
+        assert_eq!(super::super::prefs::load(&path).settings.streaming_server(), Some("http://192.168.1.40:11470/"), "written with the settings");
+        bridge.settings_cmd(SettingsCmd::StreamingServer(None));
+        assert!(pending(&scripted).is_empty(), "Off asks nothing");
+        assert_eq!(bridge.server.status(), &ServerStatus::Unknown);
+        sn_base::storage_worker::drain_for_test();
+        assert_eq!(super::super::prefs::load(&path).settings.streaming_server(), None);
+        // a scan is one job at a time
+        bridge.server_cmd(sn_screens::registry::ServerCmd::Scan);
+        bridge.server_cmd(sn_screens::registry::ServerCmd::Scan);
+        assert!(matches!(pending(&scripted).as_slice(), [ServerLanding::Scanned { .. }]));
+    }
+
+    /// The television keyboard's text goes to the streaming server page as to Search and Sign in.
+    #[test]
+    fn text_goes_to_the_streaming_server_page() {
+        use sn_screens::registry::SettingsPage;
+        let _g = sn_base::testlock::serial();
+        sn_screens::test_support::headless_gl();
+        let mut pages: Dispatcher<Bundle> = Dispatcher::new();
+        // SAFETY: as above.
+        let playback = Playback::new(unsafe { MainThread::assume() });
+        let mut bridge = Bridge::with_runner(CatalogStore::new(Vec::<String>::new()), playback, Box::new(sn_ui::fixture::FixtureMeasure), None, Box::new(std::sync::Arc::new(Scripted::default())));
+        pages.request(MachineId::Nav, NavOp::Root(AppArg::Home));
+        pages.frame(&mut bridge, Tick { ms: 16, dt_us: 16_000 }, Vec::new(), Vec::new(), &mut NoTap);
+        assert!(!text_field_on_top(&pages), "Home takes no text");
+        pages.request(MachineId::Nav, NavOp::Push(AppArg::SettingsPage(SettingsPage::StreamingServer)));
+        for i in 0..40 {
+            pages.frame(&mut bridge, Tick { ms: 32 + i * 16, dt_us: 16_000 }, Vec::new(), Vec::new(), &mut NoTap);
+        }
+        assert!(text_field_on_top(&pages), "the address page takes text");
+        pages.request(MachineId::Nav, NavOp::Push(AppArg::SettingsPage(SettingsPage::Legal)));
+        for i in 0..40 {
+            pages.frame(&mut bridge, Tick { ms: 700 + i * 16, dt_us: 16_000 }, Vec::new(), Vec::new(), &mut NoTap);
+        }
+        assert!(!text_field_on_top(&pages), "another settings page does not");
     }
 
     #[test]

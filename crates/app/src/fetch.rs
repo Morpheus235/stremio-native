@@ -6,7 +6,8 @@
 //!
 //! - **deadlines**: [`Profile::Api`] is `sn_net::API` (8 s connect, 25 s whole request), the
 //!   answer a user waits for behind a spinner; [`Profile::Art`] is `sn_net::BULK` (8 s connect,
-//!   no wall clock, a transfer below one byte a second for 30 s ends);
+//!   no wall clock, a transfer below one byte a second for 30 s ends); [`Profile::Lan`] is
+//!   `sn_net::net::LAN` (1.5 s whole request), a probe of a device on the home network;
 //! - **a bounded body**: a response larger than the profile's cap fails as a transport error
 //!   instead of growing without limit on a 32-bit set;
 //! - **the product's `User-Agent`** (`StremioNative/<version>`), installed once at boot through
@@ -28,6 +29,8 @@ pub const API_BODY_MAX: usize = 8 << 20;
 pub const ART_BODY_MAX: usize = 6 << 20;
 /// The largest TV guide accepted: a national XMLTV guide is 3–6 MB gzipped, ~20 MB plain.
 pub const GUIDE_BODY_MAX: usize = 32 << 20;
+/// The largest streaming server answer accepted (its `settings` is a few kilobytes).
+pub const LAN_BODY_MAX: usize = 256 << 10;
 
 /// Which deadlines and body cap a request runs under.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,20 +39,35 @@ pub enum Profile {
     Art,
     /// A TV guide (`crate::guide`): bulk deadlines, a large body.
     Guide,
+    /// A probe of a device on the home network (`crate::server`): short deadlines, a small body,
+    /// and a redirect is an answer, not a road to follow off the network.
+    Lan,
+    /// [`Profile::Lan`] for the probes of a scan: the same, and no failure line per host.
+    LanScan,
+    /// A probe of a server at an address that is not a home-network literal (a name, https, a
+    /// public IP): the normal API deadlines, but still a small body and no redirect to follow.
+    Remote,
 }
 
 impl Profile {
     fn timeouts(self) -> sn_net::net::Timeouts {
         match self {
-            Profile::Api => sn_net::net::API,
+            Profile::Api | Profile::Remote => sn_net::net::API,
             Profile::Art | Profile::Guide => sn_net::net::BULK,
+            Profile::Lan => sn_net::net::LAN,
+            Profile::LanScan => sn_net::net::LAN_SCAN,
         }
+    }
+    /// A probe's redirect is its answer, not a road to follow off the network.
+    fn follows_redirects(self) -> bool {
+        !matches!(self, Profile::Lan | Profile::LanScan | Profile::Remote)
     }
     fn body_max(self) -> usize {
         match self {
             Profile::Api => API_BODY_MAX,
             Profile::Art => ART_BODY_MAX,
             Profile::Guide => GUIDE_BODY_MAX,
+            Profile::Lan | Profile::LanScan | Profile::Remote => LAN_BODY_MAX,
         }
     }
 }
@@ -107,7 +125,7 @@ impl<'a> NetFetch<'a> {
         // (libcurl would re-send them to whatever host the redirect names), so a request with
         // headers answers a 3xx as its status instead. The application's own headers do not
         // count: an artwork request with only its `Accept` still follows a CDN's redirect.
-        let follow = lines.is_empty();
+        let follow = lines.is_empty() && self.profile.follows_redirects();
         for (name, value) in self.own {
             if !headers.iter().any(|(n, _)| n.eq_ignore_ascii_case(name)) {
                 lines.push(format!("{name}: {value}"));
@@ -304,6 +322,56 @@ mod tests {
         assert!(seen.starts_with("POST /api/addonCollectionGet"), "{seen}");
         assert!(seen.contains("Content-Type: application/json"), "{seen}");
         assert!(seen.ends_with(r#"{"type":"AddonCollectionGet"}"#), "{seen}");
+    }
+
+    #[test]
+    fn a_lan_probe_answers_a_redirect_as_its_status_and_never_follows_it() {
+        if !ready() {
+            return;
+        }
+        let s = serve(vec![("/settings", 302, b"/elsewhere".to_vec()), ("/elsewhere", 200, br#"{"values":{}}"#.to_vec())]);
+        let off = OffFrame::for_test();
+        let f = NetFetch::new(&off, Profile::Lan);
+        assert_eq!(f.get(&format!("http://127.0.0.1:{}/settings", s.port), &[]), Err(FetchError::Status(302)));
+        assert_eq!(s.seen.lock().unwrap().len(), 1, "no second hop: a device on the network cannot send the TV elsewhere");
+    }
+
+    #[test]
+    fn the_probe_profiles_differ_only_in_deadlines_and_logging() {
+        use sn_net::net::{API, LAN, LAN_SCAN};
+        assert_eq!(Profile::Lan.timeouts(), LAN);
+        assert_eq!(Profile::LanScan.timeouts(), LAN_SCAN);
+        assert!(LAN_SCAN.quiet && !LAN.quiet && !API.quiet, "only a scan probe is quiet");
+        assert_eq!(Profile::Remote.timeouts(), API, "a typed remote address gets the normal deadlines");
+        for p in [Profile::Lan, Profile::LanScan, Profile::Remote] {
+            assert!(!p.follows_redirects(), "{p:?}");
+            assert_eq!(p.body_max(), LAN_BODY_MAX, "{p:?}");
+        }
+        assert!(Profile::Api.follows_redirects() && Profile::Art.follows_redirects());
+    }
+
+    #[test]
+    fn a_remote_probe_answers_a_redirect_as_its_status_too() {
+        if !ready() {
+            return;
+        }
+        let s = serve(vec![("/settings", 302, b"/elsewhere".to_vec()), ("/elsewhere", 200, br#"{"values":{}}"#.to_vec())]);
+        let off = OffFrame::for_test();
+        let f = NetFetch::new(&off, Profile::Remote);
+        assert_eq!(f.get(&format!("http://127.0.0.1:{}/settings", s.port), &[]), Err(FetchError::Status(302)));
+        assert_eq!(s.seen.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_lan_probe_reads_a_small_body_and_refuses_one_over_its_cap() {
+        if !ready() {
+            return;
+        }
+        let s = serve(vec![("/small", 200, br#"{"values":{}}"#.to_vec()), ("/big", 200, vec![b'x'; LAN_BODY_MAX + 1])]);
+        let off = OffFrame::for_test();
+        let f = NetFetch::new(&off, Profile::Lan);
+        assert_eq!(f.get(&format!("http://127.0.0.1:{}/small", s.port), &[]).unwrap(), br#"{"values":{}}"#);
+        assert!(matches!(f.get(&format!("http://127.0.0.1:{}/big", s.port), &[]), Err(FetchError::Transport(_))));
     }
 
     #[test]

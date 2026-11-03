@@ -45,3 +45,5 @@ mod discover_tests;
 mod home_tests;
 #[cfg(test)]
 mod nav_tests;
+#[cfg(test)]
+mod server_tests;

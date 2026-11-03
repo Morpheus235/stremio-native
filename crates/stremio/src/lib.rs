@@ -16,6 +16,8 @@
 //! * [`links`] — a meta's `links` (genres, cast, directors) as the Discover / Search they open.
 //! * [`meta`] — which addons a meta request goes to, first answer in addon order wins.
 //! * [`streams`] — per-addon stream lookup for one video.
+//! * [`streaming_server`] — the streaming server's address, its liveness check and the URL a
+//!   torrent plays from.
 //! * [`subtitles`] — per-addon subtitle lookup for the file that plays.
 //! * [`epg`] — XMLTV programme guides: what a live channel shows now and next.
 //! * [`skip`] — intro/recap/credits markers from introdb.app and AniSkip, validated per stream.
@@ -35,6 +37,7 @@ pub mod sched;
 pub mod search;
 pub mod skip;
 pub mod stream_facts;
+pub mod streaming_server;
 pub mod streams;
 pub mod subtitles;
 pub mod types;

@@ -10,5 +10,6 @@
 //! build their tests on, plus the one test-only CA-bundle override `net::request_result` honours.
 //! The application crate enables it in `[dev-dependencies]` only, so no shipped build sees it.
 
+pub mod ifaddrs; // the interfaces' own IPv4 addresses (the home-network scan starts there)
 pub mod net; // HTTP(S) client over the TV's libcurl (stream.rs can't do TLS)
 pub mod stream;

@@ -17,12 +17,17 @@
 //!   common ones to add. OK on a language to add appends it; OK on a chosen one opens its popover
 //!   (*Move up*, *Move down*, *Remove*, `ChoiceTarget::SettingsLanguage`). The stream order's page
 //!   leads with *Same as audio*, the switch that makes it follow the audio list.
+//! - **The streaming server** ([`SettingsPage::StreamingServer`]): Off, the server in use with
+//!   what its last check found, *Find on my network* (a scan; the servers it finds are rows),
+//!   and *Type an address…* (the television's keyboard, as Sign in types; an address that is
+//!   not one is refused with a toast and the page stays). Choosing a row sets the server and
+//!   stays on the page, so the check's answer is read there.
 //! - **Legal notices** ([`SettingsPage::Legal`]): the third-party components, and the full texts
 //!   of the GPL, the fonts' OFL and the copyright notice — the package's own files, embedded so
 //!   reading them never touches the disk on the frame thread.
 //! - **A document** ([`SettingsPage::Doc`]): scrolls inside on UP/DOWN and leaves at its ends.
 //!
-//! The builders ([`root_form`], [`picker_form`], [`languages_form`], [`legal_form`], [`body`]) are pure, so the fit
+//! The builders ([`root_form`], [`picker_form`], [`languages_form`], [`server_form`], [`legal_form`], [`body`]) are pure, so the fit
 //! tests and the navigation tests build the real pages.
 
 use std::borrow::Cow;
@@ -30,8 +35,8 @@ use std::convert::Infallible;
 use std::sync::OnceLock;
 
 use sn_machine::machine::{
-    Canon, Cx, Edge, Effects, EntryId, FocusKey, Fx, GroupId, Handled, InputEvent, InputKind, Key, LogicalState, Machine,
-    NavOp,
+    Canon, Cx, Delivery, Edge, Effects, EntryId, FocusKey, Fx, GroupId, Handled, InputEvent, InputKind, Key, LogicalState,
+    Machine, NavOp, TextEdit,
 };
 use sn_machine::present::Provenance;
 use sn_platform::i18n::msg;
@@ -44,10 +49,12 @@ use sn_ui::screen::{
 };
 use sn_ui::table::Row;
 use sn_ui::table_screen::{DocumentFocus, DocumentScreen, Header, TableScreen};
+use sn_ui::text_buffer::TextBuffer;
 use sn_ui::{theme, Rect};
 
-use crate::registry::{word, AppArg, AppFx, AppMsg, Bundle, ChoiceTarget, Doc, ListRow, MenuKind, SettingsCmd, SettingsPage};
+use crate::registry::{word, AppArg, AppFx, AppMsg, Bundle, ChoiceTarget, Doc, ListRow, MenuKind, ServerCmd, SettingsCmd, SettingsPage, Views};
 use crate::stores::account::{AccountStore, SessionState};
+use crate::stores::server::{Scan, ServerStatus, ServerStore};
 use crate::stores::settings::{LangList, LangOp, Pref, SettingsStore};
 use crate::stores::StoreId;
 use crate::tabs::Tab;
@@ -142,6 +149,8 @@ pub enum RootRow {
     StreamOrder,
     /// The colour theme (the picker; applies at once).
     Theme,
+    /// The streaming server torrents play through: Off or its address and status (its page).
+    StreamingServer,
     /// Only debrid streams: Off, On (the picker).
     DebridOnly,
 }
@@ -268,8 +277,9 @@ fn account_section(account: &AccountStore) -> FormSection<RootRow, RootRow, Sett
     }
 }
 
-/// The root's form, from the settings and the session as they stand.
-pub fn root_form(settings: &SettingsStore, account: &AccountStore, stats: bool) -> Form<RootRow, RootRow, SettingsPage> {
+/// The root's form, from the settings, the session and the streaming server's last check as they
+/// stand.
+pub fn root_form(settings: &SettingsStore, account: &AccountStore, stats: bool, server: &ServerStore) -> Form<RootRow, RootRow, SettingsPage> {
     let nav = |p: SettingsPage| RowKind::Nav(p);
     // a picker's row: its label and the rung it is set to
     let pick = |s: FormSection<RootRow, RootRow, SettingsPage>, id: RootRow, pref: Pref| {
@@ -298,7 +308,13 @@ pub fn root_form(settings: &SettingsStore, account: &AccountStore, stats: bool) 
     let audio = pick(audio, RootRow::SubtitleOutline, Pref::SubtitleOutline);
     let audio = pick(audio, RootRow::SubtitleOpacity, Pref::SubtitleOpacity);
     let audio = pick(audio, RootRow::AssStyling, Pref::AssStyling);
-    let streams = pick(FormSection::new(msg::app_settings_streams()), RootRow::StreamOrder, Pref::StreamOrder);
+    let streams = FormSection::new(msg::app_settings_streams()).item(
+        RootRow::StreamingServer,
+        nav(SettingsPage::StreamingServer),
+        RootRow::StreamingServer,
+        server_root_row(settings, server),
+    );
+    let streams = pick(streams, RootRow::StreamOrder, Pref::StreamOrder);
     let streams = pick(streams, RootRow::DebridOnly, Pref::DebridOnly);
     let streams = langs(streams, RootRow::StreamLanguages, LangList::Streams);
     let live = pick(FormSection::new(msg::app_tab_live_tv()), RootRow::TvGuide, Pref::TvGuide);
@@ -335,6 +351,124 @@ pub fn root_form(settings: &SettingsStore, account: &AccountStore, stats: bool) 
                 .item(RootRow::Privacy, nav(SettingsPage::Doc(Doc::Privacy)), RootRow::Privacy, Row::new(msg::app_settings_privacy()))
                 .note(msg::app_settings_version(version())),
         )
+}
+
+/// The root's *Streaming server* row: Off, or the address (the server's text) with what the last
+/// check found under the label.
+fn server_root_row(settings: &SettingsStore, server: &ServerStore) -> Row {
+    let row = Row::new(msg::app_settings_streaming_server());
+    match settings.streaming_server() {
+        None => row.value(msg::app_settings_switch_off()),
+        Some(base) => {
+            let row = row.value(sn_stremio::streaming_server::display(base)).server_value();
+            match server_status_line(server.status()) {
+                Some(line) => row.detail(line),
+                None => row,
+            }
+        }
+    }
+}
+
+/// What the last check found, in a short line: *Connected*, *Not reachable*, *Checking…*; `None`
+/// before any check. The version is left to the server page, since this line sits under a label
+/// whose column an address can already narrow.
+fn server_status_line(status: &ServerStatus) -> Option<String> {
+    match status {
+        ServerStatus::Unknown => None,
+        ServerStatus::Checking => Some(msg::app_settings_server_checking().to_string()),
+        ServerStatus::Unreachable => Some(msg::app_settings_server_unreachable().to_string()),
+        ServerStatus::Alive(_) => Some(msg::app_settings_server_connected().to_string()),
+    }
+}
+
+/// The streaming server page's rows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ServerRow {
+    /// No streaming server.
+    Off,
+    /// The server in use, when the scan's list does not hold it.
+    Current,
+    /// Start a scan of the home network.
+    Find,
+    /// The `n`-th server the scan found.
+    Found(usize),
+    /// Type an address on the television's keyboard.
+    Type,
+}
+
+impl FormId for ServerRow {
+    fn key(&self) -> RowKey {
+        RowKey(match self {
+            ServerRow::Off => 1,
+            ServerRow::Current => 2,
+            ServerRow::Find => 3,
+            ServerRow::Type => 4,
+            ServerRow::Found(n) => 0x10 + *n as u32,
+        })
+    }
+}
+
+/// A server's row: its address (the server's text) and, under it, its version. The one in use
+/// (`status` given) also reads what its last check found as the value.
+fn server_row(base: &str, version: Option<&str>, status: Option<&ServerStatus>) -> Row {
+    let row = Row::new(sn_stremio::streaming_server::display(base)).server_label();
+    // the version a check brought is the server's own word, so it wins over the scan's
+    let version = match status {
+        Some(ServerStatus::Alive(Some(v))) => Some(v.as_str()),
+        _ => version,
+    };
+    let row = match status {
+        Some(ServerStatus::Checking) => row.value(msg::app_settings_server_checking()),
+        Some(ServerStatus::Unreachable) => row.value(msg::app_settings_server_unreachable()),
+        Some(ServerStatus::Alive(_)) => row.value(msg::app_settings_server_connected()),
+        Some(ServerStatus::Unknown) | None => row,
+    };
+    match version {
+        Some(v) => row.detail(msg::app_settings_server_version(v)),
+        None => row,
+    }
+}
+
+/// The streaming server page: Off; the server in use with its status; *Find on my network* and
+/// what it found (a note when a finished scan found nothing); *Type an address…*, which shows
+/// what is being typed while the keyboard is up.
+pub fn server_form(settings: &SettingsStore, server: &ServerStore, typing: Option<&TextBuffer>) -> Form<ServerRow, ServerRow, Infallible> {
+    let current = settings.streaming_server();
+    let found = server.found();
+    let mut use_section = FormSection::new(msg::app_settings_streaming_server()).choice(
+        ServerRow::Off,
+        ServerRow::Off,
+        Row::new(msg::app_settings_switch_off()),
+        |_| current.is_none(),
+    );
+    if let Some(base) = current.filter(|b| !found.iter().any(|f| f.base == *b)) {
+        use_section = use_section.choice(ServerRow::Current, ServerRow::Current, server_row(base, None, Some(server.status())), |_| true);
+    }
+    let searching = *server.scan_state() == Scan::Searching;
+    let find = Row::new(msg::app_settings_server_find());
+    let mut net = FormSection::new(msg::app_settings_server_network_header()).item(
+        ServerRow::Find,
+        RowKind::Button,
+        ServerRow::Find,
+        if searching { find.value(msg::app_settings_server_searching()) } else { find },
+    );
+    for (n, f) in found.iter().enumerate() {
+        let is_current = current == Some(f.base.as_str());
+        let row = server_row(&f.base, f.version.as_deref(), is_current.then(|| server.status()));
+        net = net.choice(ServerRow::Found(n), ServerRow::Found(n), row, |_| is_current);
+    }
+    if matches!(server.scan_state(), Scan::Done(list) if list.is_empty()) {
+        net = net.note(msg::app_settings_server_none_found());
+    }
+    let mut ty = Row::new(msg::app_settings_server_type());
+    if let Some(buffer) = typing {
+        let text = buffer.text();
+        let at = buffer.caret().min(text.len());
+        let mut shown = text.to_string();
+        shown.insert(at, '|');
+        ty = ty.value(shown).server_value();
+    }
+    Form::new().section(use_section).section(net).section(FormSection::new("").item(ServerRow::Type, RowKind::Button, ServerRow::Type, ty))
 }
 
 /// A picker's form: one checked row per rung.
@@ -555,13 +689,26 @@ enum Mode {
     Languages(LangList, FormTable<LangRow, LangRow, Infallible>, Option<usize>),
     Legal(FormTable<LegalRow, LegalRow, SettingsPage>),
     Doc { doc: Doc, reader: DocumentReader, body: String, copy: String },
+    Server(ServerPage),
 }
+
+/// The streaming server page: its rows, and the address being typed while the television's
+/// keyboard is up.
+struct ServerPage {
+    table: FormTable<ServerRow, ServerRow, Infallible>,
+    typing: Option<TextBuffer>,
+    /// Moves with every keystroke, so the typed row is rebuilt.
+    edits: u64,
+}
+
+/// The generations the root, a picker or the server page were built from: settings, account,
+/// Stats for nerds, the streaming server store, and the server page's keystrokes.
+type BuiltFrom = (u32, u32, bool, u32, u64);
 
 pub struct SettingsScreen {
     entry: EntryId,
     mode: Mode,
-    /// The settings and account generations the root and the picker were built from.
-    built: Option<(u32, u32, bool)>,
+    built: Option<BuiltFrom>,
 }
 
 impl SettingsScreen {
@@ -581,6 +728,7 @@ impl SettingsScreen {
                 Mode::Legal(f)
             }
             SettingsPage::Doc(doc) => Mode::Doc { doc, reader: DocumentReader::new(), body: body(doc), copy: doc_copy(doc) },
+            SettingsPage::StreamingServer => Mode::Server(ServerPage { table: grouped_table(), typing: None, edits: 0 }),
         };
         SettingsScreen { entry, mode, built: None }
     }
@@ -596,6 +744,7 @@ impl SettingsScreen {
             Mode::Picker(_, f) => Some(&f.table),
             Mode::Languages(_, f, _) => Some(&f.table),
             Mode::Legal(f) => Some(&f.table),
+            Mode::Server(p) => Some(&p.table.table),
             Mode::Doc { .. } => None,
         }
     }
@@ -630,6 +779,7 @@ impl SettingsScreen {
             Mode::Picker(p, _) => pref_label(*p),
             Mode::Languages(l, _, _) => languages_label(*l),
             Mode::Legal(_) => msg::app_settings_legal(),
+            Mode::Server(_) => msg::app_settings_streaming_server(),
             Mode::Doc { doc, .. } => doc_title(*doc),
         }
     }
@@ -640,6 +790,7 @@ impl SettingsScreen {
             Mode::Picker(p, _) => pref_copy(*p),
             Mode::Languages(l, _, _) => languages_copy(*l),
             Mode::Legal(_) => msg::app_settings_legal_copy(),
+            Mode::Server(_) => msg::app_settings_streaming_server_copy(),
             Mode::Doc { copy, .. } => copy,
         }
     }
@@ -648,9 +799,12 @@ impl SettingsScreen {
         self.layout().document(self.crumb().is_some())
     }
 
-    /// Rebuild the root / the picker when the settings or the session moved.
-    fn sync(&mut self, store: &SettingsStore, account: &AccountStore, stats: bool) {
-        let gen = (store.gen(), account.gen(), stats);
+    /// Rebuild the root, a picker or the server page when what they read moved.
+    fn sync(&mut self, views: &Views<'_>) {
+        let (store, account, server) = (views.settings, views.account, views.server);
+        let stats = views.playback.stats;
+        let edits = if let Mode::Server(p) = &self.mode { p.edits } else { 0 };
+        let gen = (store.gen(), account.gen(), stats, server.gen(), edits);
         if self.built == Some(gen) {
             return;
         }
@@ -659,9 +813,9 @@ impl SettingsScreen {
         match &mut self.mode {
             Mode::Root(f) => {
                 if fresh {
-                    f.set(root_form(store, account, stats), None);
+                    f.set(root_form(store, account, stats, server), None);
                 } else {
-                    f.refresh(root_form(store, account, stats));
+                    f.refresh(root_form(store, account, stats, server));
                 }
             }
             Mode::Picker(p, f) => {
@@ -679,6 +833,14 @@ impl SettingsScreen {
                     f.refresh(languages_form(store, *l));
                 }
             }
+            Mode::Server(p) => {
+                let form = server_form(store, server, p.typing.as_ref());
+                if fresh {
+                    p.table.set(form, None);
+                } else {
+                    p.table.refresh(form);
+                }
+            }
             Mode::Legal(_) | Mode::Doc { .. } => {}
         }
     }
@@ -690,6 +852,7 @@ impl SettingsScreen {
             Mode::Picker(_, f) => TableScreen::new(header, &f.table, GROUP, self.entry).keyed(f),
             Mode::Languages(_, f, _) => TableScreen::new(header, &f.table, GROUP, self.entry).keyed(f),
             Mode::Legal(f) => TableScreen::new(header, &f.table, GROUP, self.entry).keyed(f),
+            Mode::Server(p) => TableScreen::new(header, &p.table.table, GROUP, self.entry).keyed(&p.table).uncommitted(p.typing.is_some()),
             Mode::Doc { .. } => return None,
         };
         Some(v)
@@ -709,6 +872,7 @@ impl SettingsScreen {
             Mode::Picker(_, f) => focus_row(f, key),
             Mode::Languages(_, f, _) => focus_row(f, key),
             Mode::Legal(f) => focus_row(f, key),
+            Mode::Server(p) => focus_row(&mut p.table, key),
             Mode::Doc { .. } => {}
         }
     }
@@ -742,6 +906,11 @@ impl SettingsScreen {
             fx.invalidate(Provenance::Input);
             return;
         }
+        if let Mode::Server(p) = &self.mode {
+            let act = p.table.index_of_key(key).and_then(|i| p.table.activate(i));
+            self.activate_server(act, cx, fx);
+            return;
+        }
         match &self.mode {
             Mode::Root(f) => match f.index_of_key(key).and_then(|i| f.activate(i)) {
                 Some(Activation::Push(page)) => fx.push(Fx::Nav(NavOp::Push(AppArg::SettingsPage(page)))),
@@ -771,8 +940,89 @@ impl SettingsScreen {
                     fx.push(Fx::Nav(NavOp::Pop));
                 }
             }
-            Mode::Languages(..) | Mode::Doc { .. } => {}
+            Mode::Languages(..) | Mode::Server(_) | Mode::Doc { .. } => {}
         }
+    }
+
+    /// OK on a row of the streaming server page.
+    fn activate_server(&mut self, act: Option<Activation<ServerRow, Infallible>>, cx: &Cx<'_, Bundle>, fx: &mut Effects<'_, Bundle>) {
+        let Some(Activation::Action(row)) = act else { return };
+        let set = |server: Option<String>, fx: &mut Effects<'_, Bundle>| fx.push(Fx::App(AppFx::Settings(SettingsCmd::StreamingServer(server))));
+        match row {
+            ServerRow::Off => set(None, fx),
+            // already the one in use
+            ServerRow::Current => {}
+            ServerRow::Find => fx.push(Fx::App(AppFx::Server(ServerCmd::Scan))),
+            ServerRow::Found(n) => {
+                if let Some(found) = cx.views.server.found().get(n) {
+                    set(Some(found.base.clone()), fx);
+                }
+            }
+            ServerRow::Type => self.typing(true, fx),
+        }
+        fx.invalidate(Provenance::Input);
+    }
+
+    /// Raise the television's keyboard for the address row, or put it away. Putting it away
+    /// drops what was typed.
+    fn typing(&mut self, on: bool, fx: &mut Effects<'_, Bundle>) {
+        let Mode::Server(p) = &mut self.mode else { return };
+        if p.typing.is_some() == on {
+            return;
+        }
+        p.typing = on.then(|| TextBuffer::new(String::new(), 0));
+        p.edits += 1;
+        let me = fx.from();
+        fx.push(Fx::Deliver(me, Delivery::Keyboard { up: on }));
+        fx.invalidate(Provenance::Input);
+    }
+
+    /// OK while typing: a valid address becomes the server (and the keyboard goes away); one that
+    /// is not says so on the toast and the page keeps what was typed.
+    fn commit_address(&mut self, fx: &mut Effects<'_, Bundle>) {
+        let Mode::Server(p) = &self.mode else { return };
+        let Some(buffer) = &p.typing else { return };
+        match sn_stremio::streaming_server::normalize_url(buffer.text()) {
+            Some(url) => {
+                fx.push(Fx::App(AppFx::Settings(SettingsCmd::StreamingServer(Some(url)))));
+                self.typing(false, fx);
+            }
+            None => fx.push(Fx::App(AppFx::Toast(msg::app_settings_server_invalid().to_string()))),
+        }
+    }
+
+    /// A key while the address is being typed: the panel's edit keys, OK to finish, BACK to put the
+    /// panel away. `None` for a key the page does not take (UP and DOWN move on, which ends it).
+    fn typing_key(&mut self, key: Key, sym: u32, fx: &mut Effects<'_, Bundle>) -> Option<()> {
+        let edit = match (key, sym) {
+            (Key::Left, _) => Some(TextEdit::Left),
+            (Key::Right, _) => Some(TextEdit::Right),
+            (_, sn_ui::consts::SDLK_BACKSPACE) => Some(TextEdit::Backspace),
+            (_, sn_ui::consts::SDLK_CLEAR) => Some(TextEdit::Clear),
+            _ => None,
+        };
+        if let Some(edit) = edit {
+            self.edit(&edit);
+            fx.invalidate(Provenance::Input);
+            return Some(());
+        }
+        match key {
+            Key::Back => self.typing(false, fx),
+            Key::Ok => self.commit_address(fx),
+            _ => return None,
+        }
+        Some(())
+    }
+
+    fn edit(&mut self, edit: &TextEdit) {
+        if let Mode::Server(ServerPage { typing: Some(buffer), edits, .. }) = &mut self.mode {
+            buffer.edit(edit);
+            *edits += 1;
+        }
+    }
+
+    fn is_typing(&self) -> bool {
+        matches!(&self.mode, Mode::Server(p) if p.typing.is_some())
     }
 
     /// A chosen language's popover answered with row `i`.
@@ -790,6 +1040,7 @@ impl SettingsScreen {
             Mode::Picker(_, f) => f.table.update(dt, h),
             Mode::Languages(_, f, _) => f.table.update(dt, h),
             Mode::Legal(f) => f.table.update(dt, h),
+            Mode::Server(p) => p.table.table.update(dt, h),
             Mode::Doc { reader, .. } => reader.update(dt),
         }
     }
@@ -828,6 +1079,10 @@ impl LogicalState for SettingsScreen {
             Mode::Languages(l, f, _) => {
                 c.u32(4).u32(*l as u32).u32(f.table.sel as u32);
             }
+            // the length typed, never the text
+            Mode::Server(p) => {
+                c.u32(5).u32(p.table.table.sel as u32).u32(p.typing.as_ref().map_or(0, |b| b.text().len() as u32 + 1));
+            }
         }
     }
     fn probe(&self, out: &mut String) {
@@ -840,7 +1095,11 @@ impl Machine<Bundle> for SettingsScreen {
     fn step(&mut self, ev: &Self::Ev, cx: &Cx<'_, Bundle>, fx: &mut Effects<'_, Bundle>) -> Handled {
         match ev {
             ScreenEvent::Mount => {
-                self.sync(cx.views.settings, cx.views.account, cx.views.playback.stats);
+                self.sync(&cx.views);
+                // the overview and the server page open on a fresh answer about the server in use
+                if matches!(self.mode, Mode::Root(_) | Mode::Server(_)) {
+                    fx.push(Fx::App(AppFx::Server(ServerCmd::Check)));
+                }
                 // a picker opens on the rung in force, not on its first row
                 if let Mode::Picker(p, _) = &self.mode {
                     let key = Rung(cx.views.settings.get(*p)).key();
@@ -848,18 +1107,24 @@ impl Machine<Bundle> for SettingsScreen {
                 }
                 Handled::Yes
             }
-            ScreenEvent::StoreChanged(ord, _) if *ord == StoreId::Settings.ord() || *ord == StoreId::Account.ord() => {
-                self.sync(cx.views.settings, cx.views.account, cx.views.playback.stats);
+            ScreenEvent::StoreChanged(ord, _)
+                if *ord == StoreId::Settings.ord() || *ord == StoreId::Account.ord() || *ord == StoreId::Server.ord() =>
+            {
+                self.sync(&cx.views);
                 fx.invalidate(Provenance::Landing(fx.from()));
                 Handled::Yes
             }
             ScreenEvent::Tick(t) => {
-                self.sync(cx.views.settings, cx.views.account, cx.views.playback.stats);
+                self.sync(&cx.views);
                 self.tick(t.dt());
                 Handled::Yes
             }
             ScreenEvent::FocusMoved { to, .. } => {
                 self.note_focus(to.elem);
+                // the keyboard belongs to the address row
+                if to.elem != ServerRow::Type.key().0 {
+                    self.typing(false, fx);
+                }
                 fx.invalidate(Provenance::Input);
                 Handled::Yes
             }
@@ -883,6 +1148,30 @@ impl Machine<Bundle> for SettingsScreen {
                         self.activate(k.elem, cx, fx);
                     }
                 }
+                Handled::Yes
+            }
+            ScreenEvent::Input(InputEvent { kind: InputKind::SystemKeyboard(false), .. }) if self.is_typing() => {
+                // the television put its panel away
+                if let Mode::Server(p) = &mut self.mode {
+                    p.typing = None;
+                    p.edits += 1;
+                }
+                fx.invalidate(Provenance::Input);
+                Handled::Yes
+            }
+            ScreenEvent::Input(InputEvent { kind: InputKind::Text(edit), .. }) if self.is_typing() => {
+                self.edit(edit);
+                fx.invalidate(Provenance::Input);
+                Handled::Yes
+            }
+            ScreenEvent::Input(InputEvent { kind: InputKind::Key { key, sym, edge, .. }, .. }) if *edge != Edge::Up && self.is_typing() => {
+                match self.typing_key(*key, *sym, fx) {
+                    Some(()) => Handled::Yes,
+                    None => Handled::No,
+                }
+            }
+            ScreenEvent::WillLeave(_) | ScreenEvent::Unmount | ScreenEvent::Cover | ScreenEvent::Suspend if self.is_typing() => {
+                self.typing(false, fx);
                 Handled::Yes
             }
             ScreenEvent::Input(InputEvent { kind: InputKind::Key { key: Key::Back, edge: Edge::Down, .. }, .. }) if self.is_root() => {
@@ -1043,7 +1332,7 @@ mod tests {
                             .seeded(Pref::AssStyling, (size + position) % Pref::AssStyling.rungs())
                             .seeded(Pref::AutoPlay, (size + position) % Pref::AutoPlay.rungs())
                             .seeded(Pref::DebridOnly, (size + position) % Pref::DebridOnly.rungs())
-                            .seeded(Pref::UpNextAt, (size + position) % Pref::UpNextAt.rungs()), &account, stats), None);
+                            .seeded(Pref::UpNextAt, (size + position) % Pref::UpNextAt.rungs()), &account, stats, &ServerStore::new()), None);
                         let tag = format!("{tag} root {who} size={size} position={position} skip={skip} stats={stats}");
                         fit(&tag, &f.table, RouteLayout::below_top_bar(), &mut out);
                     }
@@ -1084,7 +1373,7 @@ mod tests {
         for language in SHIPPED {
             let _g = language_on_this_thread_for_test(language);
             let mut f: FormTable<RootRow, RootRow, SettingsPage> = grouped_table();
-            f.set(root_form(&SettingsStore::default(), &signed_in("a@example.com"), false), None);
+            f.set(root_form(&SettingsStore::default(), &signed_in("a@example.com"), false, &ServerStore::new()), None);
             assert!(f.table.grouped, "each region is a card");
             let headers: Vec<String> = f.table.sections.iter().map(|s| s.header.clone()).collect();
             assert_eq!(
@@ -1128,7 +1417,7 @@ mod tests {
                         SubtitleOpacity,
                         AssStyling,
                     ],
-                    vec![StreamOrder, DebridOnly, StreamLanguages],
+                    vec![StreamingServer, StreamOrder, DebridOnly, StreamLanguages],
                     vec![TvGuide],
                     vec![Theme, Language, Stats, RemoteKeys],
                     vec![About, Legal, Privacy],
@@ -1221,7 +1510,7 @@ mod tests {
     #[test]
     fn every_root_row_opens_its_own_page() {
         let mut f = FormTable::<RootRow, RootRow, SettingsPage>::new(KEY_BAND);
-        f.set(root_form(&SettingsStore::default(), &AccountStore::signed_out(true), false), None);
+        f.set(root_form(&SettingsStore::default(), &AccountStore::signed_out(true), false, &ServerStore::new()), None);
         let pushed: Vec<SettingsPage> = (0..f.table.n_rows() as usize)
             .filter_map(|i| match f.activate(i) {
                 Some(Activation::Push(p)) => Some(p),
@@ -1248,6 +1537,7 @@ mod tests {
                 SettingsPage::Picker(Pref::SubtitleOutline),
                 SettingsPage::Picker(Pref::SubtitleOpacity),
                 SettingsPage::Picker(Pref::AssStyling),
+                SettingsPage::StreamingServer,
                 SettingsPage::Picker(Pref::StreamOrder),
                 SettingsPage::Picker(Pref::DebridOnly),
                 SettingsPage::Languages(LangList::Streams),
@@ -1271,7 +1561,7 @@ mod tests {
         assert_eq!(SettingsStore::default().get(Pref::DebridOnly), 0);
         let row_labels = |s: &SettingsStore| -> Vec<(String, Option<String>)> {
             let mut f = FormTable::<RootRow, RootRow, SettingsPage>::new(KEY_BAND);
-            f.set(root_form(s, &AccountStore::signed_out(true), false), None);
+            f.set(root_form(s, &AccountStore::signed_out(true), false, &ServerStore::new()), None);
             f.table.sections[3].rows.iter().map(|r| (r.label.clone(), r.value.clone())).collect()
         };
         let off = row_labels(&SettingsStore::default());
@@ -1282,7 +1572,7 @@ mod tests {
         assert_eq!(row_labels(&on)[at + 1].1.as_deref(), Some(msg::app_settings_switch_on()), "the row reads On");
         // OK on the row opens its picker; OK on a rung sets the switch and goes back
         let mut f = FormTable::<RootRow, RootRow, SettingsPage>::new(KEY_BAND);
-        f.set(root_form(&SettingsStore::default(), &AccountStore::signed_out(true), false), None);
+        f.set(root_form(&SettingsStore::default(), &AccountStore::signed_out(true), false, &ServerStore::new()), None);
         let i = f.index_of_key(sn_ui::form::FormId::key(&RootRow::DebridOnly)).expect("the row");
         assert!(matches!(f.activate(i), Some(Activation::Push(SettingsPage::Picker(Pref::DebridOnly)))));
         let picker = |current: u8| {
@@ -1302,7 +1592,7 @@ mod tests {
     fn the_account_section_signs_in_or_out() {
         let actions = |account: &AccountStore| -> Vec<RootRow> {
             let mut f = FormTable::<RootRow, RootRow, SettingsPage>::new(KEY_BAND);
-            f.set(root_form(&SettingsStore::default(), account, false), None);
+            f.set(root_form(&SettingsStore::default(), account, false, &ServerStore::new()), None);
             (0..f.table.n_rows() as usize)
                 .filter_map(|i| match f.activate(i) {
                     Some(Activation::Action(a)) => Some(a),
@@ -1315,8 +1605,154 @@ mod tests {
         assert!(actions(&signed_in("a@b.c")).starts_with(&[RootRow::Account, RootRow::Addons]), "no Sign out: the account menu owns it");
         assert!(actions(&AccountStore::new()).starts_with(&[RootRow::Addons]), "only Addons while the session is read");
         let mut f = FormTable::<RootRow, RootRow, SettingsPage>::new(KEY_BAND);
-        f.set(root_form(&SettingsStore::default(), &signed_in("a@b.c"), false), None);
+        f.set(root_form(&SettingsStore::default(), &signed_in("a@b.c"), false, &ServerStore::new()), None);
         let rows: Vec<&sn_ui::table::Row> = f.table.sections.iter().flat_map(|s| s.rows.iter()).collect();
         assert!(rows.iter().any(|r| r.value.as_deref() == Some("a@b.c")), "the account is shown");
+    }
+    const SERVER_A: &str = "http://192.168.1.40:11470/";
+    const SERVER_LONG: &str = "https://a-very-long-streaming-server-name.example.com:8443/some/path/";
+
+    /// The server store in each state the pages show: nothing known, checking, alive (with and
+    /// without a version), unreachable, a scan out, a scan with servers, a scan with none.
+    fn server_states(base: &str) -> Vec<(&'static str, ServerStore)> {
+        use crate::stores::server::{Found, ServerJob, ServerLanding};
+        use sn_stremio::streaming_server::ServerInfo;
+        let checked = |info: Option<ServerInfo>| {
+            let mut s = ServerStore::new();
+            if let Some(ServerJob::Check { base, seq }) = s.check(Some(base)) {
+                s.land(ServerLanding::Checked { base, seq, info });
+            }
+            s
+        };
+        let scanned = |found: Vec<Found>| {
+            let mut s = ServerStore::new();
+            if let Some(ServerJob::Scan { seq }) = s.scan() {
+                s.land(ServerLanding::Scanned { seq, found });
+            }
+            s
+        };
+        let mut checking = ServerStore::new();
+        let _ = checking.check(Some(base));
+        let mut searching = ServerStore::new();
+        let _ = searching.scan();
+        vec![
+            ("unknown", ServerStore::new()),
+            ("checking", checking),
+            ("alive", checked(Some(ServerInfo { version: Some("4.20.8-beta.12".into()) }))),
+            ("alive-no-version", checked(Some(ServerInfo { version: None }))),
+            ("unreachable", checked(None)),
+            ("searching", searching),
+            ("found", scanned(vec![
+                Found { base: SERVER_A.into(), version: Some("4.20.8".into()) },
+                Found { base: SERVER_LONG.into(), version: None },
+            ])),
+            ("none-found", scanned(vec![])),
+        ]
+    }
+
+    /// The root's Streaming server row and the streaming server page fit their columns in every
+    /// shipped language, Off or on, in every state the server store can be in.
+    #[test]
+    fn the_streaming_server_row_and_page_fit_in_every_shipped_language() {
+        let mut out = Vec::new();
+        for language in SHIPPED {
+            let _g = language_on_this_thread_for_test(language);
+            let tag = language.tag();
+            for set in [None, Some(SERVER_A), Some(SERVER_LONG)] {
+                let settings = SettingsStore::default().with_streaming_server(set);
+                for (state, server) in server_states(set.unwrap_or(SERVER_A)) {
+                    let mut f = FormTable::<RootRow, RootRow, SettingsPage>::new(KEY_BAND);
+                    f.set(root_form(&settings, &signed_in("a@b.c"), false, &server), None);
+                    fit(&format!("{tag} root server {set:?} {state}"), &f.table, RouteLayout::below_top_bar(), &mut out);
+                    let mut f = FormTable::<ServerRow, ServerRow, Infallible>::new(KEY_BAND);
+                    f.set(server_form(&settings, &server, None), None);
+                    fit(&format!("{tag} server page {set:?} {state}"), &f.table, RouteLayout::screen(), &mut out);
+                }
+            }
+            let mut typing = TextBuffer::new("http://192.168.1.40:11470".into(), 5);
+            typing.insert("x");
+            let mut f = FormTable::<ServerRow, ServerRow, Infallible>::new(KEY_BAND);
+            f.set(server_form(&SettingsStore::default(), &ServerStore::new(), Some(&typing)), None);
+            fit(&format!("{tag} server page typing"), &f.table, RouteLayout::screen(), &mut out);
+        }
+        sn_ui::table::assert_no_fit_failures(&out);
+    }
+
+    fn server_rows(settings: &SettingsStore, server: &ServerStore) -> (Vec<ServerRow>, Vec<(String, bool, Option<String>)>) {
+        let mut f = FormTable::<ServerRow, ServerRow, Infallible>::new(KEY_BAND);
+        f.set(server_form(settings, server, None), None);
+        let keys: Vec<ServerRow> = (0..f.table.n_rows() as usize)
+            .filter_map(|i| match f.activate(i) {
+                Some(Activation::Action(a)) => Some(a),
+                _ => None,
+            })
+            .collect();
+        let rows = f.table.sections.iter().flat_map(|s| s.rows.iter()).map(|r| (r.label.clone(), r.checked, r.value.clone())).collect();
+        (keys, rows)
+    }
+
+    #[test]
+    fn the_root_row_reads_off_or_the_address() {
+        let _g = language_on_this_thread_for_test(sn_platform::i18n::Preference::En);
+        let value = |settings: &SettingsStore, server: &ServerStore| {
+            let mut f = FormTable::<RootRow, RootRow, SettingsPage>::new(KEY_BAND);
+            f.set(root_form(settings, &signed_in("a@b.c"), false, server), None);
+            let id = sn_ui::form::FormId::key(&RootRow::StreamingServer).0;
+            let rows: Vec<(u32, &sn_ui::table::Row)> = {
+                let mut i = 0;
+                f.table.sections.iter().flat_map(|s| s.rows.iter()).filter_map(|r| { let k = f.key_at(i).map(|k| k.0); i += 1; k.map(|k| (k, r)) }).collect()
+            };
+            let r = rows.into_iter().find(|(k, _)| *k == id).expect("the row is on the root").1;
+            (r.value.clone(), r.detail.clone())
+        };
+        assert_eq!(value(&SettingsStore::default(), &ServerStore::new()), (Some(msg::app_settings_switch_off().to_string()), String::new()));
+        let on = SettingsStore::default().with_streaming_server(Some(SERVER_A));
+        let (v, d) = value(&on, &ServerStore::new());
+        assert_eq!(v.as_deref(), Some("192.168.1.40:11470"), "the address, without scheme or slash");
+        assert_eq!(d, "", "no check yet, no status");
+        let states = server_states(SERVER_A);
+        let alive = &states.iter().find(|(n, _)| *n == "alive").unwrap().1;
+        assert_eq!(value(&on, alive).1, msg::app_settings_server_connected(), "the root says connected; the page names the version");
+        let bad = &states.iter().find(|(n, _)| *n == "unreachable").unwrap().1;
+        assert_eq!(value(&on, bad).1, msg::app_settings_server_unreachable());
+    }
+
+    #[test]
+    fn the_server_page_lists_off_the_server_in_use_find_found_servers_and_type() {
+        use crate::stores::server::Found;
+        let _ = Found { base: String::new(), version: None };
+        let states = server_states(SERVER_A);
+        let get = |n: &str| &states.iter().find(|(name, _)| *name == n).unwrap().1;
+        // off: Off checked, Find, Type
+        let (keys, rows) = server_rows(&SettingsStore::default(), get("unknown"));
+        assert_eq!(keys, [ServerRow::Off, ServerRow::Find, ServerRow::Type]);
+        assert!(rows[0].1, "Off is the choice made");
+        // a server in use that the scan did not list gets its own row, checked, with its status
+        let on = SettingsStore::default().with_streaming_server(Some("http://10.0.0.5:11470/"));
+        let (keys, rows) = server_rows(&on, get("unreachable"));
+        assert_eq!(keys, [ServerRow::Off, ServerRow::Current, ServerRow::Find, ServerRow::Type]);
+        assert!(!rows[0].1 && rows[1].1, "the current server is the choice made");
+        // found servers follow Find; the one in use is checked there and not repeated
+        let on = SettingsStore::default().with_streaming_server(Some(SERVER_A));
+        let (keys, rows) = server_rows(&on, get("found"));
+        assert_eq!(keys, [ServerRow::Off, ServerRow::Find, ServerRow::Found(0), ServerRow::Found(1), ServerRow::Type]);
+        assert_eq!(rows.iter().filter(|r| r.1).count(), 1);
+        assert!(rows[2].1, "the found server in use is checked");
+        // a finished scan with nothing found says so
+        let mut f = FormTable::<ServerRow, ServerRow, Infallible>::new(KEY_BAND);
+        f.set(server_form(&SettingsStore::default(), get("none-found"), None), None);
+        assert!(f.table.sections.iter().any(|s| s.rows.iter().any(|r| r.sep && r.label == msg::app_settings_server_none_found())), "a note says nothing was found");
+        // while a scan runs, Find reads Searching
+        let (_, rows) = server_rows(&SettingsStore::default(), get("searching"));
+        assert_eq!(rows[1].2.as_deref(), Some(msg::app_settings_server_searching()));
+    }
+
+    #[test]
+    fn typing_shows_the_text_with_a_caret_on_the_type_row() {
+        let mut f = FormTable::<ServerRow, ServerRow, Infallible>::new(KEY_BAND);
+        let buffer = TextBuffer::new("nas.local".into(), 3);
+        f.set(server_form(&SettingsStore::default(), &ServerStore::new(), Some(&buffer)), None);
+        let value = f.table.sections.iter().flat_map(|s| s.rows.iter()).find_map(|r| r.value.clone().filter(|v| v.contains('|')));
+        assert_eq!(value.as_deref(), Some("nas|.local"));
     }
 }

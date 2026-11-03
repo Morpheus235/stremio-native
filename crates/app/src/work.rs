@@ -22,6 +22,7 @@ use sn_screens::stores::library::{LibraryJob, LibraryLanding};
 use sn_stremio::account::ApiError;
 use sn_screens::stores::grid::{GridJob, GridLanding};
 use sn_screens::stores::search::{SearchJob, SearchLanding};
+use sn_screens::stores::server::{ServerJob, ServerLanding};
 use sn_stremio::streams::GroupState;
 use sn_stremio::types::CatalogPage;
 use sn_stremio::{get_json, Fetch, FetchError};
@@ -47,6 +48,8 @@ pub enum Done {
     Subtitles { gen: u32, addon: String, result: Result<Vec<sn_stremio::types::Subtitle>, FetchError> },
     /// The TV guide (`crate::guide`).
     Epg(sn_screens::stores::epg::EpgLanding),
+    /// The streaming server's check or scan (`crate::server`).
+    Server(ServerLanding),
 }
 
 /// The mailbox: workers post, the frame thread drains.
@@ -238,6 +241,31 @@ impl Work {
         );
     }
 
+    /// Run the streaming server store's jobs (`crate::server`): a check of one server, or a scan
+    /// of the home network. A job the OS has no worker for, or one that panics, lands as nothing
+    /// found / not answering, so the page never reads Searching or Checking forever.
+    pub fn server(&self, runner: &dyn Runner, job: ServerJob) {
+        let fail = failed_server_landing(&job);
+        let on_panic = failed_server_landing(&job);
+        runner.run(
+            "streaming-server",
+            Box::new(move |off| {
+                Done::Server(guarded_server_job(on_panic, || match job {
+                    ServerJob::Check { base, seq } => {
+                        let info = crate::server::run_check(&NetFetch::new(off, check_profile(&base)), &base);
+                        ServerLanding::Checked { base, seq, info }
+                    }
+                    ServerJob::Scan { seq } => {
+                        let own = sn_net::ifaddrs::local_ipv4();
+                        ServerLanding::Scanned { seq, found: crate::server::run_scan(off, &own) }
+                    }
+                }))
+            }),
+            self.tx.clone(),
+            Done::Server(fail),
+        );
+    }
+
     /// Look up one playback's skip markers.
     pub fn skips(&self, runner: &dyn Runner, job: crate::app::playback::SkipLookup) {
         let (gen, source) = (job.gen, job.lookup.source());
@@ -273,6 +301,36 @@ impl Work {
     pub fn drain(&self) -> Vec<Done> {
         self.rx.try_iter().collect()
     }
+}
+
+/// What a server job that did not finish lands as: no answer from the server asked, no server
+/// found.
+fn failed_server_landing(job: &ServerJob) -> ServerLanding {
+    match job {
+        ServerJob::Check { base, seq } => ServerLanding::Checked { base: base.clone(), seq: *seq, info: None },
+        ServerJob::Scan { seq } => ServerLanding::Scanned { seq: *seq, found: Vec::new() },
+    }
+}
+
+/// The transport a check of `base` runs over: the short LAN deadlines for a home-network
+/// literal, the normal API deadlines (still no redirect, a small body) for anything else, since a
+/// typed name or remote address may take longer than 1.5 s to answer.
+fn check_profile(base: &str) -> Profile {
+    if sn_stremio::streaming_server::is_lan_base(base) {
+        Profile::Lan
+    } else {
+        Profile::Remote
+    }
+}
+
+/// `run`'s landing, or `failed` when it panics: the job's thread ends either way, and without a
+/// landing the store would wait on the answer for good. The panic is logged (never its text, which
+/// could carry an address).
+fn guarded_server_job(failed: ServerLanding, run: impl FnOnce() -> ServerLanding) -> ServerLanding {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)).unwrap_or_else(|_| {
+        sn_base::eventlog::log("streaming server: the job panicked, landing it as no answer");
+        failed
+    })
 }
 
 fn refused() -> FetchError {
@@ -428,6 +486,42 @@ mod tests {
         fn run(&self, _what: &'static str, _job: Box<dyn FnOnce(&OffFrame) -> Done + Send>, tx: Sender<Done>, fail: Done) {
             let _ = tx.send(fail);
         }
+    }
+
+    #[test]
+    fn a_check_of_a_lan_literal_is_fast_and_any_other_address_gets_the_api_deadlines() {
+        for lan in ["http://192.168.1.20:11470/", "http://[fd00::5]:11470/", "http://127.0.0.1:11470/"] {
+            assert_eq!(check_profile(lan), Profile::Lan, "{lan}");
+        }
+        for far in ["http://nas.local:11470/", "https://192.168.1.20/", "http://8.8.8.8:11470/", "https://stremio.example/"] {
+            assert_eq!(check_profile(far), Profile::Remote, "{far}");
+        }
+    }
+
+    /// A panicking scan or check lands as an empty result / a failed check, so the store leaves
+    /// Searching / Checking.
+    #[test]
+    fn a_panicking_server_job_lands_as_a_failure_not_as_nothing() {
+        use sn_screens::stores::server::{Scan, ServerStatus, ServerStore};
+        const BASE: &str = "http://192.168.1.20:11470/";
+        let mut store = ServerStore::new();
+
+        let job = store.scan().unwrap();
+        assert_eq!(store.scan_state(), &Scan::Searching);
+        let landing = guarded_server_job(failed_server_landing(&job), || panic!("scan blew up"));
+        assert!(store.land(landing));
+        assert_eq!(store.scan_state(), &Scan::Done(vec![]), "an empty result, not Searching forever");
+
+        let job = store.check(Some(BASE)).unwrap();
+        assert_eq!(store.status(), &ServerStatus::Checking);
+        let landing = guarded_server_job(failed_server_landing(&job), || panic!("check blew up"));
+        assert!(store.land(landing));
+        assert_eq!(store.status(), &ServerStatus::Unreachable);
+
+        // a job that does not panic keeps its own landing
+        let job = store.scan().unwrap();
+        let own = ServerLanding::Scanned { seq: 99, found: vec![] };
+        assert_eq!(guarded_server_job(failed_server_landing(&job), || own.clone()), own);
     }
 
     #[test]
