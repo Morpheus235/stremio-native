@@ -3,7 +3,7 @@
 //! 0.3 s after YouTube's first launch, and a worker thread dies with it.
 //!
 //! The helper is [`SCRIPT`] (`trailer_helper.sh`, POSIX sh for the television's busybox ash), run as
-//! `/bin/sh -c <script> trailer-helper <video id> <log path>`. The id and the log path are
+//! `/bin/sh -c <script> trailer-helper <video id> <lock path>`. The id and the lock path are
 //! positional arguments, never part of the script's text; the script checks the id's charset
 //! again, because it builds the launch payload from it.
 //!
@@ -18,9 +18,9 @@
 //! closed by the shell, because `Command` closes only those opened with CLOEXEC (the display,
 //! LS2 and GL descriptors of the app may not be) and the helper must not keep any of them alive.
 //!
-//! # One at a time, the clock and the log
+//! # One at a time, and the clock
 //!
-//! The helper holds a lock directory (`<log>.lock`, holding `<pid> <seconds>`) while it runs and
+//! The helper holds a lock directory ([`LOCK`], holding `<pid> <seconds>`) while it runs and
 //! removes it on exit, but only while the pid in it is still its own. The NEWEST helper wins: a
 //! live, fresh holder that really is a trailer helper is sent TERM and given 5 s to go before the
 //! lock is taken over (5 s because a TERM that lands during a `luna-send` call waits for it, up to
@@ -30,11 +30,8 @@
 //! Times are whole seconds of `/proc/uptime` (monotonic), or of `date +%s` where that file is
 //! unreadable.
 //!
-//! The runtime directory is world-writable and the helper runs as root, so a symlink at the log's
-//! or the lock's path is removed before anything is written there. The log is
-//! `trailer-helper.log` in the app's runtime directory
-//! ([`sn_base::paths::runtime_file::TRAILER_HELPER`]), truncated at each start: short timestamped
-//! lines, the YouTube id and nothing else of the viewer's.
+//! The runtime directory is world-writable and the helper runs as root, so it writes no log, and a
+//! symlink at the lock's path is removed before the lock is made.
 
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -42,7 +39,10 @@ use std::process::{Command, Stdio};
 /// The helper, embedded.
 pub const SCRIPT: &str = include_str!("trailer_helper.sh");
 
-/// The launcher shell, run as `/bin/sh -c <this> trailer-launcher <script> <id> <log path>`.
+/// The helper's lock directory, in the app's runtime directory.
+pub const LOCK: &str = "trailer-helper.lock";
+
+/// The launcher shell, run as `/bin/sh -c <this> trailer-launcher <script> <id> <lock path>`.
 ///
 /// In order: the tool search path (the script's rule; `SN_TRAILER_TEST_PATH` is for the host tests
 /// only), ignore HUP, exit 3 when the television has no `setsid` (so no helper starts), close the
@@ -77,15 +77,15 @@ setsid /bin/sh -c "$1" trailer-helper "$2" "$3" < /dev/null > /dev/null 2>&1 &
 exit 0
 "#;
 
-/// Start the helper for video `id`, detached, logging to `log`. Returns once the launcher has
+/// Start the helper for video `id`, detached, holding its lock at `lock`. Returns once the launcher has
 /// exited (a few milliseconds); `Err` says why no helper was started. A malformed id starts nothing.
-pub fn spawn(id: &str, log: &Path) -> Result<(), String> {
-    spawn_with(id, log, &[])
+pub fn spawn(id: &str, lock: &Path) -> Result<(), String> {
+    spawn_with(id, lock, &[])
 }
 
 /// [`spawn`] with `env` added to the launcher's environment (and so the helper's): the host tests
 /// pass the tool search path and the timing overrides here instead of changing the test process's.
-fn spawn_with(id: &str, log: &Path, env: &[(&str, &str)]) -> Result<(), String> {
+fn spawn_with(id: &str, lock: &Path, env: &[(&str, &str)]) -> Result<(), String> {
     if !super::youtube::well_formed(id) {
         return Err("not a YouTube id".to_string());
     }
@@ -95,7 +95,7 @@ fn spawn_with(id: &str, log: &Path, env: &[(&str, &str)]) -> Result<(), String> 
         .arg("trailer-launcher")
         .arg(SCRIPT)
         .arg(id)
-        .arg(log)
+        .arg(lock)
         .envs(env.iter().copied())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -191,12 +191,8 @@ mod tests {
             fs::write(self.dir.join("realsleep"), "").unwrap();
         }
 
-        fn log_path(&self) -> PathBuf {
-            self.dir.join("trailer-helper.log")
-        }
-
         fn lock_path(&self) -> PathBuf {
-            self.dir.join("trailer-helper.log.lock")
+            self.dir.join(LOCK)
         }
 
         /// A lock directory whose pid file holds `content`.
@@ -222,7 +218,7 @@ mod tests {
         /// Run the helper on the host's `sh`, as the launcher would, with `env` on top.
         fn run(&self, id: &str, env: &[(&str, &str)]) -> std::process::ExitStatus {
             let mut cmd = Command::new("sh");
-            cmd.arg("-c").arg(SCRIPT).arg("trailer-helper").arg(id).arg(self.log_path()).envs(self.env());
+            cmd.arg("-c").arg(SCRIPT).arg("trailer-helper").arg(id).arg(self.lock_path()).envs(self.env());
             for (k, v) in env {
                 cmd.env(k, v);
             }
@@ -246,10 +242,6 @@ mod tests {
 
         fn foreground_calls(&self) -> Vec<u64> {
             self.calls().into_iter().filter(|(_, a)| a.contains("getForegroundAppInfo")).map(|(t, _)| t).collect()
-        }
-
-        fn log(&self) -> String {
-            fs::read_to_string(self.log_path()).unwrap_or_default()
         }
 
         fn file(&self, name: &str) -> String {
@@ -318,11 +310,6 @@ mod tests {
         // in front at 2 s; the later of 2 + 5 and 0 + 10 is 10
         assert_eq!(launches[0].0, 10);
         assert_eq!(rig.foreground_calls(), [0, 1, 2, 10], "polls at 0, 1 and 2, then one check before the launch");
-        let log = rig.log();
-        assert!(log.contains(&format!("start id={ID}")), "{log}");
-        assert!(log.contains("YouTube in front after 2s"), "{log}");
-        assert!(log.contains("sending the second launch"), "{log}");
-        assert!(log.contains(&format!("second launch reply: {OK}")), "{log}");
         assert!(!rig.lock_path().exists(), "the lock is removed on exit");
         let shells = rig.file("shells");
         assert!(shells.lines().count() >= 5 && shells.lines().all(|l| l == "/bin/sh"), "script ran with SHELL: {shells:?}");
@@ -338,13 +325,12 @@ mod tests {
     }
 
     #[test]
-    fn youtube_never_in_front_means_no_launch_and_a_log_line() {
+    fn youtube_never_in_front_means_no_launch() {
         let rig = Rig::new();
         rig.foreground(&[HOME]);
         assert!(rig.run(ID, &[]).success());
         assert!(rig.launches().is_empty());
         assert_eq!(rig.foreground_calls(), (0..=15).collect::<Vec<u64>>(), "one poll a second for 15 s");
-        assert!(rig.log().contains("never came to the front within 15s"), "{}", rig.log());
         assert!(!rig.lock_path().exists());
     }
 
@@ -354,7 +340,6 @@ mod tests {
         rig.foreground(&[HOME, FRONT, HOME]);
         assert!(rig.run(ID, &[]).success());
         assert!(rig.launches().is_empty(), "{:?}", rig.calls());
-        assert!(rig.log().contains("left YouTube before the second launch"), "{}", rig.log());
         assert!(!rig.lock_path().exists());
     }
 
@@ -422,9 +407,8 @@ mod tests {
         rig.lock_with(&format!("{} 0\n", holder.pid));
         assert!(rig.run(ID, &[]).success());
         assert!(!holder.alive(), "the old helper was terminated");
-        assert_eq!(rig.launches().len(), 1, "{:?}\n{}", rig.calls(), rig.log());
+        assert_eq!(rig.launches().len(), 1, "{:?}", rig.calls());
         assert_eq!(payload_of(&rig.launches()[0].1), expected_payload());
-        assert!(rig.log().contains(&format!("replaced the running trailer helper ({})", holder.pid)), "{}", rig.log());
         assert!(!rig.lock_path().exists(), "the new helper's own lock is removed at the end");
     }
 
@@ -446,7 +430,7 @@ mod tests {
             .arg("outer")
             .arg(SCRIPT)
             .arg(ID)
-            .arg(rig.log_path())
+            .arg(rig.lock_path())
             .envs(rig.env())
             .env("SN_TRAILER_SETTLE", &secs)
             .env("SN_TRAILER_REPLAY", &secs)
@@ -458,15 +442,14 @@ mod tests {
         while !rig.file("sleeps").lines().any(|l| l == secs) && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
-        assert!(rig.file("sleeps").lines().any(|l| l == secs), "the old helper is in its final wait: {}", rig.log());
+        assert!(rig.file("sleeps").lines().any(|l| l == secs), "the old helper is in its final wait");
         assert!(old.alive());
         let sleep = Holder { pid: rig.file("sleep.pid").trim().parse().expect("the sleep's pid") };
         assert!(sleep.alive(), "the old helper's final wait is a real sleep");
         // the NEWEST helper: no waits of its own
         assert!(rig.run(ID, &[("SN_TRAILER_SETTLE", "0"), ("SN_TRAILER_REPLAY", "0")]).success());
         assert!(!old.alive(), "the old helper went within the newcomer's 5 s");
-        assert_eq!(rig.launches().len(), 1, "only the newest helper launches: {:?}\n{}", rig.calls(), rig.log());
-        assert!(rig.log().contains("replaced the running trailer helper"), "{}", rig.log());
+        assert_eq!(rig.launches().len(), 1, "only the newest helper launches: {:?}", rig.calls());
         // and the sleep it was in (the shim records its pid) went with it
         assert!(!sleep.alive(), "a sleep was left behind");
     }
@@ -482,8 +465,6 @@ mod tests {
         assert!(holder.alive());
         assert!(rig.calls().is_empty(), "{:?}", rig.calls());
         assert!(rig.lock_path().join("pid").exists());
-        let log = rig.log();
-        assert!(log.contains("replacing") && log.contains("another trailer helper is running"), "{log}");
         assert_eq!(rig.file("sleeps").lines().count(), 5, "it waited 5 s, in five 1 s sleeps");
     }
 
@@ -520,7 +501,6 @@ mod tests {
             assert!(rig.run(ID, &[]).success());
             assert!(holder.alive(), "{content:?}: a lock without a fresh stamp is stale, its holder is left alone");
             assert_eq!(rig.launches().len(), 1, "{content:?}: {:?}", rig.calls());
-            assert!(!rig.log().contains("replacing"), "{content:?}");
         }
     }
 
@@ -532,38 +512,7 @@ mod tests {
         let rig = Rig::new();
         rig.lock_with(&format!("{} 0\n", std::process::id()));
         assert!(rig.run(ID, &[]).success());
-        assert_eq!(rig.launches().len(), 1, "{:?}\n{}", rig.calls(), rig.log());
-        assert!(!rig.log().contains("replacing"));
-    }
-
-    #[test]
-    fn the_log_is_truncated_at_each_start() {
-        let rig = Rig::new();
-        fs::write(rig.log_path(), "old line from the last run\n").unwrap();
-        assert!(rig.run(ID, &[]).success());
-        assert!(!rig.log().contains("old line"), "{}", rig.log());
-    }
-
-    /// The log path is a symlink someone left in the shared runtime directory: it is removed, never
-    /// written through.
-    #[test]
-    fn a_symlinked_log_is_replaced_not_followed() {
-        use std::os::unix::fs::symlink;
-        let rig = Rig::new();
-        let victim = rig.dir.join("victim");
-        fs::write(&victim, "precious\n").unwrap();
-        symlink(&victim, rig.log_path()).unwrap();
-        assert!(rig.run(ID, &[]).success());
-        assert_eq!(fs::read_to_string(&victim).unwrap(), "precious\n", "the target is untouched");
-        assert!(!fs::symlink_metadata(rig.log_path()).unwrap().file_type().is_symlink(), "now a plain file");
-        assert!(rig.log().contains("start id="), "{}", rig.log());
-        // the same for the early refusal path, which appends without truncating
-        let rig = Rig::new();
-        let victim = rig.dir.join("victim");
-        fs::write(&victim, "precious\n").unwrap();
-        symlink(&victim, rig.log_path()).unwrap();
-        assert_eq!(rig.run("bad id!", &[]).code(), Some(2));
-        assert_eq!(fs::read_to_string(&victim).unwrap(), "precious\n");
+        assert_eq!(rig.launches().len(), 1, "{:?}", rig.calls());
     }
 
     /// The lock path is a symlink to a directory that looks like a live helper's lock: it is
@@ -590,7 +539,6 @@ mod tests {
             let rig = Rig::new();
             assert_eq!(rig.run(bad, &[]).code(), Some(2), "{bad:?}");
             assert!(rig.calls().is_empty(), "{bad:?}");
-            assert!(rig.log().contains("not a YouTube id"), "{bad:?}");
             assert!(!rig.lock_path().exists(), "{bad:?}");
         }
     }
@@ -599,16 +547,16 @@ mod tests {
     fn spawn_refuses_a_malformed_id_and_starts_nothing() {
         let rig = Rig::new();
         for bad in ["", "short", "x\",\"id\":\"evil", "abcdefghij01234567890"] {
-            assert_eq!(spawn(bad, &rig.log_path()), Err("not a YouTube id".to_string()), "{bad:?}");
+            assert_eq!(spawn(bad, &rig.lock_path()), Err("not a YouTube id".to_string()), "{bad:?}");
         }
-        assert!(!rig.log_path().exists());
+        assert!(!rig.lock_path().exists());
         assert!(!rig.dir.join("setsid").exists());
     }
 
     fn spawn_on(rig: &Rig) -> Result<(), String> {
         let env = rig.env();
         let pairs: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-        spawn_with(ID, &rig.log_path(), &pairs)
+        spawn_with(ID, &rig.lock_path(), &pairs)
     }
 
     /// The launcher: the helper runs detached (under `setsid`, which the rig fakes by running its
@@ -622,8 +570,8 @@ mod tests {
         while rig.launches().is_empty() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
-        assert_eq!(rig.launches().len(), 1, "the helper ran on its own: {:?}\n{}", rig.calls(), rig.log());
-        // setsid got the shell, -c, the script, the name, the id and the log path
+        assert_eq!(rig.launches().len(), 1, "the helper ran on its own: {:?}", rig.calls());
+        // setsid got the shell, -c, the script, the name, the id and the lock path
         assert_eq!(rig.file("setsid").trim(), "6");
         assert_eq!(payload_of(&rig.launches()[0].1), expected_payload());
     }
@@ -634,9 +582,9 @@ mod tests {
         let rig = Rig::new();
         let empty = rig.dir.join("empty");
         fs::create_dir(&empty).unwrap();
-        let error = spawn_with(ID, &rig.log_path(), &[("SN_TRAILER_TEST_PATH", empty.to_str().unwrap())]).expect_err("no setsid, no helper");
+        let error = spawn_with(ID, &rig.lock_path(), &[("SN_TRAILER_TEST_PATH", empty.to_str().unwrap())]).expect_err("no setsid, no helper");
         assert!(error.contains("launcher exited"), "{error}");
-        assert!(!rig.log_path().exists());
+        assert!(!rig.lock_path().exists());
     }
 
     /// Descriptors the app left open (without CLOEXEC) must not reach the helper. The wrapper opens
@@ -660,10 +608,10 @@ mod tests {
                 .status()
                 .unwrap()
         };
-        let launcher_args = |rig: &Rig| vec![LAUNCHER.to_string(), "trailer-launcher".into(), SCRIPT.into(), ID.into(), rig.log_path().display().to_string()];
+        let launcher_args = |rig: &Rig| vec![LAUNCHER.to_string(), "trailer-launcher".into(), SCRIPT.into(), ID.into(), rig.lock_path().display().to_string()];
         // control: the helper script straight under the wrapper keeps both fds
         let rig = Rig::new();
-        let args = vec![SCRIPT.to_string(), "trailer-helper".into(), ID.into(), rig.log_path().display().to_string()];
+        let args = vec![SCRIPT.to_string(), "trailer-helper".into(), ID.into(), rig.lock_path().display().to_string()];
         assert!(wrap(&rig, &args.iter().map(String::as_str).collect::<Vec<_>>()).success());
         let seen = rig.file("fds");
         assert!(seen.lines().any(|l| l == "9") && (!wide || seen.lines().any(|l| l == "12")), "the probe sees inherited fds: {seen:?}");
@@ -675,7 +623,7 @@ mod tests {
         while rig.launches().is_empty() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
-        assert_eq!(rig.launches().len(), 1, "the helper ran: {:?}\n{}", rig.calls(), rig.log());
+        assert_eq!(rig.launches().len(), 1, "the helper ran: {:?}", rig.calls());
         assert_eq!(rig.file("fds"), "", "the helper sees none of the inherited descriptors");
     }
 }

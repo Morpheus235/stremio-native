@@ -45,7 +45,7 @@
 //!    to it from the home launcher). The helper polls the foreground app every second for at most
 //!    15 s until it is YouTube, waits until the LATER of 5 s after that and 10 s after its own
 //!    start, asks the foreground once more and sends the same launch again only if YouTube is
-//!    still in front (the viewer may have left it meanwhile). Never in front: it logs and exits.
+//!    still in front (the viewer may have left it meanwhile). Never in front: it exits.
 //!
 //! Known gap, practically unreachable: trailer B pressed while YouTube is already running, inside
 //! an older helper A's window (about 25 s after A's start), starts no helper (a running YouTube
@@ -53,8 +53,7 @@
 //! over B's. A new helper replaces A only when YouTube is not running.
 //!
 //! The viewer is told (a toast) only when the first launch is refused or the bus fails: YouTube
-//! does not open then, so the app stays and the toast is seen. The helper's own words go to its log,
-//! `trailer-helper.log` in the runtime directory.
+//! does not open then, so the app stays and the toast is seen. The helper writes no log of its own.
 //!
 //! The decision logic (the payload, the reply parses, the step plan) is pure and runs against a
 //! [`Bus`] the tests fake; the device's bus is [`Ls2Bus`], used by [`open`] only on the TV.
@@ -210,7 +209,7 @@ impl Bus for Ls2Bus {
         })
     }
     fn spawn_helper(&mut self, id: &str) -> Result<(), String> {
-        super::trailer_helper::spawn(id, &sn_base::paths::in_runtime_dir(sn_base::paths::runtime_file::TRAILER_HELPER))
+        super::trailer_helper::spawn(id, &sn_base::paths::in_runtime_dir(super::trailer_helper::LOCK))
     }
     fn log(&mut self, line: &str) {
         sn_base::eventlog::log(line);

@@ -15,7 +15,7 @@ What leaves the TV, and where it goes:
 | Artwork requests | the hosts in the addon's image URLs | while you browse |
 | A request for `/settings` (no data of yours beyond the request itself) | every host of your home network (the /24 of each of the TV's private IPv4 addresses) | only when you press Find on my network in Settings > Streams > Streaming server |
 | A request for `/settings`, and a torrent stream's info hash and trackers | the streaming server you set in Settings > Streams | a check at app start, when you set the server and when you open its page; the stream while you play a torrent; only after you set a server |
-| A trailer's YouTube ID (StremioNative itself sends nothing to YouTube; the helper that finishes the launch on webOS 3 keeps a short `trailer-helper.log` on the TV, like the other logs) | the TV's own YouTube app, so YouTube and Google learn which trailer you opened | only when you press Trailer on a title's page |
+| A trailer's YouTube ID (StremioNative itself sends nothing to YouTube) | the TV's own YouTube app, so YouTube and Google learn which trailer you opened | only when you press Trailer on a title's page |
 | A request for your region's programme guide (no data of yours beyond the request itself) | `epgshare01.online` | at most once a day, only while Settings > TV guide names a region (Off by default) |
 | The ID of the episode or film you play (an IMDb, MyAnimeList or Kitsu ID) | `api.introdb.app`; for anime `api.aniskip.com`, `kitsu.io` to turn a Kitsu ID into a MyAnimeList one, and `arm.haglund.dev` to turn an IMDb ID and season into one when introdb.app has nothing | once per playback, to find its intro, recap and credits — never while Settings > Skip intros is Off |
 

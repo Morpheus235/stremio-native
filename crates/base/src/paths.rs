@@ -484,10 +484,8 @@ pub mod runtime_file {
     pub const GST: &str = "stremionative-gst.log";
     pub const GPU_TIME: &str = "stremionative-gputime.jsonl";
     pub const HARDWARE_COUNTERS: &str = "stremionative-hwcnt.jsonl";
-    /// The detached trailer helper's own log (the YouTube id and what the helper saw).
-    pub const TRAILER_HELPER: &str = "trailer-helper.log";
 
-    pub const LOGS: [&str; 10] = [
+    pub const LOGS: [&str; 9] = [
         EVENTS,
         EVENTS_PREV,
         CRASH,
@@ -497,7 +495,6 @@ pub mod runtime_file {
         GST,
         GPU_TIME,
         HARDWARE_COUNTERS,
-        TRAILER_HELPER,
     ];
 }
 

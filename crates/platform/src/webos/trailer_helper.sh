@@ -1,9 +1,9 @@
 # The detached helper that sends the SECOND launch of a trailer (see webos/trailer_helper.rs and
-# webos/youtube.rs). Run as `/bin/sh -c <this text> trailer-helper <video id> <log path>`: the id
-# and the log path are positional arguments, never part of this text. POSIX sh on busybox ash:
-# no bash-isms, integer sleeps only.
+# webos/youtube.rs). Run as `/bin/sh -c <this text> trailer-helper <video id> <lock path>`: the id
+# and the lock path are positional arguments, never part of this text. POSIX sh on busybox ash:
+# no bash-isms, integer sleeps only. It writes no log: it runs as root in a shared directory.
 #
-#   1. take the one-at-a-time lock (a dir beside the log holding "<pid> <seconds>"); the NEWEST
+#   1. take the one-at-a-time lock (a dir at the lock path holding "<pid> <seconds>"); the NEWEST
 #      helper wins: a live, fresh holder is sent TERM and given 5 s to go, then the lock is taken
 #   2. poll the foreground app every POLL s, for at most FRONT s, until it is YouTube; never: exit
 #   3. wait until the LATER of SETTLE s after YouTube was in front and REPLAY s after this start
@@ -24,12 +24,10 @@ export SHELL
 trap '' HUP
 
 ID=$1
-LOG=$2
-LOCK=$LOG.lock
+LOCK=$2
 YT=youtube.leanback.v4
 UPTIME=${SN_TRAILER_TEST_UPTIME:-/proc/uptime}
 OWN=0
-REPLACED=
 
 # A whole number from $1, else the default $2 (no sign, no leading zero: arithmetic stays safe).
 num() {
@@ -53,17 +51,6 @@ now() {
         '' | *[!0-9]* | 0?*) date +%s ;;
         *) echo "$up" ;;
     esac
-}
-
-# The runtime directory is world-writable and this runs as root: never write through a symlink
-# someone left at the log's path.
-plain_log() {
-    if [ -L "$LOG" ]; then rm -f "$LOG"; fi
-}
-
-log() {
-    plain_log
-    printf '%s %s\n' "$(date +%H:%M:%S)" "$*" 2> /dev/null >> "$LOG"
 }
 
 # Remove the lock only while it is still ours (the pid in it is this shell's): the helper that
@@ -97,12 +84,10 @@ trap stop INT TERM
 # The id was checked by the app; the charset below is what makes the payload safe to build from it.
 case $ID in
     '' | *[!A-Za-z0-9_-]*)
-        log "refused: not a YouTube id"
         exit 2
         ;;
 esac
 if [ "${#ID}" -lt 6 ] || [ "${#ID}" -gt 20 ]; then
-    log "refused: not a YouTube id"
     exit 2
 fi
 
@@ -127,6 +112,8 @@ is_helper() {
     return 1
 }
 
+# The runtime directory is world-writable and this runs as root: never use a symlink someone left
+# at the lock's path.
 take_lock() {
     if [ -L "$LOCK" ]; then rm -f "$LOCK"; fi
     if ! mkdir "$LOCK" 2> /dev/null; then
@@ -144,8 +131,6 @@ take_lock() {
                 if [ "$holder" != "$$" ] && kill -0 "$holder" 2> /dev/null && fresh "$stamp" && is_helper "$holder"; then
                     # the newest helper wins: the viewer pressed the button again. 5 s, because a
                     # TERM that lands during a luna call waits for the call (3 s, plus script).
-                    log "replacing the running trailer helper ($holder)"
-                    REPLACED=$holder
                     kill -TERM "$holder" 2> /dev/null
                     waited=0
                     while kill -0 "$holder" 2> /dev/null && [ "$waited" -lt 5 ]; do
@@ -166,15 +151,10 @@ take_lock() {
 }
 
 if ! take_lock; then
-    log "another trailer helper is running - exiting"
     exit 0
 fi
 
-plain_log
-printf "" 2> /dev/null > "$LOG"
 START=$(now)
-log "start id=$ID"
-if [ -n "$REPLACED" ]; then log "replaced the running trailer helper ($REPLACED)"; fi
 
 # One luna-send call: its reply on one line. luna-send prints the reply only on a tty, hence script.
 luna() {
@@ -199,11 +179,9 @@ while :; do
     nap "$POLL"
 done
 if [ "$found" != 1 ]; then
-    log "YouTube never came to the front within ${FRONT}s (last reply: $reply) - no second launch"
     exit 0
 fi
 SEEN=$(now)
-log "YouTube in front after $((SEEN - START))s"
 
 # the LATER of SETTLE s after it was in front and REPLAY s after the start
 DUE=$((SEEN + SETTLE))
@@ -216,11 +194,8 @@ reply=$(foreground)
 case $reply in
     *\"$YT\"*) ;;
     *)
-        log "left YouTube before the second launch (foreground: $reply) - not sending it"
         exit 0
         ;;
 esac
-log "sending the second launch"
-reply=$(luna luna://com.webos.applicationManager/launch "{\"id\":\"$YT\",\"params\":{\"handledBy\":\"app\",\"contentTarget\":\"v=$ID\"}}")
-log "second launch reply: $reply"
+luna luna://com.webos.applicationManager/launch "{\"id\":\"$YT\",\"params\":{\"handledBy\":\"app\",\"contentTarget\":\"v=$ID\"}}" > /dev/null
 exit 0
