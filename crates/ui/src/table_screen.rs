@@ -260,28 +260,37 @@ where
         let p = f.painter;
         self.frame = rect;
         self.paint(p, f.measure);
-        // every selectable row is a stop (rule 11: hover parks, a click activates)
-        for i in 0..self.table.n_rows() {
-            if self.table.next_selectable(i, 0) != Some(i) {
-                continue;
-            }
-            if let Some(r) = self.table.row_frame(rect, i) {
-                f.stop(
-                    p,
-                    Stop {
-                        key: FocusKey {
-                            entry: self.entry,
-                            elem: self.to_key(H::Elem::of_index(i as u32)),
-                        },
-                        rect: r,
-                        rest_rect: r,
-                        clip: rect,
-                        hover: Hover::Focus,
-                        activate: Activate::Direct,
-                    },
-                );
-            }
+        // A walk that does not feed the hit map places no stop, and does none of the work to place
+        // one (`DrawFrame::stop` would refuse each of them): the page closure runs up to four
+        // times a frame, and only the visible pass counts.
+        if !f.records_stops() {
+            return;
         }
+        // every selectable row ON THE PAGE is a stop (rule 11: hover parks, a click activates). A
+        // row past the rectangle the page draws into (`TableView::page_clip`) or scrolled wholly
+        // above the frame has no visible part, so no pointer can reach it; a long list (a stream
+        // list's hundreds) registers the few rows it shows, from one walk of the table.
+        let page = TableView::page_clip(rect);
+        let (top, bottom) = (page.y, page.y + page.h);
+        self.table.for_each_row_frame(rect, |i, r| {
+            if r.y + r.h <= top || r.y >= bottom {
+                return;
+            }
+            f.stop(
+                p,
+                Stop {
+                    key: FocusKey {
+                        entry: self.entry,
+                        elem: self.to_key(H::Elem::of_index(i as u32)),
+                    },
+                    rect: r,
+                    rest_rect: r,
+                    clip: rect,
+                    hover: Hover::Focus,
+                    activate: Activate::Direct,
+                },
+            );
+        });
     }
 }
 
@@ -1004,6 +1013,246 @@ mod tests {
             let placed = Focusable::<FixtureHost>::place(&band, &key.elem, &cx, At::SpringTarget).unwrap();
             assert!(same(placed.rest_rect, rects[i]));
         }
+    }
+
+    // ---- the page's stops: only what the page shows, one walk, the same stops as the full loop ----
+
+    /// A stream list's shape: `n` chip rows over five addon sections (the Detail page).
+    fn stream_list(n: usize) -> TableView {
+        use crate::table::Chip;
+        let mut t = TableView::new();
+        let mut secs = Vec::new();
+        for a in 0..5 {
+            let mut sec = Section::new(format!("Addon {a}"));
+            for i in 0..n / 5 {
+                let mut r = Row::new(format!("Some.Release.Name.{a}.{i}.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR10.HEVC-GROUP")).side("Addon", "4K");
+                for c in 0..4 {
+                    r = r.chip(Chip::new(format!("Chip {c}")).server());
+                }
+                sec = sec.row(r);
+            }
+            secs.push(sec);
+        }
+        t.set_sections(secs, 0, false);
+        t
+    }
+
+    /// Every row kind the table draws, over three sections (the second headerless, so a bare
+    /// divider leads it) and enough of them to run well past the frame.
+    fn mixed_table(grouped: bool) -> TableView {
+        use crate::table::Chip;
+        let chip = |i: usize| {
+            let mut r = Row::new(format!("Some.Release.Name.{i}.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR10.HEVC-GROUP another run of words")).side("Addon", "4K");
+            for c in 0..8 {
+                r = r.chip(Chip::new(format!("Chip number {c}")).server());
+            }
+            r
+        };
+        let mut first = Section::new("Addon").row(Row::note("A note about the rows under it")).row(Row::new("plain")).row(Row::new("two lines").detail("a sub-line"));
+        first = first.row(Row::separator()).row(Row::new("after the rule").chevron(true));
+        for i in 0..6 {
+            first = first.row(chip(i));
+        }
+        let mut second = Section::new("");
+        for i in 0..12 {
+            second = second.row(if i % 4 == 0 { Row::new(format!("episode {i}")).detail("S1, E1").still("").blurb("an overview") } else { chip(100 + i) });
+        }
+        let mut third = Section::new("Closing");
+        for i in 0..10 {
+            third = third.row(Row::new(format!("tail {i}")));
+        }
+        let mut t = TableView::new();
+        t.grouped = grouped;
+        t.set_sections(vec![first, second, third], 7, false);
+        t
+    }
+
+    /// Settle the table's scroll on its selection, as the page's ticks do.
+    fn settled(mut t: TableView, frame: Rect) -> TableView {
+        for _ in 0..400 {
+            t.update(1.0 / 60.0, frame.h);
+        }
+        t
+    }
+
+    fn stops_of(t: &TableView, frame: Rect, hit_map: bool, old: bool) -> Vec<Stop<u32>> {
+        let (m, v) = (FixtureMeasure, FixtureView::default());
+        let cx = cx(&m, &v);
+        let mut part = TablePart { table: t, frame, group: G, entry: E, uncommitted: false, has_band: false, keys: None };
+        let mut run = || {
+            let mut f = DrawFrame::new(&cx, Painter::recording());
+            if old {
+                // the loop `TablePart::draw` ran for EVERY row before it culled to the page
+                let p = f.painter;
+                part.paint(p, f.measure);
+                for i in 0..t.n_rows() {
+                    if t.next_selectable(i, 0) != Some(i) {
+                        continue;
+                    }
+                    if let Some(r) = t.row_frame(frame, i) {
+                        f.stop(p, Stop {
+                            key: FocusKey { entry: E, elem: i as u32 },
+                            rect: r,
+                            rest_rect: r,
+                            clip: frame,
+                            hover: Hover::Focus,
+                            activate: Activate::Direct,
+                        });
+                    }
+                }
+            } else {
+                Part::<FixtureHost>::draw(&mut part, &mut f, frame);
+            }
+            f.into_stops()
+        };
+        if hit_map { crate::screen::record_stops_while_recording(run) } else { run() }
+    }
+
+    /// The bottom of what a page draws: the screen's edge, never above the frame's own.
+    fn page_bottom(frame: Rect) -> f32 {
+        frame.y + (crate::consts::SCR_H - frame.y).max(frame.h)
+    }
+
+    fn on_page(s: &Stop<u32>, frame: Rect) -> bool {
+        s.rect.y + s.rect.h > frame.y && s.rect.y < page_bottom(frame)
+    }
+
+    fn hittable(s: &Stop<u32>) -> bool {
+        let seen = s.rect.intersect(s.clip);
+        seen.w > 0.0 && seen.h > 0.0
+    }
+
+    /// **One draw of a 500-row stream list registers stops for the rows on the page and walks the
+    /// table a handful of times, not once per row.** Each stop used to cost a full walk to find its
+    /// row (`row_frame`), so a frame was rows² row heights: 6 fps on the television at 497 streams.
+    /// Counted, not timed: a clock is not deterministic, a count is.
+    #[test]
+    fn a_page_registers_stops_only_for_the_rows_it_shows_and_walks_the_table_once() {
+        let _serial = sn_base::testlock::serial();
+        let n = 500;
+        let t = stream_list(n);
+        let frame = RouteLayout::screen().sectioned_table();
+        let _ = stops_of(&t, frame, true, false); // the first draw fits the rows
+        crate::table::census::reset();
+        let stops = stops_of(&t, frame, true, false);
+        let (walks, row_hs, rows_ats) = crate::table::census::counts();
+        assert!(!stops.is_empty() && stops.len() < 40, "{} stops for a page that shows a few rows", stops.len());
+        assert!(stops.iter().all(|s| on_page(s, frame)), "a stop for a row off the page");
+        assert!(walks <= 4, "{walks} walks of the table for one draw");
+        assert!(row_hs <= 4 * n as u32, "{row_hs} row heights for {n} rows");
+        assert!(rows_ats <= 16, "{rows_ats} linear row lookups");
+    }
+
+    /// A walk that does not feed the hit map (the text prewarm, backdrop discovery, each blur
+    /// source) draws the table and does nothing else: no stop, and none of the work to place one.
+    #[test]
+    fn a_walk_that_feeds_no_hit_map_places_no_stop_and_walks_the_table_once() {
+        let _serial = sn_base::testlock::serial();
+        let t = stream_list(500);
+        let frame = RouteLayout::screen().sectioned_table();
+        let _ = stops_of(&t, frame, false, false);
+        crate::table::census::reset();
+        let stops = stops_of(&t, frame, false, false);
+        let (walks, row_hs, _) = crate::table::census::counts();
+        assert!(stops.is_empty());
+        assert!(walks <= 2, "{walks} walks for a draw that places nothing");
+        assert!(row_hs <= 2 * 500, "{row_hs} row heights");
+    }
+
+    /// **Culling changes no stop that can be hit.** Every stop the page registers is, field for
+    /// field and in order, a stop the old every-row loop registered; every stop the old loop
+    /// registered that the page drops is one nobody could hit (its visible part, `rect ∩ clip`, is
+    /// empty); and a page hands the hit map the same answer at every point. Over every row kind
+    /// (plain, note, chip, still, the focused EXPANDED chip row, headers, dividers, a rule), a
+    /// grouped table, a scrolled table, and a frame short of the screen's bottom (the page runs
+    /// on) and one that already reaches past it.
+    #[test]
+    fn the_stops_a_page_registers_are_the_old_loops_stops_that_are_on_it() {
+        let _serial = sn_base::testlock::serial();
+        let route = RouteLayout::screen().sectioned_table();
+        let short = Rect::new(route.x, 160.0, route.w, 420.0);
+        let tall = Rect::new(route.x, 300.0, route.w, 900.0);
+        let mut cases = 0;
+        for grouped in [false, true] {
+            for (name, frame) in [("route", route), ("short", short), ("tall", tall)] {
+                for sel in [0, 7, 14, 21, 27, 30] {
+                    for scrolled in [false, true] {
+                        let mut t = mixed_table(grouped);
+                        t.sel = t.settle(sel);
+                        let t = if scrolled { settled(t, frame) } else { t };
+                        let what = format!("{name} frame, grouped {grouped}, sel {sel}, scrolled {scrolled}");
+                        let old = stops_of(&t, frame, true, true);
+                        let new = stops_of(&t, frame, true, false);
+                        let want: Vec<String> = old.iter().filter(|s| on_page(s, frame)).map(|s| format!("{s:?}")).collect();
+                        let got: Vec<String> = new.iter().map(|s| format!("{s:?}")).collect();
+                        assert_eq!(got, want, "{what}");
+                        assert!(old.iter().filter(|s| !on_page(s, frame)).all(|s| !hittable(s)), "{what}: a hittable stop was dropped");
+                        let (mut was, mut now) = (crate::hit::HitMap::<u32>::new(), crate::hit::HitMap::<u32>::new());
+                        was.fill(old);
+                        was.swap();
+                        now.fill(new);
+                        now.swap();
+                        let mut y = frame.y - 20.0;
+                        while y < crate::consts::SCR_H + 20.0 {
+                            for x in [frame.x + 3.0, frame.x + frame.w * 0.5] {
+                                let key = |h: &crate::hit::HitMap<u32>| h.top_at(x, y).map(|s| s.key.elem);
+                                assert_eq!(key(&now), key(&was), "{what}: point ({x}, {y})");
+                            }
+                            y += 7.0;
+                        }
+                        cases += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(cases, 72);
+    }
+
+    /// A row that straddles the bottom of the frame is partly visible, so it keeps its stop: a click
+    /// on the part inside the frame reaches it; the part below the frame, still drawn on a page but
+    /// outside the stop's clip, answers nothing, as it always did.
+    #[test]
+    fn a_row_cut_by_the_frames_bottom_edge_is_still_clickable_on_its_visible_part() {
+        let _serial = sn_base::testlock::serial();
+        let frame = Rect::new(0.0, 100.0, 884.0, 500.0);
+        let t = mixed_table(false);
+        let stops = stops_of(&t, frame, true, false);
+        let edge = frame.y + frame.h;
+        let cut = stops.iter().find(|s| s.rect.y < edge && s.rect.y + s.rect.h > edge).expect("a row straddles the frame's bottom");
+        let mut map = crate::hit::HitMap::<u32>::new();
+        map.fill(stops.clone());
+        map.swap();
+        let x = cut.rect.x + 40.0;
+        let inside = map.top_at(x, (cut.rect.y + edge) * 0.5).expect("the visible part is a target");
+        assert_eq!(inside.key.elem, cut.key.elem);
+        assert!(map.top_at(x, edge + 4.0).is_none(), "below the frame nothing answers");
+    }
+
+    /// Focus walks DOWN past what the page shows: the table scrolls to keep the selection in view
+    /// and the row that arrives has its stop, where `row_frame` puts it, from the frame it lands in.
+    #[test]
+    fn focus_moving_down_past_the_page_scrolls_and_the_new_row_gets_its_stop() {
+        let _serial = sn_base::testlock::serial();
+        let frame = RouteLayout::screen().sectioned_table();
+        let mut t = stream_list(500);
+        let first = stops_of(&t, frame, true, false);
+        let last_shown = first.iter().filter(|s| hittable(s)).map(|s| s.key.elem).max().expect("stops");
+        assert!(last_shown < 12, "the premise: the page shows only the first rows ({last_shown})");
+        let mut rows_seen = 0;
+        for step in 1..=40 {
+            t.move_sel(1);
+            for _ in 0..90 {
+                t.update(1.0 / 60.0, frame.h);
+            }
+            let stops = stops_of(&t, frame, true, false);
+            let mine = stops.iter().find(|s| s.key.elem == t.sel as u32).unwrap_or_else(|| panic!("step {step}: row {} has no stop", t.sel));
+            let r = t.row_frame(frame, t.sel).unwrap();
+            assert!(same(mine.rect, r) && same(mine.rest_rect, r), "step {step}: the stop is the row");
+            assert!(hittable(mine), "step {step}: the focused row is on the page");
+            rows_seen += 1;
+        }
+        assert_eq!(rows_seen, 40);
+        assert!(t.scroll_pos() > 0.0, "the list scrolled");
     }
 
 }

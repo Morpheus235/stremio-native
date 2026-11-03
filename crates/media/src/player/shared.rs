@@ -69,6 +69,9 @@ enum ClockHold {
     /// The viewer resumed a queued stream; feeding is open, but the physical clock remains held
     /// until both decoder lanes and the measured runway are ready.
     ResumePrime,
+    /// The runway ran out under a running clock. The player paused it itself and refills exactly
+    /// like a `ResumePrime`; the viewer's own pause state is untouched.
+    Rebuffer,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,7 +84,7 @@ impl ClockHold {
     fn prime_kind(self) -> Option<PrimeKind> {
         match self {
             Self::Initial | Self::Seek => Some(PrimeKind::Fresh),
-            Self::ResumePrime => Some(PrimeKind::Resume),
+            Self::ResumePrime | Self::Rebuffer => Some(PrimeKind::Resume),
             Self::User => None,
         }
     }
@@ -1598,6 +1601,48 @@ impl Shared {
         }
     }
 
+    /// Reserve the native Pause of a rebuffer. Only a running clock nobody else holds may be
+    /// stopped this way; anything mid-transition is left alone and asked again next tick.
+    pub fn prepare_rebuffer_pause(&self) -> Option<u64> {
+        let mut clock = self.clock.lock().unwrap_or_else(|e| e.into_inner());
+        if clock.phase != ClockPhase::Running || clock.user_held {
+            return None;
+        }
+        let token = clock.token();
+        clock.phase = ClockPhase::PauseIssuing { token, hold: ClockHold::Rebuffer };
+        Some(token)
+    }
+
+    /// An accepted rebuffer Pause also paused ACB, so the prime's eventual Play must resume it.
+    pub fn complete_rebuffer_pause(&self, token: u64, accepted: bool) -> PauseCompletion {
+        let mut clock = self.clock.lock().unwrap_or_else(|e| e.into_inner());
+        if clock.phase != (ClockPhase::PauseIssuing { token, hold: ClockHold::Rebuffer }) {
+            return PauseCompletion::Stale;
+        }
+        if accepted {
+            clock.phase = ClockPhase::Held { hold: ClockHold::Rebuffer };
+            clock.resume_acb_pending = true;
+            PauseCompletion::Accepted
+        } else {
+            clock.phase = ClockPhase::Running;
+            PauseCompletion::Refused
+        }
+    }
+
+    /// The player holds the clock over a picture to fill its runway, and the viewer has not
+    /// paused on top of it: a refill the player started, or a viewer Resume still priming. Both
+    /// can wait for the network for many seconds, and the screen must say so.
+    pub fn rebuffering(&self) -> bool {
+        let clock = self.clock.lock().unwrap_or_else(|e| e.into_inner());
+        !clock.user_held
+            && matches!(
+                clock.phase,
+                ClockPhase::Held { hold: ClockHold::Rebuffer | ClockHold::ResumePrime }
+                    | ClockPhase::PauseIssuing { hold: ClockHold::Rebuffer, .. }
+                    | ClockPhase::PlayIssuing { hold: ClockHold::Rebuffer | ClockHold::ResumePrime, .. }
+            )
+    }
+
     /// Accept the viewer's Resume intent. Queued streams transfer an ordinary user hold to an
     /// explicit resume-prime hold: the caller opens feeding, while `try_prime` remains the sole
     /// owner of the eventual Play + ACB Resume. A seek or initial hold already holding the clock
@@ -2005,6 +2050,75 @@ mod tests {
             s.complete_prime_play(play, true),
             PlayCompletion::Accepted { resume_acb: true }
         );
+    }
+
+    #[test]
+    fn a_viewer_resume_still_priming_reads_as_refilling_until_its_play() {
+        let s = Shared::new();
+        let pause = match s.prepare_user_pause() {
+            Some(UserPause::Issue(token)) => token,
+            other => panic!("unexpected Pause reservation: {other:?}"),
+        };
+        assert_eq!(s.complete_user_pause(pause, true), PauseCompletion::Accepted);
+        assert!(!s.rebuffering(), "the viewer's pause");
+        assert_eq!(s.prepare_user_resume(true), Some(UserResume::Prime));
+        assert!(s.rebuffering(), "Play was pressed and the runway is still filling");
+        let play = s.reserve_prime_play(PrimeKind::Resume).unwrap();
+        assert!(s.rebuffering(), "until the native Play answers");
+        assert_eq!(s.complete_prime_play(play, true), PlayCompletion::Accepted { resume_acb: true });
+        assert!(!s.rebuffering());
+    }
+
+    #[test]
+    fn a_rebuffer_holds_the_clock_until_its_prime_plays_and_resumes_acb() {
+        let s = Shared::new();
+        let token = s.prepare_rebuffer_pause().expect("a running clock may be stopped to refill");
+        assert!(s.rebuffering());
+        assert_eq!(s.complete_rebuffer_pause(token, true), PauseCompletion::Accepted);
+        assert!(s.rebuffering());
+        assert_eq!(s.prime_kind(), Some(PrimeKind::Resume));
+        assert_eq!(s.prepare_rebuffer_pause(), None, "a held clock is not stopped twice");
+        let play = s.reserve_prime_play(PrimeKind::Resume).expect("the refill owns Play");
+        assert_eq!(s.complete_prime_play(play, true), PlayCompletion::Accepted { resume_acb: true });
+        assert!(!s.rebuffering());
+    }
+
+    #[test]
+    fn a_viewer_pause_during_a_rebuffer_fences_play_until_the_viewer_resumes() {
+        let s = Shared::new();
+        let token = s.prepare_rebuffer_pause().unwrap();
+        assert_eq!(s.complete_rebuffer_pause(token, true), PauseCompletion::Accepted);
+        assert_eq!(s.prepare_user_pause(), Some(UserPause::AlreadyHeld));
+        assert!(!s.rebuffering(), "the viewer's pause is what the screen shows now");
+        assert!(s.reserve_prime_play(PrimeKind::Resume).is_none());
+        assert_eq!(s.prepare_user_resume(true), Some(UserResume::Deferred));
+        assert!(s.rebuffering(), "the refill continues after the viewer resumes");
+        let play = s.reserve_prime_play(PrimeKind::Resume).unwrap();
+        assert_eq!(s.complete_prime_play(play, true), PlayCompletion::Accepted { resume_acb: true });
+    }
+
+    #[test]
+    fn a_refused_rebuffer_pause_leaves_the_clock_running_and_a_user_hold_blocks_one() {
+        let s = Shared::new();
+        let token = s.prepare_rebuffer_pause().unwrap();
+        assert_eq!(s.complete_rebuffer_pause(token, false), PauseCompletion::Refused);
+        assert!(!s.rebuffering());
+        let pause = match s.prepare_user_pause() {
+            Some(UserPause::Issue(token)) => token,
+            other => panic!("unexpected Pause reservation: {other:?}"),
+        };
+        assert_eq!(s.complete_user_pause(pause, true), PauseCompletion::Accepted);
+        assert_eq!(s.prepare_rebuffer_pause(), None, "a viewer pause is never a rebuffer");
+    }
+
+    #[test]
+    fn a_seek_during_a_rebuffer_takes_the_clock_for_the_fresh_timeline() {
+        let s = Shared::new();
+        let token = s.prepare_rebuffer_pause().unwrap();
+        assert_eq!(s.complete_rebuffer_pause(token, true), PauseCompletion::Accepted);
+        assert_eq!(s.prepare_seek_pause(), Some(SeekPause::AlreadyHeld));
+        assert!(!s.rebuffering());
+        assert_eq!(s.prime_kind(), Some(PrimeKind::Fresh));
     }
 
     #[test]
