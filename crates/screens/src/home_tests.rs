@@ -475,7 +475,7 @@ fn left_on_a_rows_first_card_opens_its_catalog_and_a_held_left_stops_there() {
     app.take_effects();
     app.press(Key::Left);
     let key = GridKey { addon_id: "com.linvo.cinemeta".into(), kind: "movie".into(), catalog_id: "top".into(), genre: None, search: None };
-    assert_eq!(app.top_arg(), Some(&AppArg::Catalog(CatalogRef { key: key.clone(), title: "Cinemeta \u{2014} Popular".into() })));
+    assert_eq!(app.top_arg(), Some(&AppArg::Catalog(CatalogRef { key: key.clone(), title: "Cinemeta \u{b7} Popular".into() })));
     assert!(app.take_effects().contains(&AppFx::Grid(GridCmd::Open(key))), "the grid page holds its view open");
     app.press(Key::Back);
     assert_eq!(app.top_name(), "home");

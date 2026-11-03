@@ -7,7 +7,7 @@
 //! query, another genre) swaps the section key and its `base` with it.
 
 use sn_stremio::types::MetaPreview;
-use sn_ui::cards::{CardSource, TileLabel};
+use sn_ui::cards::{CardSource, RowStyle, TileLabel};
 use sn_ui::tile::{TileFacts, TileKind};
 use sn_ui::widgets::Art;
 
@@ -28,6 +28,48 @@ pub fn art_url(url: Option<&str>) -> Option<&str> {
 /// would cut its wordmark.
 pub fn poster_of(item: &MetaPreview) -> &str {
     art_url(item.poster.as_deref()).or_else(|| art_url(item.background.as_deref())).unwrap_or("")
+}
+
+/// The tile shape an addon asks its items to be drawn in (`posterShape`; Stremio's default is the
+/// poster). A catalog's items share one, so a row reads its first item's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shape {
+    Poster,
+    Square,
+    /// 16:9, a channel's or a video's frame.
+    Landscape,
+}
+
+pub fn shape(item: Option<&MetaPreview>) -> Shape {
+    match item.and_then(|i| i.poster_shape.as_deref()).map(str::trim) {
+        Some("square") => Shape::Square,
+        Some("landscape") => Shape::Landscape,
+        _ => Shape::Poster,
+    }
+}
+
+static POSTER_ROW: RowStyle = RowStyle::HOME;
+static SQUARE_ROW: RowStyle = RowStyle { w: 300.0, h: 300.0, ..RowStyle::HOME };
+static LANDSCAPE_ROW: RowStyle = RowStyle::EPISODE;
+
+/// The shelf a row of `shape` tiles stands in.
+pub fn row_style(shape: Shape) -> &'static RowStyle {
+    match shape {
+        Shape::Poster => &POSTER_ROW,
+        Shape::Square => &SQUARE_ROW,
+        Shape::Landscape => &LANDSCAPE_ROW,
+    }
+}
+
+/// A catalog item's tile art in its own shape: a poster, a landscape frame (the still path, which
+/// keeps the watched mark), or a square picture fetched square, so neither is cut to a poster.
+pub fn art(item: Option<&MetaPreview>, watched: bool) -> Art<'_> {
+    let facts = item.map(|i| TileFacts { watched, ..tile_facts(i) });
+    match (shape(item), facts) {
+        (Shape::Landscape, Some(f)) => Art::Still(Some(TileFacts { still: f.thumb, ..f })),
+        (Shape::Square, Some(f)) => Art::Thumb { sid: f.src, key: f.thumb, res: (SQUARE_ROW.w as i32, SQUARE_ROW.h as i32) },
+        _ => Art::Poster(facts),
+    }
 }
 
 /// What a poster tile reads of a catalog item.
@@ -100,7 +142,8 @@ impl CardSource<Bundle> for ItemCards<'_> {
     fn art(&self, i: usize) -> Art<'_> {
         // ponytail: a linear find per drawn card; index the library by id if it grows past a few hundred
         let watched = |item: &MetaPreview| self.watched.and_then(|l| l.item(&item.id)).is_some_and(|i| i.watched());
-        Art::Poster(self.items.get(i).map(|item| TileFacts { watched: watched(item), ..tile_facts(item) }))
+        let item = self.items.get(i);
+        art(item, item.is_some_and(watched))
     }
     fn label(&self, i: usize) -> TileLabel {
         match self.items.get(i) {
@@ -125,6 +168,20 @@ mod tests {
 
     fn meta(json: &str) -> MetaPreview {
         serde_json::from_str(json).unwrap()
+    }
+
+    /// A catalog's `posterShape` picks the shelf and the art: a landscape item takes the still
+    /// path (16:9, marks kept), a square one is fetched square, anything else is a poster.
+    #[test]
+    fn a_tile_takes_the_shape_its_addon_asks_for() {
+        let wide = meta(r#"{"id":"c1","type":"tv","name":"Ch","poster":"https://img.example/c.jpg","posterShape":"landscape"}"#);
+        let square = meta(r#"{"id":"c2","type":"tv","name":"Ch","poster":"https://img.example/s.jpg","posterShape":"square"}"#);
+        let poster = meta(r#"{"id":"c3","type":"movie","name":"M","poster":"https://img.example/p.jpg","posterShape":"poster"}"#);
+        assert_eq!(row_style(shape(Some(&wide))).w, RowStyle::EPISODE.w);
+        assert!(matches!(art(Some(&wide), false), Art::Still(Some(f)) if f.still == "https://img.example/c.jpg"));
+        assert!(matches!(art(Some(&square), false), Art::Thumb { key: "https://img.example/s.jpg", res: (300, 300), .. }));
+        assert!(matches!(art(Some(&poster), true), Art::Poster(Some(f)) if f.watched));
+        assert_eq!(shape(None), Shape::Poster);
     }
 
     /// A poster tile shows the poster, else the background; an unusable "poster" (blank, "N/A",

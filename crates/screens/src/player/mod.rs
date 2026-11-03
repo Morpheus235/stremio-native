@@ -326,7 +326,7 @@ fn next_play(next: &VideoRef, group: &sn_stremio::streams::StreamGroup, stream: 
     Some(PlayRequest {
         url,
         headers,
-        title: if next.title.is_empty() { next.show.clone() } else { format!("{} \u{2014} {}", next.show, next.title) },
+        title: if next.title.is_empty() { next.show.clone() } else { format!("{} \u{b7} {}", next.show, next.title) },
         start_ms: saved.map_or(0, |i| i.saved_offset(&next.video_id)),
         addon: group.addon_name.clone(),
         item: Some(PlayItem {

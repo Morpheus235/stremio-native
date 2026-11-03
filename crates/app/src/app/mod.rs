@@ -16,6 +16,8 @@ pub mod boot;
 pub mod bridge;
 #[cfg(feature = "devtriggers")]
 pub mod devcmd;
+#[cfg(feature = "hostsim")]
+pub mod shot;
 pub mod diagnostics;
 pub mod heap;
 pub mod input;

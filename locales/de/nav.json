@@ -176,7 +176,7 @@
     "description": "Search: the control under the recent searches that forgets them."
   },
   "app.search.no_catalogs": {
-    "value": "Kein Addon sucht",
+    "value": "Keine Addons zum Durchsuchen",
     "description": "Search: every addon that can search is switched off."
   },
   "app.search.no_catalogs_reason": {
@@ -338,7 +338,7 @@
     "description": "About: heading (shown in capitals)."
   },
   "app.about.content": {
-    "value": "Die App enthält keine Kataloge und keine Medien. Alles, was sie anzeigt oder abspielt, stammt von den Addons, die du installierst – sie entscheiden, was sie anbieten. Du bist für die Addons verantwortlich, die du installierst.",
+    "value": "Die App enthält keine Kataloge und keine Medien. Alles, was sie anzeigt oder abspielt, stammt von den Addons, die du installierst. Sie entscheiden, was sie anbieten. Du bist für die Addons verantwortlich, die du installierst.",
     "description": "About: the no-content statement (docs/legal.md)."
   },
   "app.about.licence_head": {
@@ -374,11 +374,11 @@
     "description": "Privacy: heading (shown in capitals)."
   },
   "app.privacy.sign_in": {
-    "value": "Deine Stremio-E-Mail, dein Passwort und dein Sitzungsschlüssel gehen an api.strem.io – nur zum Anmelden und um deine Addons und Bibliothek zu lesen.",
+    "value": "Deine Stremio-E-Mail, dein Passwort und dein Sitzungsschlüssel gehen an api.strem.io, nur zum Anmelden und um deine Addons und Bibliothek zu lesen.",
     "description": "Privacy: one line of what leaves the TV."
   },
   "app.privacy.addons": {
-    "value": "Katalog-, Such-, Meta-, Stream- und Untertitelanfragen – einschließlich deines Suchtexts und des geöffneten Titels – gehen an die installierten Addons. Untertitelanfragen senden auch Dateiname, Größe und Hash des Videos; Untertiteldateien werden von den Hosts geladen, die das Addon nennt.",
+    "value": "Katalog-, Such-, Meta-, Stream- und Untertitelanfragen gehen an die installierten Addons, einschließlich deines Suchtexts und des geöffneten Titels. Untertitelanfragen senden auch Dateiname, Größe und Hash des Videos; Untertiteldateien werden von den Hosts geladen, die das Addon nennt.",
     "description": "Privacy: one line of what leaves the TV."
   },
   "app.privacy.media": {
@@ -390,7 +390,7 @@
     "description": "Privacy: one line of what leaves the TV."
   },
   "app.privacy.skip": {
-    "value": "Sofern „Intros überspringen“ nicht aus ist, geht die ID der abgespielten Folge oder des Films an api.introdb.app – bei Anime an api.aniskip.com, kitsu.io und arm.haglund.dev –, um Intro, Rückblick und Abspann zu finden.",
+    "value": "Sofern „Intros überspringen“ nicht aus ist, geht die ID der abgespielten Folge oder des Films an api.introdb.app (bei Anime an api.aniskip.com, kitsu.io und arm.haglund.dev), um Intro, Rückblick und Abspann zu finden.",
     "description": "Privacy: one line of what leaves the TV. Skip intros is the Settings row; the hosts are proper names."
   },
   "app.privacy.stays_head": {
@@ -596,7 +596,7 @@
     }
   },
   "app.search.summary_failed": {
-    "value": "Fehlgeschlagen: {addons}",
+    "value": "Suche fehlgeschlagen: {addons}",
     "description": "Search: the closing line naming the catalogs whose search failed, each with a short cause.",
     "args": {
       "addons": "str"

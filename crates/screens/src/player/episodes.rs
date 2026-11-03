@@ -28,7 +28,7 @@ use sn_ui::screen::{
 use sn_ui::{theme, Rect};
 
 use crate::dropdown::{self, Dropdown};
-use crate::episodes::{of_season, season_label, seasons};
+use crate::episodes::{of_season, seasons};
 use crate::registry::{word, AppMsg, Bundle, ChoiceTarget, MenuArg, MenuKind, PlayerPanel, Views};
 use crate::stores::detail::{MetaKey, MetaState};
 
@@ -56,6 +56,7 @@ impl FormId for Ep {
 /// (`crate::episodes::row_marked`).
 pub fn form(meta: &Meta, season: u32, playing: &str, today: &str, watched: &crate::episodes::Watched<'_>) -> Form<Ep, Ep, Infallible> {
     let mut s = FormSection::new("");
+    let today = crate::episodes::schedule_day(meta, today);
     for (i, v) in of_season(meta, season) {
         let mut row = crate::episodes::row_marked(v, season, today, watched.of_video(v));
         if v.id == playing {
@@ -130,7 +131,7 @@ impl EpisodesPanel {
         }
         let Some(meta) = self.meta(views) else { return };
         let Some(season) = season_of(meta, &self.playing) else { return };
-        self.dropdown.sync_named(seasons(meta).into_iter().map(|s| (s.to_string(), season_label(s))).collect());
+        self.dropdown.sync_named(seasons(meta).into_iter().map(|s| (s.to_string(), crate::episodes::season_name(meta, s))).collect());
         self.list(meta, season, views);
     }
 
