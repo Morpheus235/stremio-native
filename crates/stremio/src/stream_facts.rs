@@ -48,8 +48,12 @@ pub struct Facts {
     /// The subtitle languages, as codes: what AIOStreams writes after a 📝.
     pub subs: Vec<&'static str>,
     /// The debrid service's cache: `Some(true)` plays at once, `Some(false)` is a torrent the
-    /// service first downloads (a placeholder clip plays meanwhile), `None` the text does not say.
+    /// service first downloads (a placeholder clip plays meanwhile), `None` the text does not say
+    /// or the row is not a debrid one ([`Facts::debrid`]).
     pub cached: Option<bool>,
+    /// The stream comes through a debrid service: its name marks one ([`Facts::service`]) or
+    /// AIOStreams' `streamData.type` is "debrid".
+    pub debrid: bool,
     /// The release group ("NIMA4K", "GRP"): AIOStreams' `🏷️` tag, else a scene name's `-GRP`
     /// tail, else an anime release's leading `[Group]`.
     pub group: Option<String>,
@@ -164,6 +168,9 @@ pub fn facts(s: &Stream) -> Facts {
     let languages = language_codes(&audio_text);
     let subs = language_codes(&subs_text).into_iter().filter(|c| *c != "MULTI").collect();
     let title = title(name, body, file);
+    // a cache mark (⚡, "cached", "[XX+]") counts only on a debrid row: a plain addon's "⚡" or a
+    // "[HD+]" / "[18+]" tag says nothing about a cache
+    let debrid = service(name).is_some() || s.stream_data.as_ref().and_then(|d| d.kind.as_deref()) == Some("debrid");
     Facts {
         group: group(&text, &title),
         title,
@@ -179,7 +186,8 @@ pub fn facts(s: &Stream) -> Facts {
         seeders: seeders(&text),
         languages,
         subs,
-        cached: cached(&lower),
+        cached: debrid.then(|| cached(&lower)).flatten(),
+        debrid,
     }
 }
 
@@ -334,18 +342,37 @@ impl Facts {
     /// The debrid service the stream's name marks ("[RD+] Torrentio", "[TB⚡] Comet",
     /// "MediaFusion | ⚡️ TB 4K"): its short code, as the addons write it.
     pub fn service(&self) -> Option<&'static str> {
-        const SERVICES: [&str; 8] = ["RD", "AD", "PM", "TB", "DL", "ED", "OC", "PKP"];
-        let name = self.name.to_ascii_uppercase();
-        SERVICES.into_iter().find(|s| has_word(&name, s))
+        service(&self.name)
     }
 
     /// Does the "Only debrid streams" switch keep this stream? A debrid stream stays, cached or
-    /// not ([`Facts::cached`] is `Some`); one whose text says nothing about debrid does not. A
+    /// not ([`Facts::debrid`]); one whose text says nothing about debrid does not. A
     /// live stream is exempt: a channel has no debrid to speak of, and the switch must not empty
     /// Live TV.
     pub fn debrid_only_keeps(&self) -> bool {
-        self.cached.is_some() || self.live
+        self.debrid || self.live
     }
+}
+
+/// The debrid service `name` marks: a code as the addons write it ("[RD+]", "[TB⚡]", "| RD 4K")
+/// or the service's own name ("TorBox", "Real-Debrid"), as its short code.
+fn service(name: &str) -> Option<&'static str> {
+    const CODES: [&str; 8] = ["RD", "AD", "PM", "TB", "DL", "ED", "OC", "PKP"];
+    const NAMES: [(&str, &str); 10] = [
+        ("real-debrid", "RD"),
+        ("realdebrid", "RD"),
+        ("alldebrid", "AD"),
+        ("premiumize", "PM"),
+        ("torbox", "TB"),
+        ("debrid-link", "DL"),
+        ("debridlink", "DL"),
+        ("easydebrid", "ED"),
+        ("offcloud", "OC"),
+        ("pikpak", "PKP"),
+    ];
+    let upper = name.to_ascii_uppercase();
+    let lower = name.to_lowercase();
+    CODES.into_iter().find(|c| has_word(&upper, c)).or_else(|| NAMES.iter().find(|(n, _)| lower.contains(n)).map(|(_, c)| *c))
 }
 
 /// The release group (see [`Facts::group`]).
@@ -606,6 +633,44 @@ mod tests {
         assert_eq!((f.cached, f.service()), (Some(true), Some("TB")));
         let uncached = Stream { name: Some("[RD⏳] AIOStreams 1080p".into()), ..s };
         assert_eq!((facts(&uncached).cached, facts(&uncached).service()), (Some(false), Some("RD")));
+    }
+
+    /// Real addons' rows: a debrid row is one whatever its cache mark (the switch keeps it), and a
+    /// plain row's "⚡", "[HD+]", "[18+]" or "Cached" title is no cache mark.
+    #[test]
+    fn debrid_rows_are_told_by_their_service_not_by_a_cache_mark() {
+        let row = |name: &str, body: &str, kind: Option<&str>| {
+            let mut s = stream(name, body);
+            s.stream_data = kind.map(|k| serde_json::from_value(serde_json::json!({ "type": k })).unwrap());
+            facts(&s)
+        };
+        for (name, body, kind, cached) in [
+            ("[RD+] Torrentio\n4k", "Film.2024.2160p", None, Some(true)),
+            ("[RD download] Torrentio\n4k", "Film.2024.2160p", None, Some(false)),
+            ("[TB⚡] Comet 2160p", "📄 Film.2024.2160p.mkv", None, Some(true)),
+            ("MediaFusion | RD ⏳ 4K", "Film 2024", None, Some(false)),
+            ("MediaFusion | RD 4K", "Film 2024", None, None),
+            ("[RD] Debridio 4K", "Film.2024.2160p", None, None),
+            ("STREMTHRU [TB] 4K", "Film.2024.2160p", None, None),
+            ("TorBox\n4K", "Film.2024.2160p.mkv\nType: Torrent | Cached: Yes", None, Some(true)),
+            ("AIOStreams 4K", "Film.2024.2160p", Some("debrid"), None),
+        ] {
+            let f = row(name, body, kind);
+            assert!(f.debrid && f.debrid_only_keeps(), "{name}");
+            assert_eq!(f.cached, cached, "{name}");
+        }
+        for (name, body) in [
+            ("Torrentio\n4k", "Film.2024.2160p"),
+            ("Easynews+\n1080p", "Film.2024.1080p.WEB"),
+            ("⚡ FastHTTP 1080p", "Film 2024"),
+            ("[HD+] Kanal", "Film 2024"),
+            ("Addon 1080p", "Film [18+] 2024"),
+            ("Archive 1080p", "Cached.Memories.2024.1080p"),
+        ] {
+            let f = row(name, body, Some("http"));
+            assert!(!f.debrid && !f.debrid_only_keeps(), "{name}");
+            assert_eq!(f.cached, None, "{name}");
+        }
     }
 
     #[test]
