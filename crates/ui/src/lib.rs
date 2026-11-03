@@ -100,7 +100,7 @@ pub mod xfade; // content cross-fade: fade out → swap the data at the floor �
 /// The focus fill — a near-white with near-black ink/icons over it, and the only fill a control
 /// lights up with. The focused control (button, pill, menu row) fills ACCENT; its label/glyph
 /// draws in ACCENT_INK. Idle controls use a faint white fill + white ink.
-/// Canonical values now live in [`theme`]; re-exported so existing `crate::ACCENT` sites hold.
+/// Canonical values now live in [`theme`]; re-exported so existing `crate::ACCENT()` sites hold.
 pub use theme::{ACCENT, ACCENT_INK};
 
 // ---- The UI panic barrier -------------------------------------------------------------------
@@ -1316,7 +1316,7 @@ impl Painter {
     /// scales what is left.
     fn wash_corners(self, k: [[f32; 3]; 4]) -> [[f32; 3]; 4] {
         let a = self.a.clamp(0.0, 1.0);
-        let g = theme::SURFACE_APP; // `theme::mix` is rgba; a wash corner is rgb
+        let g = theme::SURFACE_APP(); // `theme::mix` is rgba; a wash corner is rgb
         let k = if a >= 1.0 {
             k
         } else {
@@ -1398,7 +1398,7 @@ impl Painter {
         // The cascade's alpha is spent HERE, on the mix, so neither draw may take it again.
         let full = Self { a: 1.0, ..self };
         if a < 1.0 {
-            let g = theme::SURFACE_APP;
+            let g = theme::SURFACE_APP();
             full.rect(r, 0.0, g, g, 0.0);
         }
         full.field(r, tex, theme::with_a(theme::TINT_WHITE, a));

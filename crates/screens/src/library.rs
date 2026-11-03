@@ -677,7 +677,7 @@ impl Screen<Bundle> for LibraryScreen {
     }
     fn prepare(&mut self, _b: &mut sn_ui::frame::Budget, _cx: &Cx<'_, Bundle>) {}
     fn draw(&mut self, f: &mut DrawFrame<'_, '_, Bundle>) {
-        sn_gfx::gfx::frame_clear(theme::CLEAR_RGB.0, theme::CLEAR_RGB.1, theme::CLEAR_RGB.2);
+        sn_gfx::gfx::frame_clear(theme::CLEAR_RGB().0, theme::CLEAR_RGB().1, theme::CLEAR_RGB().2);
         self.stack.view(&self.page).paint(f);
     }
     fn redraw_focused(&self, f: &mut DrawFrame<'_, '_, Bundle>, focus: Option<sn_machine::machine::FocusKey<u32>>) {

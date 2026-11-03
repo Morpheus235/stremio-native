@@ -41,12 +41,14 @@ impl<'a> ValueChip<'a> {
 impl View for ValueChip<'_> {
     fn draw(&self, _: &Env, p: Painter) {
         let (fill, value_ink, name_ink) = if self.focused {
-            (super::ACCENT, super::ACCENT_INK, theme::with_a(super::ACCENT_INK, NOTE_ALPHA))
+            (super::ACCENT(), super::ACCENT_INK(), theme::with_a(super::ACCENT_INK(), NOTE_ALPHA))
         } else {
-            (theme::CONTROL_IDLE_FILL, theme::CONTROL_IDLE_INK, theme::TEXT_SECONDARY)
+            (theme::CONTROL_IDLE_FILL(), theme::CONTROL_IDLE_INK, theme::TEXT_SECONDARY)
         };
         let r = self.rect;
-        p.rrect(r, r.h * 0.5, r.h * 0.5, fill);
+        // the control plate every pill draws (capsule, edge rim, focus cast): a bare fill vanishes
+        // into a ground as dark as itself (OLED black)
+        super::widgets::draw_control_face(p, r, fill, self.focused, super::widgets::ControlGround::Keyed);
         let y = sn_gfx::text::text_vcenter_y(theme::size::LABEL, 1, r.y + r.h * 0.5);
         let mut x = r.x + PAD;
         x += p.text(self.name.as_ptr(), x, y, theme::size::LABEL, name_ink, 0, 0);
@@ -57,7 +59,7 @@ impl View for ValueChip<'_> {
                 theme::with_a(value_ink, NOTE_ALPHA), 0, 0);
         }
         icons::draw(p, self.icon, Rect::new(x + ICON_GAP, r.y + (r.h - ICON_SIZE) * 0.5, ICON_SIZE, ICON_SIZE),
-            if self.focused { super::ACCENT_INK } else { theme::TEXT_SECONDARY });
+            if self.focused { super::ACCENT_INK() } else { theme::TEXT_SECONDARY });
     }
 }
 

@@ -1078,7 +1078,7 @@ impl Rig<FixtureHost> for FixtureRig {
                 initial: &self.scrim_initial,
                 name: &self.scrim_name,
                 name_w: 0.0,
-                fill: super::theme::CONTROL_IDLE_FILL,
+                fill: super::theme::CONTROL_IDLE_FILL(),
                 rest_open: false,
                 current: false,
                 bar_focused: false,

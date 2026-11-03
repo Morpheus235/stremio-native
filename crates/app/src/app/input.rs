@@ -3,8 +3,9 @@
 //! **The television's SDL fork does not lay `SDL_KeyboardEvent` out the way the headers do**: LG
 //! writes `state` (u32) at +16, the webOS keycode at +20 and the SDL sym at +24. Stock SDL2 keeps
 //! `state:u8` at +12 and `keysym.sym` at +20, so reading one layout out of the other yields the
-//! window id as a key state — plausible garbage, not a crash. This build runs on the television
-//! only, so the fork's offsets are the ones read.
+//! window id as a key state — plausible garbage, not a crash. The television build reads the
+//! fork's offsets; the desktop simulator (`hostsim`, stock SDL2) reads the headers' and packs
+//! them the same way (no webOS keycode: 0).
 //!
 //! The packed state: low byte 1 pressed / 0 released, bit `0x100` a hardware auto-repeat.
 
@@ -16,8 +17,17 @@ pub fn rd_u32(ev: &[u8], off: usize) -> u32 {
 }
 
 /// A keyboard event's `(state, wcode, sym)` in the fork's layout.
+#[cfg(not(feature = "hostsim"))]
 pub fn decode_key(ev: &[u8]) -> (u32, u32, u32) {
     (rd_u32(ev, 16), rd_u32(ev, 20), rd_u32(ev, 24))
+}
+
+/// A keyboard event's `(state, wcode, sym)` from stock SDL2's layout: `state:u8` at +12,
+/// `repeat:u8` at +13 (packed as the fork's `0x100`), `keysym.sym` at +20.
+#[cfg(feature = "hostsim")]
+pub fn decode_key(ev: &[u8]) -> (u32, u32, u32) {
+    let state = u32::from(ev[12]) | if ev[13] != 0 { 0x100 } else { 0 };
+    (state, 0, rd_u32(ev, 20))
 }
 
 /// The packed state as an edge.
@@ -73,6 +83,7 @@ mod tests {
     use super::*;
     use sn_ui::consts::{SDLK_DOWN, SDLK_RETURN};
 
+    #[cfg(not(feature = "hostsim"))]
     fn event(state: u32, wcode: u32, sym: u32) -> [u8; 64] {
         let mut ev = [0u8; 64];
         ev[0..4].copy_from_slice(&0x300u32.to_ne_bytes());
@@ -82,10 +93,26 @@ mod tests {
         ev
     }
 
+    /// The simulator's stock SDL2 layout: a pressed, repeated ESC reads as the fork's packed
+    /// state and BACK's sym.
+    #[cfg(feature = "hostsim")]
+    #[test]
+    fn the_desktop_layout_decodes_like_the_forks() {
+        let mut ev = [0u8; 64];
+        ev[0..4].copy_from_slice(&0x300u32.to_ne_bytes());
+        (ev[12], ev[13]) = (1, 1);
+        ev[16..20].copy_from_slice(&41u32.to_ne_bytes()); // the scancode, never the state
+        ev[20..24].copy_from_slice(&sn_ui::consts::SDLK_ESCAPE.to_ne_bytes());
+        let (state, wcode, sym) = decode_key(&ev);
+        assert_eq!((edge_of(state), wcode, sym), (Edge::Repeat, 0, sn_ui::consts::SDLK_ESCAPE));
+        ev[13] = 0;
+        assert_eq!(edge_of(decode_key(&ev).0), Edge::Down);
+    }
+
     #[test]
     fn the_forks_layout_decodes_and_the_state_is_an_edge() {
-        let ev = event(1, 0, SDLK_DOWN);
-        assert_eq!(decode_key(&ev), (1, 0, SDLK_DOWN));
+        #[cfg(not(feature = "hostsim"))]
+        assert_eq!(decode_key(&event(1, 0, SDLK_DOWN)), (1, 0, SDLK_DOWN));
         assert_eq!(edge_of(1), Edge::Down);
         assert_eq!(edge_of(0x101), Edge::Repeat);
         assert_eq!(edge_of(0), Edge::Up);

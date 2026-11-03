@@ -78,23 +78,23 @@
     }
   },
   "widgets.failure.jail": {
-    "value": "Playback failed — this TV's sandbox blocks native video",
+    "value": "Playback failed: this TV's sandbox blocks native video",
     "description": "failure jail"
   },
   "widgets.failure.no_video": {
-    "value": "Playback failed — no video in the file",
+    "value": "Playback failed: no video in the file",
     "description": "Player error caption or supporting subscription fact."
   },
   "widgets.failure.open": {
-    "value": "Playback failed — the media stream could not be opened",
+    "value": "Playback failed: the media stream could not be opened",
     "description": "Player error caption or supporting subscription fact."
   },
   "widgets.failure.stopped": {
-    "value": "Playback failed — playback stopped after starting",
+    "value": "Playback failed: playback stopped after starting",
     "description": "Player error caption or supporting subscription fact."
   },
   "widgets.failure.tv_rejected": {
-    "value": "Playback failed — the TV rejected the stream",
+    "value": "Playback failed: the TV rejected the stream",
     "description": "Player error caption or supporting subscription fact."
   },
   "widgets.reason.jail": {
@@ -179,7 +179,7 @@
     "description": "Player diagnostic reason; preserve technical device paths and protocol endpoints."
   },
   "widgets.failure.load_timeout": {
-    "value": "Playback failed — the TV did not finish starting the stream",
+    "value": "Playback failed: the TV did not finish starting the stream",
     "description": "failure load_timeout"
   },
   "widgets.panel.load_timeout": {
@@ -288,7 +288,7 @@
     "description": "Badge: the title has an audio-description track. Must match the abbreviation in browse.detail.audio_description (es: audiodescripción, AD)."
   },
   "widgets.failure.audio_unsupported": {
-    "value": "Playback failed — this TV cannot decode the audio track",
+    "value": "Playback failed: this TV cannot decode the audio track",
     "description": "Player error caption: the selected audio track's format (or channel count) has no decoder on this TV and the app has no software decoder for it yet."
   },
   "widgets.reason.audio_unsupported": {
@@ -300,7 +300,7 @@
     "description": "Diagnostics panel verdict suffix: the audio track cannot be decoded by the TV."
   },
   "widgets.failure.video_unsupported": {
-    "value": "Playback failed — this TV cannot decode the video",
+    "value": "Playback failed: this TV cannot decode the video",
     "description": "Player error caption: the stream's video codec has no decoder on this TV."
   },
   "widgets.reason.video_unsupported": {
@@ -308,11 +308,11 @@
     "description": "Explanation beneath the playback-failed heading when the video codec cannot be decoded by the TV."
   },
   "widgets.failure.video_not_streamable": {
-    "value": "Playback failed — this video format cannot be streamed on this TV",
+    "value": "Playback failed: this video format cannot be streamed on this TV",
     "description": "Player error caption: the stream's video codec (MPEG-4 Part 2/Xvid/DivX, MPEG-2, H.263, VC-1/WMV, RealVideo) is one the TV's streaming player cannot be fed, though the TV's own file player may know it."
   },
   "widgets.reason.video_not_streamable": {
-    "value": "This TV streams H.264, HEVC, AV1, VP9 and VP8 video only — not Xvid/DivX, MPEG-2, H.263, VC-1/WMV or RealVideo; choose another stream",
+    "value": "This TV streams H.264, HEVC, AV1, VP9 and VP8 video only, not Xvid/DivX, MPEG-2, H.263, VC-1/WMV or RealVideo. Choose another stream.",
     "description": "Explanation beneath the playback-failed heading when the video codec is one the TV's streaming player cannot take. Keep the codec names untranslated."
   },
   "widgets.panel.video_not_streamable": {
@@ -324,7 +324,7 @@
     "description": "Diagnostics panel verdict suffix: the video codec cannot be decoded by the TV."
   },
   "widgets.failure.dolby_vision": {
-    "value": "Playback failed — this Dolby Vision stream cannot be shown correctly here",
+    "value": "Playback failed: this Dolby Vision stream cannot be shown correctly here",
     "description": "Player error caption: a Dolby Vision stream whose base layer alone is a wrong picture, on a TV that cannot be told it is Dolby Vision."
   },
   "widgets.reason.dolby_vision": {

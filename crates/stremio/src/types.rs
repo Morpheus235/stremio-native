@@ -52,10 +52,14 @@ pub struct Meta {
     pub videos: Vec<Video>,
     #[serde(default, deserialize_with = "lenient_string")]
     pub runtime: Option<String>,
+    /// The first release, an ISO date ("2024-02-27T00:00:00.000Z"); the year shown when the addon
+    /// sent no `releaseInfo`.
+    #[serde(default, deserialize_with = "lenient_string")]
+    pub released: Option<String>,
     /// Cinemeta sends `"director": null` on a series: null reads as none, not a failed meta.
-    #[serde(default, deserialize_with = "lenient_vec")]
+    #[serde(default, deserialize_with = "name_vec")]
     pub cast: Vec<String>,
-    #[serde(default, deserialize_with = "lenient_vec")]
+    #[serde(default, deserialize_with = "name_vec")]
     pub director: Vec<String>,
     /// stremio-core's `links`: genres, cast, directors as deep links (`crate::links`). A link
     /// that does not decode is dropped alone.
@@ -77,6 +81,9 @@ pub struct Meta {
 pub struct MetaHints {
     #[serde(deserialize_with = "lenient_string")]
     pub default_video_id: Option<String>,
+    /// The series has episodes announced but not out yet: only then does Stremio mark a
+    /// future-dated episode upcoming, or a dateless one "TBA".
+    pub has_scheduled_videos: bool,
 }
 
 impl Meta {
@@ -338,6 +345,11 @@ where
         .collect())
 }
 
+/// [`lenient_vec`] of names with their character references decoded (Cinemeta's `O&apos;Dea`).
+fn name_vec<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    Ok(lenient_vec::<D, String>(d)?.iter().map(|n| crate::epg::unescape(n)).collect())
+}
+
 /// A string some addons send as a number (`"imdbRating": 7.4`, `"releaseInfo": 2019`).
 fn lenient_hints<'de, D: Deserializer<'de>>(d: D) -> Result<MetaHints, D::Error> {
     let v = Option::<serde_json::Value>::deserialize(d)?;
@@ -467,6 +479,12 @@ mod tests {
             ]
         );
         assert_eq!(m.meta.videos[0].title, "Pilot");
+    }
+
+    #[test]
+    fn cast_and_director_names_read_with_their_character_references_decoded() {
+        let m: Meta = serde_json::from_str(r#"{"id":"tt0063350","type":"movie","name":"x","cast":["Duane Jones","Judith O&apos;Dea"],"director":["A &amp; B"]}"#).unwrap();
+        assert_eq!((m.cast, m.director), (vec!["Duane Jones".to_string(), "Judith O'Dea".to_string()], vec!["A & B".to_string()]));
     }
 
     /// Real Cinemeta metas (trimmed): a series with `"director": null` and a movie, read with

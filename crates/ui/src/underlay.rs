@@ -331,7 +331,7 @@ impl UnderlayField {
                 if !self.latched || self.tex == 0 {
                     // Nothing sampled yet: the app's own flat ground, which is what the page would
                     // have been anyway (`gfx::frame_clear` lays down the same colour).
-                    p.rect(r, 0.0, theme::SURFACE_APP, theme::SURFACE_APP, 0.0);
+                    p.rect(r, 0.0, theme::SURFACE_APP(), theme::SURFACE_APP(), 0.0);
                     return;
                 }
                 p.field_ground(r, self.tex, alpha);

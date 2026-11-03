@@ -268,7 +268,7 @@ impl AddonsStore {
 }
 
 /// The signed-out addons: [`DEFAULT_ADDONS`], or in a debug build the URLs the `guest` trigger
-/// holds (whitespace-separated, `https://` only), so screenshots can show a public-domain catalog
+/// holds (whitespace-separated, `https://` or a loopback `http://127.0.0.1:`), so screenshots can show a public-domain catalog
 /// without an account.
 fn defaults() -> &'static [&'static str] {
     static URLS: std::sync::OnceLock<&'static [&'static str]> = std::sync::OnceLock::new();
@@ -276,7 +276,8 @@ fn defaults() -> &'static [&'static str] {
         let listed: Vec<&'static str> = sn_base::devtrig::read("guest")
             .unwrap_or_default()
             .split_whitespace()
-            .filter(|u| u.starts_with("https://"))
+            // loopback http too: a mock addon on this machine (the desktop simulator's stream rows)
+            .filter(|u| u.starts_with("https://") || u.starts_with("http://127.0.0.1:"))
             .map(|u| &*Box::leak(u.to_string().into_boxed_str()))
             .collect();
         if listed.is_empty() { DEFAULT_ADDONS } else { Box::leak(listed.into_boxed_slice()) }
