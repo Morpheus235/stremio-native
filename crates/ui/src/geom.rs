@@ -225,17 +225,13 @@ where
     fn seat(&self, _g: GroupId, from: Placed, _cx: &Cx<'_, H>) -> FocusKey<H::Elem> {
         let cy = from.rect.y + from.rect.h * 0.5;
         let mut best = (f32::MAX, 0i32);
-        for i in 0..self.table.n_rows() {
-            if let Some(r) = self.table.row_frame(self.frame, i) {
-                if self.table.next_selectable(i, 0) != Some(i) {
-                    continue;
-                }
-                let d = (r.y + r.h * 0.5 - cy).abs();
-                if d < best.0 {
-                    best = (d, i);
-                }
+        // one walk over the selectable rows, not `row_frame` per row (rows² row heights)
+        self.table.for_each_row_frame(self.frame, |i, r| {
+            let d = (r.y + r.h * 0.5 - cy).abs();
+            if d < best.0 {
+                best = (d, i);
             }
-        }
+        });
         key(self.entry, best.1.max(0) as usize)
     }
 }

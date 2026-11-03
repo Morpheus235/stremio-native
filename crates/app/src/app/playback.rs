@@ -445,7 +445,9 @@ impl Playback {
             seeking: picture && v.phase == PlayPhase::Working,
             ended: player::ended(),
             picture,
-            buffer_pct: (v.phase == PlayPhase::Working && !picture).then(player::prime_fill_pct).flatten(),
+            buffer_pct: (v.phase == PlayPhase::Working && (!picture || player::rebuffering()))
+                .then(player::prime_fill_pct)
+                .flatten(),
             buffered_ms: player::buffer_ahead_ms().filter(|a| *a > 0).map_or(0, |a| ms(player::intended_pos_ns(ps)) + a as u64),
         };
         v.media = media_facts(ps, &player::track_names(), player::desired_sub_idx());

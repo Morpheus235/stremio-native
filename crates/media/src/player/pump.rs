@@ -112,7 +112,79 @@ fn take_coalesced() -> u32 {
     TX.seek_reqs.swap(0, Relaxed).saturating_sub(1)
 }
 
+/// Feed the network meter one tick. The demuxer is "free" only while neither lane would park, the
+/// file is not finished and no seek is moving the tail: otherwise the tail says nothing about the
+/// link.
+fn observe_fill_rate(eng: &mut Engine) {
+    let (qv, qa) = super::engine::lane_ptrs(eng);
+    let tail = SHARED.video_tail_ns.load(Acquire);
+    let free = tail >= 0
+        && !crate::aq::aq_would_park(qv)
+        && !crate::aq::aq_would_park(qa)
+        && !crate::aq::aq_producer_done(qv)
+        && !SHARED.demux_seeking.load(Relaxed)
+        && TX.seek_to_ns.load(Relaxed) < 0;
+    super::buffering::observe(tail, free);
+}
 
+/// **Stop a running clock whose runway ran out, and refill it.** Without this the clock ran on
+/// past the data: Starfish dropped the late frames (2-4 of every 5 on a 4K stream over a link at
+/// 0.65x) and the audio broke up. The stop is the same held clock a viewer Resume primes from, so
+/// the refill and its Play + ACB Resume are `engine::try_prime`'s, with the viewer's pause state
+/// untouched. Never at the end of the file, during a seek or a prime, or under a viewer pause.
+/// Never while a lane is at its cap either: media is waiting there, so a short reserve is not the
+/// network's, and holding the clock would only release it again on the cap (Pause/Play each tick).
+/// The buffering policy adds a minimum run after each start and a back-off after a refused Pause.
+fn maybe_rebuffer(mt: &MainThread, eng: &mut Engine) {
+    if eng.stage < Stage::Streaming || eng.prime_play || eng.eos_pushed {
+        return;
+    }
+    if !SHARED.seen_frame.load(Relaxed) || SHARED.frames.load(Relaxed) == 0 || SHARED.seeking.load(Relaxed) {
+        return;
+    }
+    if TX.seek_to_ns.load(Relaxed) >= 0 || TX.seek_preroll_active() || TX.paused.load(Acquire) {
+        return;
+    }
+    let (qv, qa) = super::engine::lane_ptrs(eng);
+    if crate::aq::aq_producer_done(qv) || crate::aq::aq_would_park(qv) || crate::aq::aq_would_park(qa) {
+        return;
+    }
+    let Some(tail) = super::engine::runway_tail_ns(eng) else { return };
+    let Some(ahead_ms) = super::playable_buffer_ms(
+        tail,
+        tail,
+        false,
+        SHARED.disp_base.load(Relaxed),
+        SHARED.playpos_ns.load(Relaxed),
+    ) else {
+        return;
+    };
+    if ahead_ms >= super::buffering::RUNWAY_LOW_MS || !super::buffering::may_refill() {
+        return;
+    }
+    let Some(token) = SHARED.prepare_rebuffer_pause() else { return };
+    let accepted = unsafe { super::sink().pause(mt) } != 0;
+    match SHARED.complete_rebuffer_pause(token, accepted) {
+        PauseCompletion::Accepted => {
+            super::acb_mirror_playstate_at(mt, eng.stage, false);
+            super::engine::arm_live_clock_prime(eng);
+            super::buffering::note_ran_out(super::buffering::target_ns());
+            super::log(&format!(
+                "rebuffer: runway {ahead_ms}ms ran out, clock held; refilling to {}ms (net {})",
+                super::buffering::target_ns() / 1_000_000,
+                super::buffering::rate_text(super::buffering::rate()),
+            ));
+        }
+        PauseCompletion::Refused => {
+            super::buffering::note_refill_refused();
+            super::log("rebuffer: Starfish refused Pause; the clock runs on");
+        }
+        PauseCompletion::Stale => {
+            super::buffering::note_refill_refused();
+            super::log("rebuffer: Pause result lost its clock token");
+        }
+    }
+}
 
 /// Place the webOS 5+ exported window: source frame -> on-screen rect.
 ///
@@ -714,6 +786,8 @@ pub fn pump(ps: &mut crate::session::PlaybackSession, pa: &mut super::adapter::P
                                // "no post-seek frame presented yet" — the feed-ahead throttle feeds freely until the first
                                // real presented pts lands, instead of comparing the new fed pts against the STALE pre-seek
                                // presented position (which would wrongly break feeding on a forward in-place seek).
+        eng.prime_feed_floor = None;
+        eng.prime_base_pending = false; // the rebase keyframe sets the base
         SHARED.pres_fed.store(super::engine::PRES_NONE, Relaxed);
         eng.feed_pace = super::engine::FeedPace::default(); // the run-on belongs to the pre-seek report
         SHARED.frames.store(0, Relaxed); // count only POST-seek frames (rebind + resume re-pause gate)
@@ -771,8 +845,11 @@ pub fn pump(ps: &mut crate::session::PlaybackSession, pa: &mut super::adapter::P
             eng.stage = Stage::Streaming;
         }
         // A fresh Load for a seek/resume primes before Play so the clock does not free-run through
-        // the demux reopen gap. Initial play from the start keeps its immediate-start behavior.
-        if eng.rebase_pending {
+        // the demux reopen gap. A stream started from the top primes too: its runway is the
+        // network's head start, and a start that plays at once runs out at once on a slow link.
+        // A trailer preview keeps the immediate start.
+        if eng.rebase_pending || (stream && !ps.is_preview()) {
+            eng.prime_base_pending = !eng.rebase_pending;
             eng.prime_play = true;
             super::log("SMP loadCompleted (priming before Play)");
         } else {
@@ -941,6 +1018,10 @@ pub fn pump(ps: &mut crate::session::PlaybackSession, pa: &mut super::adapter::P
     // be Running or Paused: ResumePrime deliberately fills both lanes before issuing Play. NOT
     // while a seek is armed: on a resume the seek is armed before PLAYING, so feeding first would
     // present the file start for a frame before the seek repositions — a visible jump. ----------
+    if stream {
+        observe_fill_rate(eng);
+        maybe_rebuffer(mt, eng);
+    }
     if eng.stage >= Stage::Playing && TX.feed_allowed() && TX.seek_to_ns.load(Relaxed) < 0 {
         if stream {
             // Two-lane feed, then the prime attempt — the ordering and the reason both live in
@@ -968,6 +1049,8 @@ pub fn pump(ps: &mut crate::session::PlaybackSession, pa: &mut super::adapter::P
         // flight is waiting on the viewer, which is neither a spinner nor `Playing` (no frame is
         // presented, so `is_playing` and `PlaybackStarted` must stay false).
         if paused_and_idle() { PlaybackState::Paused } else { PlaybackState::Buffering }
+    } else if SHARED.rebuffering() {
+        PlaybackState::Buffering
     } else {
         PlaybackState::Playing
     });
@@ -1712,6 +1795,138 @@ mod native_seek_pump_tests {
         let plays = rig.land_and_present(60_000_000_000);
         assert!(plays >= 1, "the prime Play fired through the opened gate");
         assert_ended_paused();
+    }
+
+    // ---- a running clock whose runway runs out is held to refill, not left to stutter ----
+
+    const PLAYHEAD_NS: i64 = 60_000_000_000;
+
+    struct PolicyReset;
+    impl Drop for PolicyReset {
+        fn drop(&mut self) {
+            crate::player::buffering::reset_for_test();
+            ffi_host::force_pause_result_for_test(None);
+        }
+    }
+
+    impl Rig {
+        /// A film presenting at [`PLAYHEAD_NS`] for two minutes, its clock running, with
+        /// `runway_ns` of video demuxed past the playhead and nothing queued.
+        fn playing_with_runway(&mut self, runway_ns: i64) -> PolicyReset {
+            crate::player::buffering::reset_for_test();
+            crate::player::buffering::begin_item("fixture://film", true);
+            crate::player::buffering::backdate_start_for_test(120_000);
+            SHARED.reset_clock_for_test();
+            let eng = self.eng();
+            eng.stage = Stage::Streaming;
+            eng.prime_play = false;
+            SHARED.seen_frame.store(true, Relaxed);
+            SHARED.frames.store(1, Relaxed);
+            SHARED.pres_fed.store(PLAYHEAD_NS, Relaxed);
+            SHARED.playpos_ns.store(PLAYHEAD_NS, Relaxed);
+            SHARED.video_tail_ns.store(PLAYHEAD_NS + runway_ns, Release);
+            PolicyReset
+        }
+
+        fn pauses(&self) -> usize {
+            ffi_host::verb_order_for_test().iter().filter(|v| v.as_str() == "pause").count()
+        }
+    }
+
+    #[test]
+    fn a_runway_that_runs_out_holds_the_clock_reads_buffering_and_plays_once_refilled() {
+        let _serial = sn_base::testlock::serial();
+        let mut rig = Rig::new(None);
+        let _policy = rig.playing_with_runway(500_000_000);
+        let pauses = rig.pauses();
+        rig.frame();
+        assert_eq!(rig.pauses(), pauses + 1, "one native Pause");
+        assert!(SHARED.rebuffering(), "the clock is held for a refill");
+        assert!(rig.eng().prime_play, "the refill primes like a resume");
+        assert!(!TX.paused.load(Acquire), "the viewer did not pause");
+        assert_eq!(crate::player::state(&rig.ps), crate::player::PlaybackState::Buffering);
+        rig.frame();
+        assert_eq!(rig.pauses(), pauses + 1, "a held clock is not paused again");
+
+        // The demuxer refills: four seconds is decoded-ready but short of the six an unmeasured
+        // network waits for, so the clock stays held.
+        let plays = ffi_host::play_calls_for_test();
+        rig.land_keyframe_aus(PLAYHEAD_NS, 96);
+        SHARED.video_tail_ns.store(PLAYHEAD_NS + 4_000_000_000, Release);
+        for _ in 0..8 {
+            rig.frame();
+        }
+        assert_eq!(ffi_host::play_calls_for_test(), plays, "short of the runway");
+        assert!(SHARED.rebuffering());
+        SHARED.video_tail_ns.store(PLAYHEAD_NS + crate::player::buffering::UNKNOWN_FILL_NS, Release);
+        rig.frame();
+        assert_eq!(ffi_host::play_calls_for_test(), plays + 1, "the runway is in: Play");
+        assert!(!SHARED.rebuffering());
+        assert!(!rig.eng().prime_play);
+
+        // The clock just started: a short runway now does not flip it straight back to Pause.
+        SHARED.video_tail_ns.store(SHARED.playpos_ns.load(Relaxed) + 200_000_000, Release);
+        rig.frame();
+        assert_eq!(rig.pauses(), pauses + 1, "no Pause inside the minimum run");
+    }
+
+    #[test]
+    fn a_refused_refill_pause_leaves_the_clock_running_and_waits_before_asking_again() {
+        let _serial = sn_base::testlock::serial();
+        let mut rig = Rig::new(None);
+        let _policy = rig.playing_with_runway(500_000_000);
+        ffi_host::force_pause_result_for_test(Some(0));
+        let pauses = rig.pauses();
+        rig.frame();
+        assert_eq!(rig.pauses(), pauses + 1);
+        assert!(!SHARED.rebuffering(), "a refused Pause holds nothing");
+        assert!(!rig.eng().prime_play);
+        for _ in 0..5 {
+            rig.frame();
+        }
+        assert_eq!(rig.pauses(), pauses + 1, "no Pause every tick after a refusal");
+    }
+
+    /// An audio track that ended early (or a long gap in it) leaves its tail behind with nothing
+    /// queued: that is not a short runway, and refilling on it would cycle Pause/Play to the end.
+    /// An audio tail close behind the video is still the runway.
+    #[test]
+    fn a_quiet_audio_track_is_not_a_short_runway_but_a_close_one_is() {
+        let _serial = sn_base::testlock::serial();
+        let mut rig = Rig::new(None);
+        let _policy = rig.playing_with_runway(20_000_000_000);
+        SHARED.dg_load_a.store(1, Relaxed);
+        SHARED.audio_tail_ns.store(PLAYHEAD_NS + 500_000_000, Release);
+        let pauses = rig.pauses();
+        rig.frame();
+        assert_eq!(rig.pauses(), pauses, "audio 19.5 s behind with an empty lane is a quiet track");
+
+        SHARED.video_tail_ns.store(PLAYHEAD_NS + 5_000_000_000, Release);
+        rig.frame();
+        assert_eq!(rig.pauses(), pauses + 1, "audio 4.5 s behind is the runway: 0.5 s left");
+        assert!(SHARED.rebuffering());
+    }
+
+    #[test]
+    fn no_refill_under_a_viewer_pause_a_full_lane_or_a_trailer() {
+        let _serial = sn_base::testlock::serial();
+        let mut rig = Rig::new(None);
+        let _policy = rig.playing_with_runway(500_000_000);
+        crate::player::buffering::begin_item("fixture://trailer", false);
+        crate::player::buffering::backdate_start_for_test(120_000);
+        let pauses = rig.pauses();
+        rig.frame();
+        assert_eq!(rig.pauses(), pauses, "a trailer preview never refills");
+
+        let _policy = rig.playing_with_runway(500_000_000);
+        // The lane over its cap: media is waiting behind the pipeline, not on the network.
+        rig.eng().aq_video = Some(crate::aq::aq_new(1));
+        let qv = &mut **rig.eng().aq_video.as_mut().unwrap() as *mut crate::aq::AuQueue;
+        let au = [0u8; 64];
+        crate::aq::aq_push(qv, au.as_ptr(), au.len() as c_int, PLAYHEAD_NS + 600_000_000, 1, 1);
+        assert!(crate::aq::aq_would_park(qv));
+        rig.frame();
+        assert_eq!(rig.pauses(), pauses, "a full lane is not a short runway");
     }
 
     #[test]
