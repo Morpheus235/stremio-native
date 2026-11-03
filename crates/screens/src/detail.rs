@@ -3194,7 +3194,7 @@ mod tests {
         let view = StreamView { order: crate::stores::settings::ORDER_LANGUAGE, server: Some("http://192.168.1.40:11470/".into()), ..StreamView::default() };
         let b = build_marked(&movie(), None, Some(&groups), None, "", &[], None, &view);
         let labels: Vec<&str> = b.sections[0].rows.iter().map(|r| r.label.as_str()).collect();
-        assert_eq!(labels, ["Film.Torrent", "Film.Link", "Film.Elsewhere"], "the torrent keeps its place; what cannot play is last");
+        assert_eq!(labels, ["Film Torrent", "Film Link", "Film Elsewhere"], "the torrent keeps its place; what cannot play is last");
         match &b.actions[0] {
             Some(Action::Play(req)) => {
                 assert_eq!(
@@ -4429,7 +4429,7 @@ mod tests {
         app.notify(StoreId::Settings, gen);
         app.frames(20);
         let page = detail_page(&app);
-        assert_eq!(page.sections()[0].rows.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(), ["Film.Torrent", "Film.One"], "the torrent is not sorted after the links");
+        assert_eq!(page.sections()[0].rows.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(), ["Film Torrent", "Film One"], "the torrent is not sorted after the links");
         assert_eq!(app.d.focus().map(|k| k.elem), Some(STREAM_KEY), "…and is the first seat");
         app.take_effects();
         app.press(Key::Ok);
