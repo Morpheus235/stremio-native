@@ -63,6 +63,10 @@ use crate::tv::youtube::Outcome;
 /// The YouTube app's application id on webOS.
 pub const APP_ID: &str = "youtube.leanback.v4";
 
+/// The homebrew Cobalt YouTube some rooted sets carry instead of [`APP_ID`]: launched with the
+/// same `contentTarget` when the application manager says the official app does "not exist".
+pub const COBALT_APP_ID: &str = "com.cobalt.youtube.adfree";
+
 const LAUNCH: &str = "luna://com.webos.applicationManager/launch";
 const RUNNING: &str = "luna://com.webos.applicationManager/running";
 
@@ -145,6 +149,21 @@ fn send(bus: &mut dyn Bus, payload: &str) -> Result<(), Outcome> {
     }
 }
 
+/// [`send`], and on "not exist" (no official app on this set) the same video to [`COBALT_APP_ID`].
+fn launch(bus: &mut dyn Bus, id: &str, payload: &str) -> Outcome {
+    match send(bus, payload) {
+        Ok(()) => Outcome::Opened,
+        Err(Outcome::Refused { error_text }) if error_text == "not exist" => {
+            let cobalt = serde_json::json!({ "id": COBALT_APP_ID, "params": { "contentTarget": format!("v={id}") } }).to_string();
+            match send(bus, &cobalt) {
+                Ok(()) => Outcome::Opened,
+                Err(outcome) => outcome,
+            }
+        }
+        Err(outcome) => outcome,
+    }
+}
+
 /// The whole in-app sequence for video `id` on webOS major version `webos_major` (module doc).
 pub fn run(bus: &mut dyn Bus, id: &str, webos_major: u32) -> Outcome {
     let Some(payload) = launch_payload(id) else {
@@ -154,10 +173,7 @@ pub fn run(bus: &mut dyn Bus, id: &str, webos_major: u32) -> Outcome {
     bus.log(&format!("youtube: opening trailer {id}"));
     if !needs_helper(webos_major) {
         bus.log(&format!("youtube: webOS major {webos_major}: one launch, no helper (the two-step launch was measured on {HELPER_WEBOS_MAJOR})"));
-        return match send(bus, &payload) {
-            Ok(()) => Outcome::Opened,
-            Err(outcome) => outcome,
-        };
+        return launch(bus, id, &payload);
     }
     // a failed or refused `running` is no reason to stop: YouTube is then taken as not running,
     // which starts the helper and launches once, and at worst the video plays after the menu
@@ -405,6 +421,19 @@ mod tests {
             assert_eq!(f.payloads, [launch_payload("PLl99DlL6b4").unwrap()], "{major}");
             assert!(logged(&f, "one launch, no helper"), "{major}: {:?}", f.logs);
         }
+    }
+
+    /// A TV without the official app ("not exist") gets the launch sent to the homebrew Cobalt
+    /// YouTube instead (measured on a C1, webOS 6: a cold start plays the video at once).
+    #[test]
+    fn a_missing_official_app_falls_back_to_cobalt() {
+        const NOT_EXIST: &str = r#"{"errorCode":-101,"returnValue":false,"errorText":"not exist"}"#;
+        let mut f = Fake::new().reply(LAUNCH, &[Ok(NOT_EXIST), Ok(OK)]);
+        assert_eq!(run(&mut f, "PLl99DlL6b4", 6), Outcome::Opened);
+        assert_eq!(f.steps(), ["launch", "launch"]);
+        assert_eq!(f.payloads[1], r#"{"id":"com.cobalt.youtube.adfree","params":{"contentTarget":"v=PLl99DlL6b4"}}"#);
+        let mut f = Fake::new().reply(LAUNCH, &[Ok(NOT_EXIST), Ok(NOT_EXIST)]);
+        assert_eq!(run(&mut f, "PLl99DlL6b4", 6), Outcome::Refused { error_text: "not exist".into() }, "neither app: the toast");
     }
 
     /// On another version a refused launch or a bus failure is still the toast, and a spawn is
