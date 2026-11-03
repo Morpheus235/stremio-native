@@ -370,9 +370,9 @@ fn service(name: &str) -> Option<&'static str> {
         ("offcloud", "OC"),
         ("pikpak", "PKP"),
     ];
-    let upper = name.to_ascii_uppercase();
+    // codes as written, in capitals: a lowercase "pm" ("pad-Ani pm") is no Premiumize
     let lower = name.to_lowercase();
-    CODES.into_iter().find(|c| has_word(&upper, c)).or_else(|| NAMES.iter().find(|(n, _)| lower.contains(n)).map(|(_, c)| *c))
+    CODES.into_iter().find(|c| has_word(name, c)).or_else(|| NAMES.iter().find(|(n, _)| lower.contains(n)).map(|(_, c)| *c))
 }
 
 /// The release group (see [`Facts::group`]).
@@ -666,6 +666,7 @@ mod tests {
             ("[HD+] Kanal", "Film 2024"),
             ("Addon 1080p", "Film [18+] 2024"),
             ("Archive 1080p", "Cached.Memories.2024.1080p"),
+            ("PenguPlay 1080p\n1080pHLS pad-Ani pm", "Film 2024"),
         ] {
             let f = row(name, body, Some("http"));
             assert!(!f.debrid && !f.debrid_only_keeps(), "{name}");
