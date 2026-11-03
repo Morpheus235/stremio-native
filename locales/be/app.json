@@ -28,7 +28,8 @@
   "app.detail.streams": "Патокі",
   "app.detail.not_playable": "Тут не прайграецца",
   "app.detail.stream_cached": "У кэшы",
-  "app.detail.stream_uncached": "Не ў кэшы — пачне спампоўку",
+  "app.detail.stream_uncached": "Яшчэ не ў кэшы",
+  "app.detail.stream_upscaled": "Апскейл",
   "app.detail.stream_live": "ЭФІР",
   "app.detail.stream_seeders": "{count} сідараў",
   "app.settings.stream_languages": "Парадак патокаў",
@@ -62,6 +63,7 @@
   "app.settings.next_same": "Той жа рэліз",
   "app.settings.next_choose": "Заўсёды выбіраць",
   "app.detail.upcoming": "Неўзабаве",
+  "app.detail.tba": "Дата невядомая",
   "app.detail.all_episodes": "Усе серыі",
   "app.detail.cast": "У ролях: {names}",
   "app.detail.director": "Рэжысёр: {names}",
@@ -70,7 +72,7 @@
   "app.detail.director_label": "Рэжысёр",
   "app.detail.summary_label": "Апісанне",
   "app.player.refused": "Гэтую трансляцыю немагчыма прайграць",
-  "app.player.debrid_downloading": "Яшчэ спампоўваецца ў вашым debrid-сэрвісе — паспрабуйце зноў праз некалькі хвілін",
+  "app.player.debrid_downloading": "Яшчэ спампоўваецца ў вашым debrid-сэрвісе. Паспрабуйце зноў праз некалькі хвілін.",
   "app.player.audio": "Аўдыё",
   "app.player.subtitles": "Субтытры",
   "app.player.subtitles_off": "Выкл.",
@@ -271,6 +273,7 @@
   "app.reason.cancelled": "скасавана",
   "app.reason.api_error": "памылка {code}",
   "app.detail.why_torrent": "Торэнтам патрэбны струменевы сервер: наладзьце яго ў Налады > Патокі",
+  "app.detail.why_torrent_offline": "Струменевы сервер не адказвае: праверце, ці працуе ён, або выберыце іншы ў Налады > Патокі",
   "app.detail.why_youtube": "Відэа YouTube не прайграюцца ў гэтай праграме",
   "app.detail.why_external": "Гэты паток адкрываецца ў іншай праграме ці на сайце, не тут",
   "app.detail.quiet_addons": {
@@ -377,6 +380,42 @@
   "app.settings.server_unreachable": "Недаступны",
   "app.settings.server_checking": "Праверка…",
   "app.settings.server_version": "Версія {version}",
+  "app.settings.theme": {
+    "value": "Тэма",
+    "description": "Settings: row and picker title — the app's colour theme."
+  },
+  "app.settings.theme_copy": {
+    "value": "Колеры праграмы: адценне фону і колер акцэнту. Чорны OLED выключае пікселі фону на OLED-экране.",
+    "description": "Theme picker: the line under the title."
+  },
+  "app.settings.theme_stremio": {
+    "value": "Stremio",
+    "description": "Theme option: Stremio's own violet (the default)."
+  },
+  "app.settings.theme_graphite": {
+    "value": "Графіт",
+    "description": "Theme option: neutral grey with a white accent."
+  },
+  "app.settings.theme_ocean": {
+    "value": "Акіян",
+    "description": "Theme option: deep blue."
+  },
+  "app.settings.theme_crimson": {
+    "value": "Кармін",
+    "description": "Theme option: deep red."
+  },
+  "app.settings.theme_emerald": {
+    "value": "Смарагд",
+    "description": "Theme option: deep green."
+  },
+  "app.settings.theme_gold": {
+    "value": "Золата",
+    "description": "Theme option: warm dark with a gold accent."
+  },
+  "app.settings.theme_oled": {
+    "value": "Чорны OLED",
+    "description": "Theme option: a true black background for OLED screens."
+  },
   "app.settings.debrid_only": "Толькі debrid-патокі",
   "app.settings.debrid_only_copy": "Укл.: толькі патокі з debrid-сэрвісу, у кэшы або не. Патокі без згадкі debrid схаваны. Выкл.: усе патокі.",
   "app.detail.no_debrid_streams": "Няма debrid-патокаў",

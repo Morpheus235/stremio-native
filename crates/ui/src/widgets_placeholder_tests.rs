@@ -219,7 +219,7 @@ fn a_failed_or_empty_readout_is_an_answer_not_a_wait() {
 
 fn chip(thumb: &str) -> placeholder::Frame {
     placeholder::capture_declared(|| {
-        let data = ProfileChipRead { src: 0, thumb, initial: c"G", name: c"Guest", name_w: 60.0, fill: crate::theme::CONTROL_IDLE_FILL, rest_open: false, current: false, bar_focused: false };
+        let data = ProfileChipRead { src: 0, thumb, initial: c"G", name: c"Guest", name_w: 60.0, fill: crate::theme::CONTROL_IDLE_FILL(), rest_open: false, current: false, bar_focused: false };
         profile_chip_with(Painter::root(), data, 0.0, None)
     })
     .1

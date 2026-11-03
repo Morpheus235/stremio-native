@@ -72,7 +72,7 @@
   "widgets.reason.video_unsupported": "Este televisor no tiene decodificador para este formato de vídeo; elige otra fuente",
   "widgets.panel.video_unsupported": "el televisor no tiene decodificador para el vídeo",
   "widgets.failure.video_not_streamable": "Error de reproducción: este formato de vídeo no se puede transmitir en este televisor",
-  "widgets.reason.video_not_streamable": "Este televisor solo transmite vídeo H.264, HEVC, AV1, VP9 y VP8 — no Xvid/DivX, MPEG-2, H.263, VC-1/WMV ni RealVideo; elige otra fuente",
+  "widgets.reason.video_not_streamable": "Este televisor solo transmite vídeo H.264, HEVC, AV1, VP9 y VP8, no Xvid/DivX, MPEG-2, H.263, VC-1/WMV ni RealVideo. Elige otra fuente.",
   "widgets.panel.video_not_streamable": "el reproductor de transmisión del televisor no acepta este formato de vídeo",
   "widgets.failure.dolby_vision": "Error de reproducción: esta fuente Dolby Vision no se puede mostrar correctamente aquí",
   "widgets.reason.dolby_vision": "Esta fuente Dolby Vision no tiene una imagen que este televisor pueda mostrar sin Dolby Vision; elige otra fuente",

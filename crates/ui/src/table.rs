@@ -634,9 +634,15 @@ const GAP: f32 = 16.0; // check→label gap
 pub const PILL_RAD: f32 = theme::radius::PILL;
 /// Pill inset from the row's top/bottom. `pub` for the [`ROW_H`] caller shape.
 pub const PILL_INSET: f32 = 3.0;
-const PANEL_BG: [f32; 4] = theme::SURFACE_PANEL; // opaque panel colour — fade masks + badge knockout
+#[allow(non_snake_case)]
+fn PANEL_BG() -> [f32; 4] {
+    theme::SURFACE_PANEL() // opaque panel colour — fade masks + badge knockout
+}
 /// A still row's card ground (the grouped card's own surface, which a section of cards does not draw).
-const STILL_CARD_BG: [f32; 4] = theme::SURFACE_GROUP;
+#[allow(non_snake_case)]
+fn STILL_CARD_BG() -> [f32; 4] {
+    theme::SURFACE_GROUP()
+}
 /// Air between two chips of one right-aligned badge run (a subtitle row's `FORCED` + `SDH`).
 const BADGE_GAP: f32 = 10.0;
 const ACCESSORY_GAP: f32 = 14.0;
@@ -1840,7 +1846,7 @@ impl TableView {
 
         let white = theme::TEXT_PRIMARY;
         let dimc = theme::TEXT_TERTIARY; // was #8a8a8e; unified onto the tertiary grey
-        let ink = crate::ACCENT_INK; // text/glyph over the light pill
+        let ink = crate::ACCENT_INK(); // text/glyph over the light pill
         let content_x = frame.x + SIDE + CONTENT_PAD;
         let text_right = frame.x + frame.w - SIDE - CONTENT_PAD;
 
@@ -1853,7 +1859,7 @@ impl TableView {
                 }
                 let r = Rect::new(frame.x, top0 + top - scroll - GROUP_PAD, frame.w, bot - top + 2.0 * GROUP_PAD);
                 if r.y + r.h > vis_top && r.y < vis_bot {
-                    self.group_painter(p, si).rrect(r, GROUP_RAD, GROUP_RAD, theme::SURFACE_GROUP);
+                    self.group_painter(p, si).rrect(r, GROUP_RAD, GROUP_RAD, theme::SURFACE_GROUP());
                 }
             }
         }
@@ -1877,7 +1883,7 @@ impl TableView {
                 pill,
                 PILL_RAD,
                 PILL_RAD,
-                theme::FOCUS_FILL,
+                theme::FOCUS_FILL(),
             );
         }
 
@@ -2060,7 +2066,7 @@ impl TableView {
                 c => theme::cross(rest, over, c),
             };
             let base = on_pill(if row.dim { dimc } else { white }, ink);
-            let row_bg = on_pill(PANEL_BG, theme::FOCUS_FILL);
+            let row_bg = on_pill(PANEL_BG(), theme::FOCUS_FILL());
             let cyc = sy + h * 0.5; // row vertical center
 
             // Leading column (SVG): the PICKER's tick, or an ACTION's glyph — one or the other, and
@@ -2072,7 +2078,7 @@ impl TableView {
                 // the card's own ground, which the sliding pill (drawn under the rows) takes over
                 // as it covers the row
                 if cover < 1.0 {
-                    p.alpha(1.0 - cover.max(0.0)).rrect(card, PILL_RAD, PILL_RAD, STILL_CARD_BG);
+                    p.alpha(1.0 - cover.max(0.0)).rrect(card, PILL_RAD, PILL_RAD, STILL_CARD_BG());
                 }
                 let r = Rect::new(card.x, card.y, STILL_W, card.h);
                 draw_still(p, r, url);
@@ -2160,7 +2166,7 @@ impl TableView {
             }
             // A CHIP row (a stream list): the side column, a wrapped title, one line of chips.
             if let Some((source, tag)) = &row.side {
-                let sub = on_pill(dimc, theme::INK_ON_ACCENT_SECONDARY);
+                let sub = on_pill(dimc, theme::INK_ON_ACCENT_SECONDARY());
                 // the side column: the source over its tag, centred on the row as a pair
                 let (ssz, qsz) = (SIDE_SZ, theme::size::LABEL);
                 let (s_top, s_base) = sn_gfx::text::text_cap_band(ssz, 0);
@@ -2209,7 +2215,7 @@ impl TableView {
                     let mut bx = label_x;
                     for c in row.chips[*a..*b].iter().chain(tail) {
                         let (col, ring) = if c.quiet {
-                            (sub, on_pill(theme::OVERLAY_BORDER_QUIET, theme::INK_ON_ACCENT_SECONDARY))
+                            (sub, on_pill(theme::OVERLAY_BORDER_QUIET, theme::INK_ON_ACCENT_SECONDARY()))
                         } else {
                             (base, on_pill(theme::OVERLAY_BORDER, ink))
                         };
@@ -2308,7 +2314,7 @@ impl TableView {
             // while the badges sat on the title's line: right-aligned and row-centred, a chip now
             // occupies the sub-line's band too, and an unbounded sub-line would run under it.
             if !row.detail.is_empty() {
-                let sub = on_pill(dimc, theme::INK_ON_ACCENT_SECONDARY);
+                let sub = on_pill(dimc, theme::INK_ON_ACCENT_SECONDARY());
                 let detail = sn_gfx::text::elide_by(&row.detail, text_w, false, |t| {
                     measure.width_str(t, theme::size::CAPTION, false)
                 });
@@ -2432,8 +2438,8 @@ fn draw_still(p: Painter, r: Rect, url: &str) {
 /// read-out takes the quiet rung.
 fn row_value_ink(row: &Row, focused: bool) -> [f32; 4] {
     match (focused, row.dim, row.value_dim) {
-        (true, false, false) => theme::ROW_VALUE_INK_ON,
-        (true, _, _) => theme::ROW_VALUE_INK_ON_DIM,
+        (true, false, false) => theme::ROW_VALUE_INK_ON(),
+        (true, _, _) => theme::ROW_VALUE_INK_ON_DIM(),
         (false, true, _) => theme::ROW_VALUE_INK_DIM,
         (false, false, false) => theme::TEXT_SECONDARY,
         (false, false, true) => theme::TEXT_TERTIARY,
@@ -2454,9 +2460,9 @@ mod tests {
             let (x, y) = (luma(a), luma(b));
             (x.max(y) + 0.05) / (x.min(y) + 0.05)
         };
-        let fill = theme::FOCUS_FILL;
-        assert!(contrast(crate::ACCENT_INK, fill) >= 5.0, "primary {}", contrast(crate::ACCENT_INK, fill));
-        let sec = over(theme::INK_ON_ACCENT_SECONDARY, fill);
+        let fill = theme::FOCUS_FILL();
+        assert!(contrast(crate::ACCENT_INK(), fill) >= 5.0, "primary {}", contrast(crate::ACCENT_INK(), fill));
+        let sec = over(theme::INK_ON_ACCENT_SECONDARY(), fill);
         assert!(contrast(sec, fill) >= 3.0, "secondary {}", contrast(sec, fill));
         assert!(fill[2] > fill[0] && fill[2] > fill[1], "still the violet");
     }
@@ -2482,10 +2488,10 @@ mod tests {
         // an undimmed, unquietened read-out is unchanged
         let plain = Row::new("Audio").value("English");
         assert_eq!(row_value_ink(&plain, false), theme::TEXT_SECONDARY);
-        assert_eq!(row_value_ink(&plain, true), theme::ROW_VALUE_INK_ON);
+        assert_eq!(row_value_ink(&plain, true), theme::ROW_VALUE_INK_ON());
         // over the focused pill a dim row's read-out takes the quiet rung
         let dim_plain = Row::new("Audio").value("English").dim(true);
-        assert_eq!(row_value_ink(&dim_plain, true), theme::ROW_VALUE_INK_ON_DIM);
+        assert_eq!(row_value_ink(&dim_plain, true), theme::ROW_VALUE_INK_ON_DIM());
     }
 
     #[test]

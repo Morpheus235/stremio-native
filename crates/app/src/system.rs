@@ -20,11 +20,15 @@ extern "C" {
     fn SDL_GetVersion(ver: *mut u8);
 }
 
-// Only a television has these: the Wayland marshaller and glib's main context. The host suite
-// links neither, and reaches none of the calls (the surface pointer is null there).
 #[cfg(not(test))]
 extern "C" {
     fn SDL_GetWindowWMInfo(window: *mut c_void, info: *mut c_void) -> c_int;
+}
+
+// Only a television has these: the Wayland marshaller and glib's main context. Neither the host
+// suite nor the desktop simulator links them, and neither reaches the calls (no Wayland surface).
+#[cfg(not(any(test, feature = "hostsim")))]
+extern "C" {
     fn wl_proxy_marshal(proxy: *mut c_void, opcode: u32, ...);
     fn g_main_context_pending(ctx: *mut c_void) -> c_int;
     fn g_main_context_iteration(ctx: *mut c_void, may_block: c_int) -> c_int;
@@ -50,13 +54,13 @@ pub(crate) fn clear_opaque_region() {
     if surface.is_null() {
         return;
     }
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "hostsim")))]
     // SAFETY: `surface` is SDL's live wl_surface (revoked on background before SDL may drop it);
     // opcode 4 takes one nullable `wl_region`.
     unsafe {
         wl_proxy_marshal(surface, WL_SURFACE_SET_OPAQUE_REGION, std::ptr::null_mut::<c_void>());
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "hostsim"))]
     let _ = WL_SURFACE_SET_OPAQUE_REGION;
 }
 
@@ -85,7 +89,7 @@ pub(crate) fn sys_release_wayland() -> bool {
 
 /// Service the glib main context luna-service2 replies arrive on, at most eight dispatches a frame.
 pub(crate) fn ls2_pump() {
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "hostsim")))]
     // SAFETY: the default main context, on the thread that owns it.
     unsafe {
         let mut guard = 8;

@@ -636,7 +636,7 @@ mod tests {
             skeleton(Painter::root(), Reason::CardSkeleton, "/library/metadata/1/thumb", rect(), 8.0);
             ground(Painter::root(), Reason::CardGround, "/p", rect(), 8.0);
             flat(Painter::root(), Reason::InfoPanelStill, "", rect(), 8.0);
-            face(Painter::root(), Reason::ProfileChip, "/a", rect(), 8.0, theme::CONTROL_IDLE_FILL, theme::CONTROL_IDLE_FILL);
+            face(Painter::root(), Reason::ProfileChip, "/a", rect(), 8.0, theme::CONTROL_IDLE_FILL(), theme::CONTROL_IDLE_FILL());
         });
         assert_eq!(f.count, 4);
         assert_eq!(

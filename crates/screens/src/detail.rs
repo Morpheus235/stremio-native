@@ -19,9 +19,11 @@
 //!   again (`AddonsStore::stream_filter`, persisted on the device, never the account). The popover
 //!   stays open while OK toggles, as Search's addon filter does; an addon switched off is not listed.
 //!
-//! A stream row is a `sn_ui::table` CHIP row: the stream's own `name` ("[TB⚡] Comet" over
-//! "1080p", TvVoo's "Proxy" / "Vavoo"; the addon's only when it sent none) in the side column, over
-//! the resolution when the name does not say one, as Stremio shows it; the release's name (two lines at most; the FOCUSED row grows to its whole name
+//! A stream row is a `sn_ui::table` CHIP row: in the side column the debrid service over the
+//! resolution ("TB" / "1080p", `Facts::service`; the addon's name is the section header), or for a
+//! live stream or one without a resolution its own `name` (TvVoo's "Proxy" / "Vavoo"; the addon's
+//! only when it sent none); the release's name spaced into words (`Facts::label`: "Film 2024 2160p
+//! DDP5.1 H.265-GRP", the folder and extension of AIOStreams' "📁" line dropped; two lines at most; the FOCUSED row grows to its whole name
 //! and every chip, wrapped, where at rest the chips that do not fit read "+N") and one line of chips under it — the
 //! live mark (`behaviorHints.isLive`, or a `tv` item), the debrid cache state, HDR, codec, audio,
 //! source, size, languages, seeders
@@ -406,7 +408,7 @@ fn play_title(mode: &Mode) -> String {
     match mode {
         Mode::Item(i) | Mode::Resume(i) => i.name.clone(),
         Mode::Video(v) if v.title.is_empty() => v.show.clone(),
-        Mode::Video(v) => format!("{} \u{2014} {}", v.show, v.title),
+        Mode::Video(v) => format!("{} \u{b7} {}", v.show, v.title),
     }
 }
 
@@ -445,6 +447,9 @@ pub struct StreamView {
     /// The streaming server in use (`SettingsStore::streaming_server`): with one, a torrent plays
     /// through it; without, a torrent row only explains.
     pub server: Option<String>,
+    /// The server is set but did not answer its last check: a torrent row only explains, as
+    /// without one, and says the server is down.
+    pub server_down: bool,
     /// `Pref::DebridOnly`: a stream whose text says nothing about debrid is not listed (cached and
     /// uncached debrid streams are, [`Facts::debrid_only_keeps`]).
     pub debrid_only: bool,
@@ -557,16 +562,23 @@ fn stream_sections(out: &mut Built, groups: &[StreamGroup], mode: &Mode, prefer:
         // elsewhere); a torrent with one is a stream like any other and keeps the addon's order
         let plays = |p: &Option<Playable>| match p {
             Some(Playable::Http { .. }) => true,
-            Some(Playable::Torrent { .. }) => view.server.is_some(),
+            Some(Playable::Torrent { .. }) => view.server.is_some() && !view.server_down,
             _ => false,
         };
         order.sort_by_key(|si| !plays(&playable[*si]));
         for si in order {
             let f = &facts[si];
-            let label = if f.title.is_empty() { group.addon_name.clone() } else { f.title.clone() };
-            // the stream's own name, as Stremio shows it; the addon's only when it sent none
-            let name = if f.name.is_empty() { group.addon_name.clone() } else { f.name.clone() };
-            let mut row = Row::new(label).server_label().side(name, f.side_tag());
+            let label = if f.title.is_empty() { group.addon_name.clone() } else { f.label() };
+            // the debrid service over the quality ("RD" / "4K", the quality in the side column's strong tag): the addon's name is the section's
+            // header already. A live stream, or one with no resolution, keeps its own name (TvVoo's "Proxy"),
+            // the addon's only when it sent none.
+            let mut row = match f.resolution.filter(|_| !f.live) {
+                Some(r) => Row::new(label).server_label().side(f.service().unwrap_or(""), r),
+                None => {
+                    let name = if f.name.is_empty() { group.addon_name.clone() } else { f.name.clone() };
+                    Row::new(label).server_label().side(name, f.side_tag())
+                }
+            };
             for c in stream_chips(f) {
                 row = row.chip(c);
             }
@@ -576,6 +588,7 @@ fn stream_sections(out: &mut Built, groups: &[StreamGroup], mode: &Mode, prefer:
                 Some(Playable::Torrent { info_hash, file_idx, sources }) => view
                     .server
                     .as_deref()
+                    .filter(|_| !view.server_down)
                     .map(|base| (sn_stremio::streaming_server::torrent_url(base, &info_hash, file_idx, &sources), Vec::new())),
                 _ => None,
             };
@@ -602,7 +615,10 @@ fn stream_sections(out: &mut Built, groups: &[StreamGroup], mode: &Mode, prefer:
                 None => {
                     // still a stop: OK says why it does not play here
                     row = row.value(msg::app_detail_not_playable()).dim(true);
-                    Action::Explain(unplayable_reason(playable[si].as_ref()))
+                    Action::Explain(match &playable[si] {
+                        Some(Playable::Torrent { .. }) if view.server.is_some() => msg::app_detail_why_torrent_offline(),
+                        p => unplayable_reason(p.as_ref()),
+                    })
                 }
             };
             out.row(&mut s, row, STREAM_KEY + ((gi as u32) << 12) + si as u32, Some(action));
@@ -643,7 +659,8 @@ fn stream_sections(out: &mut Built, groups: &[StreamGroup], mode: &Mode, prefer:
 ///   language, then the second, …, then a multi-audio release, then the rest.
 /// - `ORDER_QUALITY`: the same split, then the highest resolution first (none named: last).
 ///
-/// The addon's own order breaks every tie.
+/// In every order but the addon's, a cinema copy (CAM, telesync, …) goes after the releases in
+/// its split. The addon's own order breaks every tie.
 pub fn stream_order(facts: &[Facts], prefer: &[&str], by: u8) -> Vec<usize> {
     use crate::stores::settings::{ORDER_ADDON, ORDER_LANGUAGE};
     const RESOLUTIONS: [&str; 6] = ["4K", "1440p", "1080p", "720p", "576p", "480p"];
@@ -657,7 +674,7 @@ pub fn stream_order(facts: &[Facts], prefer: &[&str], by: u8) -> Vec<usize> {
         } else {
             f.resolution.and_then(|r| RESOLUTIONS.iter().position(|x| *x == r)).unwrap_or(RESOLUTIONS.len())
         };
-        (download, then)
+        (download, f.cinema_copy(), then)
     };
     let mut order: Vec<usize> = (0..facts.len()).collect();
     if by != ORDER_ADDON {
@@ -672,8 +689,8 @@ const CHIP_LANGUAGES: usize = 3;
 /// A stream row's facts, most telling first (the line drops them from the end), each an
 /// ICON-LED line as stremio-web's stream rows read (`Chip::icon`, drawn without a ground): ⚡ the
 /// cache state, 🎞 the picture (codec · range), ♫ the sound, 🛡 the source (and the release
-/// group), the size, 🌐 the languages, the seeders. An uncached stream's caveat stays an outlined
-/// quiet chip (a warning, not a fact). Only the cache and live chips are app text that must show;
+/// group), the size, 🌐 the languages, CC the subtitles, the seeders. An uncached or upscaled
+/// stream's caveat stays an outlined quiet chip (a warning, not a fact). Only the cache and live chips are app text that must show;
 /// the rest are facts read from the addon's text and may give way.
 pub fn stream_chips(f: &Facts) -> Vec<RowChip> {
     use sn_ui::icons::Icon;
@@ -689,6 +706,9 @@ pub fn stream_chips(f: &Facts) -> Vec<RowChip> {
         Some(true) => out.push(RowChip::new(msg::app_detail_stream_cached()).icon(Icon::Bolt)),
         Some(false) => out.push(RowChip::new(msg::app_detail_stream_uncached()).quiet()),
         None => {}
+    }
+    if f.upscaled {
+        out.push(RowChip::new(msg::app_detail_stream_upscaled()).quiet());
     }
     // the picture: the range leads (it is what a viewer chooses by), the codec follows it on the
     // same line as plain text, so the most telling word keeps its room when the line is short
@@ -707,12 +727,15 @@ pub fn stream_chips(f: &Facts) -> Vec<RowChip> {
     if let Some(b) = f.size {
         out.push(RowChip::new(sn_ui::fmt::bytes(i64::try_from(b).unwrap_or(i64::MAX), (1, 0, 0))).server().icon(Icon::Drive));
     }
+    let codes = |c: &[&str]| {
+        let more = c.len().saturating_sub(CHIP_LANGUAGES);
+        c[..c.len() - more].join(" \u{b7} ") + &if more > 0 { format!(" +{more}") } else { String::new() }
+    };
     if !f.languages.is_empty() {
-        let mut langs = f.languages.iter().take(CHIP_LANGUAGES).copied().collect::<Vec<_>>().join(" \u{b7} ");
-        if f.languages.len() > CHIP_LANGUAGES {
-            langs.push_str(&format!(" +{}", f.languages.len() - CHIP_LANGUAGES));
-        }
-        out.push(RowChip::new(langs).server().icon(Icon::Globe));
+        out.push(RowChip::new(codes(&f.languages)).server().icon(Icon::Globe));
+    }
+    if !f.subs.is_empty() {
+        out.push(RowChip::new(codes(&f.subs)).server().icon(Icon::Cc));
     }
     if let Some(n) = f.seeders {
         out.push(RowChip::new(msg::app_detail_stream_seeders(i64::from(n))).server().icon(Icon::User));
@@ -840,20 +863,21 @@ pub fn info(mode: &Mode, meta: &Meta) -> Info {
         Mode::Video(v) => meta.videos.iter().find(|x| x.id == v.video_id),
         Mode::Item(_) | Mode::Resume(_) => None,
     };
-    let title = match video {
-        Some(v) => {
-            let address = sn_ui::fmt::episode_ordinal(i64::from(v.season.unwrap_or(0)), i64::from(v.episode.unwrap_or(0)));
-            Some(match text(Some(&v.title)) {
-                Some(t) => format!("{address} \u{b7} {t}"),
-                None => address,
-            })
-        }
-        None => text(Some(&p.name)),
+    // an episode's name is the title, on one line where it fits; its address ("S1, E5") is the
+    // caption that leads the facts line. An untitled episode is titled by its address.
+    let address = video.map(|v| sn_ui::fmt::episode_ordinal(i64::from(v.season.unwrap_or(0)), i64::from(v.episode.unwrap_or(0))));
+    let (title, caption) = match (video, &address) {
+        (Some(v), Some(a)) => match text(Some(&v.title)) {
+            Some(t) => (Some(t), Some(a.clone())),
+            None => (Some(a.clone()), None),
+        },
+        _ => (text(Some(&p.name)), None),
     };
     // an episode's air day in the UI language's date; a work's release info as the addon wrote it
     let date = match video {
         Some(v) => text(v.released.as_deref().map(|d| d.get(..10).unwrap_or(d))).map(|d| sn_ui::fmt::pretty_date(&d, 0)),
-        None => text(p.release_info.as_deref()),
+        // no releaseInfo: the year of `released`, as Stremio shows it
+        None => text(p.release_info.as_deref()).or_else(|| text(meta.released.as_deref().and_then(|d| d.get(..4)).filter(|y| y.bytes().all(|b| b.is_ascii_digit())))),
     };
     // the rating with the UI language's decimal mark (`7,5` in French); text it cannot read as a
     // number stays as the addon sent it
@@ -862,7 +886,7 @@ pub fn info(mode: &Mode, meta: &Meta) -> Info {
         Err(_) => format!("IMDb {r}"),
     });
     // the genres are chips of their own ([`meta_links`]), not words on this line
-    let facts = [date, text(meta.runtime.as_deref()), rating]
+    let facts = [caption, date, text(meta.runtime.as_deref()), rating]
         .into_iter()
         .flatten()
         .collect::<Vec<_>>()
@@ -909,7 +933,7 @@ fn draw_stream_panel(p: sn_ui::Painter) {
     let (x, y) = (stream_panel_x(), theme::space::LG);
     let rad = theme::DETAIL_STREAM_PANEL_RAD;
     let r = Rect::new(x, y, sn_ui::consts::SCR_W - x + rad, sn_ui::consts::SCR_H - y + rad);
-    p.rect(r, rad, theme::DETAIL_STREAM_PANEL, theme::DETAIL_STREAM_PANEL, 0.0);
+    p.rect(r, rad, theme::DETAIL_STREAM_PANEL(), theme::DETAIL_STREAM_PANEL(), 0.0);
 }
 
 /// The synopsis wraps to at most this many lines (fewer when the column is short), then elides.
@@ -1145,7 +1169,8 @@ fn episodes(out: &mut Built, item: &ItemRef, meta: &Meta, season: Option<u32>, t
     let Some(season) = season.filter(|s| all.contains(s)).or_else(|| all.first().copied()) else { return };
     let show = if meta.preview.name.is_empty() { item.name.clone() } else { meta.preview.name.clone() };
     // the season dropdown above the list names the season; with one season there is none
-    let mut s = Section::new(if all.len() > 1 { String::new() } else { season_label(season) });
+    let mut s = Section::new(if all.len() > 1 { String::new() } else { crate::episodes::season_name(meta, season) });
+    let today = crate::episodes::schedule_day(meta, today);
     for (i, v) in crate::episodes::of_season(meta, season) {
         let address = crate::episodes::address(season, v);
         let title = if v.title.trim().is_empty() { address.clone() } else { v.title.clone() };
@@ -1171,7 +1196,9 @@ fn episodes(out: &mut Built, item: &ItemRef, meta: &Meta, season: Option<u32>, t
 /// dropdown (one button saying the season listed, `dropdown`) or an episode page's one All
 /// episodes button (nothing checked); or a stream list's addon dropdown. The row slides so the
 /// focused chip stays on screen (the type chips' `sn_ui::value_chip::row_xs`), and never reaches
-/// past the content column.
+/// past the content column. The addon dropdown shares the chip row's line, after its chips
+/// ([`SeasonRow::after`]).
+#[derive(Clone)]
 pub struct SeasonRow<'a> {
     pub labels: &'a [CString],
     /// The row's first element key and its focus group: the chip row's ([`SEASON_KEY`],
@@ -1188,6 +1215,12 @@ pub struct SeasonRow<'a> {
     /// The first label is a dropdown's (`crate::dropdown`'s button: a chevron, no check); the rest
     /// are buttons.
     pub dropdown: bool,
+    /// The row this one starts after, on the same line (the addon dropdown after an episode
+    /// page's All episodes and watched buttons); `None` starts at the column's left edge. LEFT
+    /// off this row's first chip goes to that row's last.
+    pub after: Option<Box<SeasonRow<'a>>>,
+    /// Where RIGHT off the last chip goes: the addon dropdown that follows on the line.
+    pub then: Option<FocusKey<u32>>,
 }
 
 impl SeasonRow<'_> {
@@ -1218,8 +1251,10 @@ impl SeasonRow<'_> {
                 .map(|w| w.min(self.frame.w))
                 .collect()
         });
-        // row_xs lays the row from the safe margin; this one starts at the content column
-        let off = self.frame.x - sn_ui::consts::MARGIN_X;
+        // row_xs lays the row from the safe margin; this one starts at the content column, or
+        // after the row it follows
+        let start = self.after.as_ref().and_then(|a| a.end_x(measure)).map_or(self.frame.x, |x| x + theme::space::SM);
+        let off = start - sn_ui::consts::MARGIN_X;
         let mut xs: Vec<f32> = sn_ui::value_chip::row_xs(widths, focused, theme::space::SM).into_iter().map(|x| x + off).collect();
         if let Some(i) = focused.filter(|i| *i < xs.len()) {
             let over = (xs[i] + widths[i] - (self.frame.x + self.frame.w)).max(0.0);
@@ -1232,22 +1267,31 @@ impl SeasonRow<'_> {
         focus.filter(|k| k.entry == self.entry).and_then(|k| self.index_of(k.elem))
     }
 
-    fn extent(&self) -> Rect {
-        Rect::new(self.frame.x, self.frame.y, self.frame.w, crate::type_filter::CHIP_H)
+    /// Where the row's last chip ends, at rest.
+    fn end_x(&self, measure: &dyn Measure) -> Option<f32> {
+        self.rects(measure, None).last().map(|r| r.x + r.w)
+    }
+
+    /// The row's band: the column's width, from where the row starts. Wide on purpose, so LEFT
+    /// off the list never reads it as a neighbour beside it (its centre is not left of the list's).
+    fn extent(&self, measure: &dyn Measure) -> Rect {
+        let x = self.rects(measure, None).first().map_or(self.frame.x, |r| r.x.max(self.frame.x));
+        Rect::new(x, self.frame.y, self.frame.x + self.frame.w - x, crate::type_filter::CHIP_H)
     }
 }
 
 impl Focusable<Bundle> for SeasonRow<'_> {
-    fn groups(&self, _cx: &Cx<'_, Bundle>, out: &mut Vec<GroupSpec>) {
+    fn groups(&self, cx: &Cx<'_, Bundle>, out: &mut Vec<GroupSpec>) {
         out.push(GroupSpec {
             id: self.group,
             kind: GroupKind::Row { wrap: false },
             seat: Seat::Remembered,
             reachable: AxisMask::BOTH,
             // [up, down, left, right]: DOWN to the episodes, LEFT to the library button (an item
-            // page's; with none it stops), RIGHT stops at the row's end
+            // page's; with none it stops), RIGHT stops at the row's end. Between the chip row and
+            // the addon dropdown after it, `neighbour` steps itself (`after`, `then`).
             edge: [EdgeRule::Geometric, EdgeRule::Geometric, EdgeRule::Geometric, EdgeRule::Stop],
-            extent: self.extent(),
+            extent: self.extent(cx.measure),
             len: self.labels.len(),
             elem: ElemKind::Control,
         });
@@ -1260,6 +1304,11 @@ impl Focusable<Bundle> for SeasonRow<'_> {
         match dir {
             Dir::Left if n > 0 => Step::Move(self.key(n - 1)),
             Dir::Right if n + 1 < self.labels.len() => Step::Move(self.key(n + 1)),
+            Dir::Left => match &self.after {
+                Some(a) if !a.labels.is_empty() => Step::Move(a.key(a.labels.len() - 1)),
+                _ => Step::Edge,
+            },
+            Dir::Right => self.then.map_or(Step::Edge, Step::Move),
             _ => Step::Edge,
         }
     }
@@ -1668,10 +1717,10 @@ impl Composed<Bundle> for DetailView<'_> {
     fn layout(&self, cx: &Cx<'_, Bundle>) -> Vec<(PartId, Rect)> {
         let mut v = self.screen.layout(cx);
         if let Some(row) = &self.seasons {
-            v.push((SEASONS_PART, row.extent()));
+            v.push((SEASONS_PART, row.extent(cx.measure)));
         }
         if let Some(row) = &self.addons {
-            v.push((ADDONS_PART, row.extent()));
+            v.push((ADDONS_PART, row.extent(cx.measure)));
         }
         if let Some(b) = &self.library {
             v.push((LIBRARY_PART, b.extent(cx.measure)));
@@ -1716,6 +1765,7 @@ impl Focusable<Bundle> for DetailView<'_> {
                 table.edge[2] = EdgeRule::Geometric;
             }
         }
+
     }
     fn group_of(&self, key: &u32, cx: &Cx<'_, Bundle>) -> Option<GroupId> {
         composed_group_of(self, key, cx)
@@ -1760,7 +1810,7 @@ pub struct DetailScreen {
     table: TableView,
     built: Built,
     /// What the store held at the last build, and the settings it was ordered by.
-    built_gen: Option<(u32, u32, u32)>,
+    built_gen: Option<(u32, u32, u32, u32)>,
     /// The streams this page holds open: the item's own, or a series' that listed no video.
     streams: Option<StreamKey>,
     /// The meta this page holds open.
@@ -2214,7 +2264,8 @@ impl DetailScreen {
     /// The table's frame: the route's sectioned frame, under the chip row when it shows.
     fn table_frame(&self) -> Rect {
         let f = detail_layout().sectioned_table();
-        let rows = usize::from(self.chip_row().is_some()) + usize::from(!self.addon_label.is_empty());
+        // the chip row and the addon dropdown share one line
+        let rows = usize::from(self.chip_row().is_some() || !self.addon_label.is_empty());
         let band = crate::type_filter::BAND * rows as f32;
         Rect::new(f.x, f.y + band, f.w, f.h - band)
     }
@@ -2239,20 +2290,20 @@ impl DetailScreen {
             frame: detail_layout().sectioned_table(),
             widths: &self.season_widths,
             dropdown: self.chips.first() == Some(&Chip::Seasons),
+            after: None,
+            then: (!self.addon_label.is_empty()).then_some(FocusKey { entry: self.entry, elem: ADDON_KEY }),
         });
-        let addons = (!self.addon_label.is_empty()).then(|| {
-            let f = detail_layout().sectioned_table();
-            let top = if self.chip_row().is_some() { crate::type_filter::BAND } else { 0.0 };
-            SeasonRow {
-                labels: &self.addon_label,
-                base: ADDON_KEY,
-                group: ADDON_GROUP,
-                chosen: None,
-                entry: self.entry,
-                frame: Rect::new(f.x, f.y + top, f.w, f.h - top),
-                widths: &self.addon_widths,
-                dropdown: true,
-            }
+        let addons = (!self.addon_label.is_empty()).then(|| SeasonRow {
+            labels: &self.addon_label,
+            base: ADDON_KEY,
+            group: ADDON_GROUP,
+            chosen: None,
+            entry: self.entry,
+            frame: detail_layout().sectioned_table(),
+            widths: &self.addon_widths,
+            dropdown: true,
+            after: seasons.clone().map(Box::new),
+            then: None,
         });
         let library = self.library.map(|look| LibraryButton {
             label: &self.library_label,
@@ -2389,7 +2440,7 @@ impl DetailScreen {
                 self.streams = Some(key);
             }
         }
-        let gens = (store.gen(), cx.views.settings.gen(), cx.views.library.gen());
+        let gens = (store.gen(), cx.views.settings.gen(), cx.views.library.gen(), cx.views.server.gen());
         if self.built_gen == Some(gens) {
             return;
         }
@@ -2432,6 +2483,7 @@ impl DetailScreen {
             order: cx.views.settings.get(crate::stores::settings::Pref::StreamOrder),
             debrid_only: cx.views.settings.get(crate::stores::settings::Pref::DebridOnly) != 0,
             server: cx.views.settings.streaming_server().map(str::to_string),
+            server_down: *cx.views.server.status() == crate::stores::server::ServerStatus::Unreachable,
             ..self.stream_view.clone()
         };
         let built = build_marked(&self.mode, meta, streams, self.season, &today(), &prefer, marks.as_ref(), &view);
@@ -2485,6 +2537,11 @@ impl Machine<Bundle> for DetailScreen {
         match ev {
             ScreenEvent::Mount => {
                 self.open(fx);
+                // a fresh answer on the streaming server, so a torrent row does not offer one that
+                // has gone away since the last check
+                if cx.views.settings.streaming_server().is_some() {
+                    fx.push(Fx::App(AppFx::Server(crate::registry::ServerCmd::Check)));
+                }
                 self.sync(cx, fx);
                 self.sync_library(cx, fx);
                 Handled::Yes
@@ -2697,7 +2754,7 @@ impl Screen<Bundle> for DetailScreen {
     }
     fn prepare(&mut self, _b: &mut sn_ui::frame::Budget, _cx: &Cx<'_, Bundle>) {}
     fn draw(&mut self, f: &mut DrawFrame<'_, '_, Bundle>) {
-        sn_gfx::gfx::frame_clear(theme::CLEAR_RGB.0, theme::CLEAR_RGB.1, theme::CLEAR_RGB.2);
+        sn_gfx::gfx::frame_clear(theme::CLEAR_RGB().0, theme::CLEAR_RGB().1, theme::CLEAR_RGB().2);
         if let Some(url) = self.info.backdrop.as_deref() {
             draw_backdrop(f.painter, url);
         }
@@ -2705,7 +2762,10 @@ impl Screen<Bundle> for DetailScreen {
         let mut v = self.view();
         Part::<Bundle>::draw(&mut v, f, Rect::FULL);
         if let Some(url) = self.info.logo.as_deref() {
-            sn_ui::hero_logo::HeroLogo::url(0, url, &self.title, sn_ui::hero_logo::LogoRung::Hero).draw(f.painter, logo_band(), f.measure);
+            // a tall logo stays under the back crumb: it never paints above where the title starts
+            sn_ui::hero_logo::HeroLogo::url(0, url, &self.title, sn_ui::hero_logo::LogoRung::Hero)
+                .ceiling(logo_band().y)
+                .draw(f.painter, logo_band(), f.measure);
         }
         for b in &flow(&self.info, &self.title, f.measure, self.reserve(), self.expanded.map(|e| e.0)).blocks {
             b.view(f.measure).draw(f.painter, b.rect);
@@ -2772,7 +2832,7 @@ mod tests {
             ]
         );
         let row = &b.sections[0].rows[0];
-        assert_eq!(row.side, Some(("Fast\n4K".into(), String::new())), "the stream's own name, which says its quality");
+        assert_eq!(row.side, Some((String::new(), "4K".into())), "the quality; the addon is the header");
         assert_eq!(row.chips.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), ["12 seeders"]);
         assert_eq!(b.sections[0].accessory, "1", "the header counts the addon's streams");
         assert!(b.sections[1].rows[0].is_note(), "the wait is a note, never a focusable row");
@@ -2841,6 +2901,10 @@ mod tests {
         let res: Vec<_> = facts.iter().map(|f| f.resolution).collect();
         let by_quality = stream_order(&facts, &[], ORDER_QUALITY);
         assert_eq!(by_quality.last(), Some(&0), "the download still last: {res:?}");
+        let mut cam = facts.clone();
+        cam[1].source = Some("CAM");
+        let order = stream_order(&cam, &["DE", "EN"], LANG);
+        assert_eq!(order[order.len() - 2..], [1, 0], "a cinema copy after every playable release, before the download");
         let ranks: Vec<_> = by_quality[..4].iter().map(|i| ["4K", "1440p", "1080p", "720p", "576p", "480p"].iter().position(|r| Some(*r) == res[*i]).unwrap_or(6)).collect();
         assert!(ranks.windows(2).all(|w| w[0] <= w[1]), "highest resolution first: {ranks:?} {res:?}");
         let b = build_preferring(&movie(), None, Some(&[group("AIO", GroupState::Ready(tb_streams()))]), None, "", &["DE", "EN"]);
@@ -2874,7 +2938,7 @@ mod tests {
         assert!(!StreamView::default().debrid_only, "every stream is listed until the switch is on");
         let groups = [group("AIO", GroupState::Ready(mixed_streams()))];
         let b = build_marked(&movie(), None, Some(&groups), None, "", &[], None, &StreamView::default());
-        assert_eq!(stream_labels(&b, 0), ["Film.2024.720p.WEB", "Film.2024.2160p.WEB-DL", "Film.2024.1080p.BluRay"]);
+        assert_eq!(stream_labels(&b, 0), ["Film 2024 720p WEB", "Film 2024 2160p WEB-DL", "Film 2024 1080p BluRay"]);
         assert_eq!(b.sections[0].accessory, "3");
         assert_eq!(b.keys, [RowKey(STREAM_KEY), RowKey(STREAM_KEY + 1), RowKey(STREAM_KEY + 2)]);
     }
@@ -2891,10 +2955,10 @@ mod tests {
         ];
         let groups = [group("AIO", GroupState::Ready(mixed_streams())), group("Torrentio", GroupState::Ready(other))];
         let b = build_marked(&movie(), None, Some(&groups), None, "", &[], None, &debrid_only());
-        assert_eq!(stream_labels(&b, 0), ["Film.2024.2160p.WEB-DL", "Film.2024.1080p.BluRay"], "the uncached one stays, in the addon's order");
+        assert_eq!(stream_labels(&b, 0), ["Film 2024 2160p WEB-DL", "Film 2024 1080p BluRay"], "the uncached one stays, in the addon's order");
         assert_eq!(b.sections[0].accessory, "2", "the header counts what is listed");
         assert_eq!(b.keys[..2], [RowKey(STREAM_KEY + 1), RowKey(STREAM_KEY + 2)], "the original positions");
-        assert_eq!(stream_labels(&b, 1), ["Film.2024.2160p.BluRay"]);
+        assert_eq!(stream_labels(&b, 1), ["Film 2024 2160p BluRay"]);
         assert_eq!(b.sections[1].accessory, "1");
         assert_eq!(b.keys[2], RowKey(STREAM_KEY + (1 << 12)));
         assert_eq!(b.actions.iter().filter(|a| matches!(a, Some(Action::Play(_)))).count(), 3);
@@ -2914,7 +2978,7 @@ mod tests {
         let off = build_marked(&movie(), None, Some(&groups), None, "", &[], None, &StreamView::default());
         assert_eq!(off.sections.iter().map(|s| s.header.as_str()).collect::<Vec<_>>(), ["Direct", "AIO"], "off: both are sections");
         let b = build_marked(&movie(), None, Some(&groups), None, "", &[], None, &debrid_only());
-        assert_eq!(texts(&b), vec![("AIO".into(), vec!["Film.2024.2160p.WEB-DL".into(), "Film.2024.1080p.BluRay".into()]), (String::new(), vec![msg::app_detail_quiet_addons(1)])]);
+        assert_eq!(texts(&b), vec![("AIO".into(), vec!["Film 2024 2160p WEB-DL".into(), "Film 2024 1080p BluRay".into()]), (String::new(), vec![msg::app_detail_quiet_addons(1)])]);
         assert_eq!(b.actions.last(), Some(&Some(Action::ToggleQuiet)));
         let open = StreamView { quiet_open: true, ..debrid_only() };
         let b = build_marked(&movie(), None, Some(&groups), None, "", &[], None, &open);
@@ -2958,19 +3022,19 @@ mod tests {
         let _en = sn_platform::i18n::language_on_this_thread_for_test(sn_platform::i18n::Preference::En);
         let mut app = two_addon_movie();
         let labels = |app: &crate::test_support::TestApp| detail_page(app).sections().iter().flat_map(|s| s.rows.iter().map(|r| r.label.clone())).collect::<Vec<_>>();
-        assert!(labels(&app).contains(&"Film.One".to_string()), "off: the plain link is listed");
+        assert!(labels(&app).contains(&"Film One".to_string()), "off: the plain link is listed");
         app.rig.settings.set(Pref::DebridOnly, 1);
         let gen = app.rig.settings.gen();
         app.notify(StoreId::Settings, gen);
         app.frames(20);
         let on = labels(&app);
-        assert!(!on.contains(&"Film.One".to_string()) && !on.contains(&"Film.Two".to_string()), "on: nothing says debrid, nothing is listed: {on:?}");
+        assert!(!on.contains(&"Film One".to_string()) && !on.contains(&"Film Two".to_string()), "on: nothing says debrid, nothing is listed: {on:?}");
         assert!(on.contains(&msg::app_detail_quiet_addons(2)), "both addons are quiet: {on:?}");
         app.rig.settings.set(Pref::DebridOnly, 0);
         let gen = app.rig.settings.gen();
         app.notify(StoreId::Settings, gen);
         app.frames(20);
-        assert!(labels(&app).contains(&"Film.One".to_string()), "off again: listed again");
+        assert!(labels(&app).contains(&"Film One".to_string()), "off again: listed again");
     }
 
     /// Every piece of text a stream row draws: the side column, the title, the chips.
@@ -3027,7 +3091,7 @@ mod tests {
         let aio = &b.sections[0];
         assert_eq!(aio.header, "AIOStreams", "the addon with a real stream first");
         assert_eq!(aio.accessory, "1", "the error is no stream");
-        assert_eq!(aio.rows[0].label, "Film.2024.1080p.WEB-DL");
+        assert_eq!(aio.rows[0].label, "Film 2024 1080p WEB-DL");
         assert!(aio.rows[1].is_note() && aio.rows[1].dim, "a muted note, after the streams");
         assert_eq!(aio.rows[1].label, "Comet p2p: The operation was aborted due to timeout");
         assert_eq!(b.actions.iter().filter(|a| matches!(a, Some(Action::Play(_)))).count(), 1, "the note plays nothing");
@@ -3064,7 +3128,7 @@ mod tests {
         assert_eq!(aio.accessory, "2", "neither summaries nor the failure count");
         let labels: Vec<&str> = aio.rows.iter().map(|r| r.label.as_str()).collect();
         let summary = |up: &str| format!("🟢 [{up}] Scrape Summary\n✔ Status : SUCCESS · 📦 Streams : 1 · 📋 Details : Successfully fetched streams. · ⏱️ Time : 3.2s");
-        assert_eq!(labels, ["Film.2024.1080p.WEB-DL", "Film.2024.2160p.BluRay", "Comet p2p: No results", &summary("Comet"), &summary("Torrentio")]);
+        assert_eq!(labels, ["Film 2024 1080p WEB-DL", "Film 2024 2160p BluRay", "Comet p2p: No results", &summary("Comet"), &summary("Torrentio")]);
         assert!(aio.rows[2..].iter().all(|r| r.is_note() && r.dim), "muted notes, never focusable");
         assert_eq!(aio.rows[2].note_max, 0, "a failure reads whole");
         assert!(aio.rows[3..].iter().all(|r| r.note_max == STAT_NOTE_LINES), "a summary is capped");
@@ -3077,8 +3141,8 @@ mod tests {
         assert_eq!(t.sections[0].rows[3].note_lines.get(), 2);
     }
 
-    /// AIOStreams/Comet and Torrentio keep their title and chips; the side column now reads the
-    /// stream's own name, and the quality tag only when the name does not already say it.
+    /// AIOStreams/Comet and Torrentio rows: the release spaced into words, the side column the
+    /// debrid service over the quality.
     #[test]
     fn aiostreams_and_torrentio_rows_read_their_own_names() {
         let _en = sn_platform::i18n::language_on_this_thread_for_test(sn_platform::i18n::Preference::En);
@@ -3088,13 +3152,13 @@ mod tests {
         let bare = http("", "Film.2024.720p.WEB", "https://example.com/b");
         let b = build(&movie(), None, Some(&[group("AIOStreams", GroupState::Ready(vec![comet, torrentio, bare]))]), None, "");
         let rows = &b.sections[0].rows;
-        assert_eq!(rows[0].label, "Film.2024.1080p.WEB-DL.HEVC.DD5.1-GRP.mkv", "the filename hint is the release");
-        assert_eq!(rows[0].side, Some(("[TB\u{26a1}] Comet\n1080p".into(), String::new())), "the name carries its quality");
+        assert_eq!(rows[0].label, "Film 2024 1080p WEB-DL HEVC DD5.1-GRP", "the filename hint is the release, spaced");
+        assert_eq!(rows[0].side, Some(("TB".into(), "1080p".into())), "the debrid service over the quality");
         let chips: Vec<&str> = rows[0].chips.iter().map(|c| c.text.as_str()).collect();
         assert_eq!(chips[..4], ["Cached", "HEVC", "DD 5.1", "WEB-DL \u{b7} GRP"], "the source carries the release group");
-        assert_eq!(rows[1].label, "Film.2024.2160p.BluRay.REMUX.HEVC-GRP");
-        assert_eq!(rows[1].side, Some(("[RD+] Torrentio\n4k".into(), String::new())));
-        assert_eq!(rows[2].side, Some(("AIOStreams".into(), "720p".into())), "no name: the addon, and the quality it does not say");
+        assert_eq!(rows[1].label, "Film 2024 2160p BluRay REMUX HEVC-GRP");
+        assert_eq!(rows[1].side, Some(("RD".into(), "4K".into())));
+        assert_eq!(rows[2].side, Some((String::new(), "720p".into())), "no service: the quality alone");
         assert_no_placeholder_text(&b);
     }
 
@@ -3152,7 +3216,7 @@ mod tests {
             t.set_sections(b.sections, 0, false);
             out.extend(t.app_fit_failures(w, language.tag()));
             t.fit_notes(w, &m);
-            let long = t.sections[0].rows.iter().find(|r| r.label.starts_with("A.Very")).unwrap();
+            let long = t.sections[0].rows.iter().find(|r| r.label.starts_with("A Very")).unwrap();
             assert_eq!(long.note_lines.get(), 2, "{}: the long release wraps to two lines", language.tag());
             let (shown, _) = sn_ui::table::chip_run(&long.chips, t.label_width(long, w, &m), &m);
             assert!(shown >= 2, "{}: the cache chip and at least one fact show", language.tag());
@@ -3216,7 +3280,7 @@ mod tests {
         let view = StreamView { order: crate::stores::settings::ORDER_LANGUAGE, server: Some("http://192.168.1.40:11470/".into()), ..StreamView::default() };
         let b = build_marked(&movie(), None, Some(&groups), None, "", &[], None, &view);
         let labels: Vec<&str> = b.sections[0].rows.iter().map(|r| r.label.as_str()).collect();
-        assert_eq!(labels, ["Film.Torrent", "Film.Link", "Film.Elsewhere"], "the torrent keeps its place; what cannot play is last");
+        assert_eq!(labels, ["Film Torrent", "Film Link", "Film Elsewhere"], "the torrent keeps its place; what cannot play is last");
         match &b.actions[0] {
             Some(Action::Play(req)) => {
                 assert_eq!(
@@ -3237,6 +3301,17 @@ mod tests {
     }
 
     #[test]
+    fn a_torrent_through_a_server_that_did_not_answer_only_explains() {
+        let torrent = Stream { info_hash: Some("0123456789abcdef0123456789abcdef01234567".into()), name: Some("Torrent".into()), ..Default::default() };
+        let groups = vec![group("One", GroupState::Ready(vec![torrent, http("Link", "Film.Link", "https://cdn.example/a.mkv")]))];
+        let down = StreamView { server: Some("http://192.168.1.40:11470/".into()), server_down: true, ..StreamView::default() };
+        let b = build_marked(&movie(), None, Some(&groups), None, "", &[], None, &down);
+        assert!(matches!(&b.actions[0], Some(Action::Play(req)) if req.url == "https://cdn.example/a.mkv"), "the link plays first");
+        assert_eq!(b.actions[1], Some(Action::Explain(msg::app_detail_why_torrent_offline())), "OK says the server is down, not that none is set");
+        assert!(b.sections[0].rows[1].dim);
+    }
+
+    #[test]
     fn the_streaming_server_changes_nothing_for_a_link() {
         let groups = vec![group("One", GroupState::Ready(vec![http("Link", "Film.Link", "https://cdn.example/a.mkv")]))];
         let on = StreamView { server: Some("http://192.168.1.40:11470/".into()), ..StreamView::default() };
@@ -3249,9 +3324,10 @@ mod tests {
     fn the_torrent_explanation_points_to_settings_and_streams_in_every_language() {
         for language in sn_platform::i18n::SHIPPED {
             let _g = sn_platform::i18n::language_on_this_thread_for_test(language);
-            let text = msg::app_detail_why_torrent();
-            assert!(!text.contains('\u{2014}'), "{}: no em dash", language.tag());
-            assert!(text.contains(msg::app_tab_settings()) && text.contains(msg::app_settings_streams()), "{}: {text} names Settings and Streams", language.tag());
+            for text in [msg::app_detail_why_torrent(), msg::app_detail_why_torrent_offline()] {
+                assert!(!text.contains('\u{2014}'), "{}: no em dash", language.tag());
+                assert!(text.contains(msg::app_tab_settings()) && text.contains(msg::app_settings_streams()), "{}: {text} names Settings and Streams", language.tag());
+            }
         }
     }
 
@@ -3404,9 +3480,12 @@ mod tests {
     #[test]
     fn an_episode_released_after_today_reads_upcoming() {
         let _en = sn_platform::i18n::language_on_this_thread_for_test(sn_platform::i18n::Preference::En);
-        let meta = fixture("tmdb_wild_last_boss");
+        let mut meta = fixture("tmdb_wild_last_boss");
         assert_eq!(seasons(&meta), [1], "one season: no chips");
         let mode = Mode::Item(ItemRef { kind: "series".into(), id: "tmdb:280042".into(), name: "A Wild Last Boss Appeared!".into(), from: String::new() });
+        let unscheduled = build(&mode, Some(&ready(meta.clone())), None, None, "2026-10-17");
+        assert!(unscheduled.sections[0].rows.iter().all(|r| r.value.is_none()), "no hasScheduledVideos: nothing upcoming (Stremio's rule)");
+        meta.behavior_hints.has_scheduled_videos = true;
         let state = ready(meta);
         let b = build(&mode, Some(&state), None, None, "2026-10-17");
         let rows: Vec<(&str, Option<&str>, bool)> =
@@ -3452,13 +3531,25 @@ mod tests {
     /// overview, its still, its release day and the show's runtime, rating, genres and cast; one
     /// without an overview falls back to the show's description. A movie reads its year, cast and
     /// director and its background.
+    /// No `releaseInfo`: the year of `released`, as Stremio shows it.
+    #[test]
+    fn a_work_without_release_info_reads_its_release_year() {
+        let mut m = Meta::default();
+        m.preview.name = "Film".into();
+        m.released = Some("2024-02-27T00:00:00.000Z".into());
+        let mode = Mode::Item(ItemRef { kind: "movie".into(), id: "x".into(), name: "Film".into(), from: String::new() });
+        assert_eq!(info(&mode, &m).facts, "2024");
+        m.preview.release_info = Some("2023".into());
+        assert_eq!(info(&mode, &m).facts, "2023", "the addon's own words first");
+    }
+
     #[test]
     fn the_narrative_column_reads_the_meta() {
         let _en = sn_platform::i18n::language_on_this_thread_for_test(sn_platform::i18n::Preference::En);
         let mut show = fixture("cinemeta_breaking_bad_meta");
         let ep = info(&Mode::Video(episode("tt0903747:1:5", "S1, E5 Gray Matter")), &show);
-        assert_eq!(ep.title.as_deref(), Some("S1, E5 \u{b7} Gray Matter"));
-        assert_eq!(ep.facts, "2/25/2008 \u{b7} 49 min \u{b7} IMDb 9.5", "the genres are chips, not words on the line");
+        assert_eq!(ep.title.as_deref(), Some("Gray Matter"), "the episode's name alone");
+        assert_eq!(ep.facts, "S1, E5 \u{b7} 2/25/2008 \u{b7} 49 min \u{b7} IMDb 9.5", "its address leads the facts; the genres are chips");
         assert!(ep.synopsis.starts_with("Walter and Skyler attend a former colleague"), "{}", ep.synopsis);
         assert_eq!(
             link_names(&ep),
@@ -3656,7 +3747,8 @@ mod tests {
         app.notify(StoreId::Detail, gen);
         app.frames(40);
         let page = detail_page(&app);
-        assert_eq!(page.title(), "S2, E1 \u{b7} Seven Thirty-Seven");
+        assert_eq!(page.title(), "Seven Thirty-Seven");
+        assert!(page.info().facts.starts_with("S2, E1 \u{b7} "), "{}", page.info().facts);
         assert!(page.info().synopsis.starts_with("Walt and Jesse are reminded"));
         assert_eq!(link_names(page.info())[1], (Category::Cast, vec!["Bryan Cranston", "Aaron Paul", "Anna Gunn"]));
         assert!(page.addon_label.is_empty(), "one stream addon: no addon dropdown");
@@ -4585,7 +4677,7 @@ mod tests {
         let _en = sn_platform::i18n::language_on_this_thread_for_test(sn_platform::i18n::Preference::En);
         let mut app = two_addon_movie();
         let page = detail_page(&app);
-        assert_eq!(page.sections()[0].rows.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(), ["Film.One", "Film.Torrent"]);
+        assert_eq!(page.sections()[0].rows.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(), ["Film One", "Film Torrent"]);
         assert_eq!(app.d.focus().map(|k| k.elem), Some(STREAM_KEY + 1), "the stream that plays is the first seat");
         app.press(Key::Down);
         assert_eq!(app.d.focus().map(|k| k.elem), Some(STREAM_KEY), "the torrent is a stop");
@@ -4609,7 +4701,7 @@ mod tests {
         app.notify(StoreId::Settings, gen);
         app.frames(20);
         let page = detail_page(&app);
-        assert_eq!(page.sections()[0].rows.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(), ["Film.Torrent", "Film.One"], "the torrent is not sorted after the links");
+        assert_eq!(page.sections()[0].rows.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(), ["Film Torrent", "Film One"], "the torrent is not sorted after the links");
         assert_eq!(app.d.focus().map(|k| k.elem), Some(STREAM_KEY), "…and is the first seat");
         app.take_effects();
         app.press(Key::Ok);
@@ -4701,7 +4793,7 @@ mod tests {
             for label in [msg::app_search_addons_all().to_string(), msg::app_search_addons_some(12, 12), long.to_string()] {
                 let labels = [CString::new(label.clone()).unwrap()];
                 let widths = RefCell::new(None);
-                let row = SeasonRow { labels: &labels, base: ADDON_KEY, group: ADDON_GROUP, chosen: None, entry: EntryId(1), frame: f, widths: &widths, dropdown: true };
+                let row = SeasonRow { labels: &labels, base: ADDON_KEY, group: ADDON_GROUP, chosen: None, entry: EntryId(1), frame: f, widths: &widths, dropdown: true, after: None, then: None };
                 for focused in [None, Some(0)] {
                     let r = row.rects(&m, focused)[0];
                     assert!(r.x >= f.x && r.x + r.w <= f.x + f.w, "{}: {label:?} at {r:?} leaves {f:?}", language.tag());
@@ -4765,6 +4857,6 @@ mod tests {
         assert!(info(&movie_mode(), &movie).facts.ends_with("IMDb 7,5"), "{}", info(&movie_mode(), &movie).facts);
         let show = fixture("cinemeta_breaking_bad_meta");
         let ep = info(&Mode::Video(episode("tt0903747:1:5", "")), &show);
-        assert!(ep.facts.starts_with("25/02/2008"), "{}", ep.facts);
+        assert!(ep.facts.contains(" \u{b7} 25/02/2008"), "{}", ep.facts);
     }
 }

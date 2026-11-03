@@ -147,6 +147,8 @@ pub enum RootRow {
     TvGuide,
     /// Stream order: the addon's, languages first, quality first (the picker).
     StreamOrder,
+    /// The colour theme (the picker; applies at once).
+    Theme,
     /// The streaming server torrents play through: Off or its address and status (its page).
     StreamingServer,
     /// Only debrid streams: Off, On (the picker).
@@ -213,6 +215,7 @@ fn pref_copy(pref: Pref) -> &'static str {
         Pref::MultichannelAudio => msg::app_settings_multichannel_audio_copy(),
         Pref::TvGuide => msg::app_settings_tv_guide_copy(),
         Pref::StreamOrder => msg::app_settings_stream_order_copy(),
+        Pref::Theme => msg::app_settings_theme_copy(),
         Pref::DebridOnly => msg::app_settings_debrid_only_copy(),
     }
 }
@@ -327,7 +330,7 @@ pub fn root_form(settings: &SettingsStore, account: &AccountStore, stats: bool, 
         .section(streams)
         .section(live)
         .section(
-            pick(FormSection::new(msg::app_settings_interface()), RootRow::Language, Pref::Language)
+            pick(pick(FormSection::new(msg::app_settings_interface()), RootRow::Theme, Pref::Theme), RootRow::Language, Pref::Language)
                 .item(
                     RootRow::Stats,
                     RowKind::Button,
@@ -633,7 +636,7 @@ pub fn body(doc: Doc) -> String {
         .join("\n"),
         Doc::Components => {
             let mut lines = vec![msg::app_settings_components_intro().to_string(), String::new()];
-            lines.extend(COMPONENTS.iter().map(|(c, l)| format!("{c} \u{2014} {l}")));
+            lines.extend(COMPONENTS.iter().map(|(c, l)| format!("{c}: {l}")));
             lines.push(String::new());
             lines.push(msg::app_settings_components_texts().to_string());
             lines.join("\n")
@@ -646,7 +649,7 @@ pub fn body(doc: Doc) -> String {
 
 /// The key map in the viewer's words — `docs/remote-keys.md` is the engineering half.
 fn remote_body() -> String {
-    let line = |key: &str, what: &str| format!("{key} \u{2014} {what}");
+    let line = |key: &str, what: &str| format!("{key}: {what}");
     [
         msg::app_remote_navigation_head().to_uppercase(),
         line(msg::app_remote_key_arrows(), msg::app_remote_move()),
@@ -1093,8 +1096,8 @@ impl Machine<Bundle> for SettingsScreen {
         match ev {
             ScreenEvent::Mount => {
                 self.sync(&cx.views);
-                // the server page opens on a fresh answer about the server in use
-                if matches!(self.mode, Mode::Server(_)) {
+                // the overview and the server page open on a fresh answer about the server in use
+                if matches!(self.mode, Mode::Root(_) | Mode::Server(_)) {
                     fx.push(Fx::App(AppFx::Server(ServerCmd::Check)));
                 }
                 // a picker opens on the rung in force, not on its first row
@@ -1240,7 +1243,7 @@ impl Screen<Bundle> for SettingsScreen {
     }
     fn prepare(&mut self, _b: &mut sn_ui::frame::Budget, _cx: &Cx<'_, Bundle>) {}
     fn draw(&mut self, f: &mut DrawFrame<'_, '_, Bundle>) {
-        sn_gfx::gfx::frame_clear(theme::CLEAR_RGB.0, theme::CLEAR_RGB.1, theme::CLEAR_RGB.2);
+        sn_gfx::gfx::frame_clear(theme::CLEAR_RGB().0, theme::CLEAR_RGB().1, theme::CLEAR_RGB().2);
         let layout = self.layout();
         let crumb = self.crumb();
         let title = self.title();
@@ -1416,7 +1419,7 @@ mod tests {
                     ],
                     vec![StreamingServer, StreamOrder, DebridOnly, StreamLanguages],
                     vec![TvGuide],
-                    vec![Language, Stats, RemoteKeys],
+                    vec![Theme, Language, Stats, RemoteKeys],
                     vec![About, Legal, Privacy],
                 ]
                 .into_iter()
@@ -1539,6 +1542,7 @@ mod tests {
                 SettingsPage::Picker(Pref::DebridOnly),
                 SettingsPage::Languages(LangList::Streams),
                 SettingsPage::Picker(Pref::TvGuide),
+                SettingsPage::Picker(Pref::Theme),
                 SettingsPage::Picker(Pref::Language),
                 SettingsPage::Doc(Doc::Remote),
                 SettingsPage::Doc(Doc::About),
