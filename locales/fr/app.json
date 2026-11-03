@@ -400,5 +400,8 @@
   "app.settings.theme_oled": {
     "value": "Noir OLED",
     "description": "Theme option: a true black background for OLED screens."
-  }
+  },
+  "app.settings.debrid_only": "Flux debrid uniquement",
+  "app.settings.debrid_only_copy": "Activé : uniquement les flux d’un service debrid, en cache ou non. Les flux qui ne mentionnent pas debrid sont masqués. Désactivé : tous les flux.",
+  "app.detail.no_debrid_streams": "Aucun flux debrid"
 }

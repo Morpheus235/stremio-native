@@ -402,5 +402,8 @@
   "app.settings.theme_oled": {
     "value": "Чорны OLED",
     "description": "Theme option: a true black background for OLED screens."
-  }
+  },
+  "app.settings.debrid_only": "Толькі debrid-патокі",
+  "app.settings.debrid_only_copy": "Укл.: толькі патокі з debrid-сэрвісу, у кэшы або не. Патокі без згадкі debrid схаваны. Выкл.: усе патокі.",
+  "app.detail.no_debrid_streams": "Няма debrid-патокаў"
 }

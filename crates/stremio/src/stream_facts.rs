@@ -48,8 +48,12 @@ pub struct Facts {
     /// The subtitle languages, as codes: what AIOStreams writes after a 📝.
     pub subs: Vec<&'static str>,
     /// The debrid service's cache: `Some(true)` plays at once, `Some(false)` is a torrent the
-    /// service first downloads (a placeholder clip plays meanwhile), `None` the text does not say.
+    /// service first downloads (a placeholder clip plays meanwhile), `None` the text does not say
+    /// or the row is not a debrid one ([`Facts::debrid`]).
     pub cached: Option<bool>,
+    /// The stream comes through a debrid service: its name marks one ([`Facts::service`]) or
+    /// AIOStreams' `streamData.type` is "debrid".
+    pub debrid: bool,
     /// The release group ("NIMA4K", "GRP"): AIOStreams' `🏷️` tag, else a scene name's `-GRP`
     /// tail, else an anime release's leading `[Group]`.
     pub group: Option<String>,
@@ -164,6 +168,9 @@ pub fn facts(s: &Stream) -> Facts {
     let languages = language_codes(&audio_text);
     let subs = language_codes(&subs_text).into_iter().filter(|c| *c != "MULTI").collect();
     let title = title(name, body, file);
+    // a cache mark (⚡, "cached", "[XX+]") counts only on a debrid row: a plain addon's "⚡" or a
+    // "[HD+]" / "[18+]" tag says nothing about a cache
+    let debrid = service(name).is_some() || s.stream_data.as_ref().and_then(|d| d.kind.as_deref()) == Some("debrid");
     Facts {
         group: group(&text, &title),
         title,
@@ -179,7 +186,8 @@ pub fn facts(s: &Stream) -> Facts {
         seeders: seeders(&text),
         languages,
         subs,
-        cached: cached(&lower),
+        cached: debrid.then(|| cached(&lower)).flatten(),
+        debrid,
     }
 }
 
@@ -334,10 +342,37 @@ impl Facts {
     /// The debrid service the stream's name marks ("[RD+] Torrentio", "[TB⚡] Comet",
     /// "MediaFusion | ⚡️ TB 4K"): its short code, as the addons write it.
     pub fn service(&self) -> Option<&'static str> {
-        const SERVICES: [&str; 8] = ["RD", "AD", "PM", "TB", "DL", "ED", "OC", "PKP"];
-        let name = self.name.to_ascii_uppercase();
-        SERVICES.into_iter().find(|s| has_word(&name, s))
+        service(&self.name)
     }
+
+    /// Does the "Only debrid streams" switch keep this stream? A debrid stream stays, cached or
+    /// not ([`Facts::debrid`]); one whose text says nothing about debrid does not. A
+    /// live stream is exempt: a channel has no debrid to speak of, and the switch must not empty
+    /// Live TV.
+    pub fn debrid_only_keeps(&self) -> bool {
+        self.debrid || self.live
+    }
+}
+
+/// The debrid service `name` marks: a code as the addons write it ("[RD+]", "[TB⚡]", "| RD 4K")
+/// or the service's own name ("TorBox", "Real-Debrid"), as its short code.
+fn service(name: &str) -> Option<&'static str> {
+    const CODES: [&str; 8] = ["RD", "AD", "PM", "TB", "DL", "ED", "OC", "PKP"];
+    const NAMES: [(&str, &str); 10] = [
+        ("real-debrid", "RD"),
+        ("realdebrid", "RD"),
+        ("alldebrid", "AD"),
+        ("premiumize", "PM"),
+        ("torbox", "TB"),
+        ("debrid-link", "DL"),
+        ("debridlink", "DL"),
+        ("easydebrid", "ED"),
+        ("offcloud", "OC"),
+        ("pikpak", "PKP"),
+    ];
+    // codes as written, in capitals: a lowercase "pm" ("pad-Ani pm") is no Premiumize
+    let lower = name.to_lowercase();
+    CODES.into_iter().find(|c| has_word(name, c)).or_else(|| NAMES.iter().find(|(n, _)| lower.contains(n)).map(|(_, c)| *c))
 }
 
 /// The release group (see [`Facts::group`]).
@@ -470,8 +505,9 @@ impl Release {
 /// the same release group, or the same resolution, source and codec, nothing known that differs.
 /// A cached stream comes first whatever the match, then the binge group, then the closest facts
 /// (matching audio languages a plus), then the addon's order. A stream marked NOT cached is never
-/// picked. `None` when nothing plausibly is the same release: the viewer picks.
-pub fn same_release(old: &Release, streams: &[Stream]) -> Option<usize> {
+/// picked. With `debrid_only` (Settings > Only debrid streams) a stream the switch hides is never
+/// picked either. `None` when nothing plausibly is the same release: the viewer picks.
+pub fn same_release(old: &Release, streams: &[Stream], debrid_only: bool) -> Option<usize> {
     let o = &old.facts;
     streams
         .iter()
@@ -493,7 +529,7 @@ pub fn same_release(old: &Release, streams: &[Stream]) -> Option<usize> {
             let facts_match = !clashes && (same_group || (eq(o.resolution, n.resolution) && eq(o.source, n.source) && eq(o.codec, n.codec)));
             // an uncached copy would only start a download and play its placeholder clip: the
             // viewer is better served by the list
-            if (!binge && !facts_match) || n.cached == Some(false) {
+            if (!binge && !facts_match) || n.cached == Some(false) || (debrid_only && !n.debrid_only_keeps()) {
                 return None;
             }
             let score = 4 * u8::from(same_group)
@@ -597,6 +633,45 @@ mod tests {
         assert_eq!((f.cached, f.service()), (Some(true), Some("TB")));
         let uncached = Stream { name: Some("[RD⏳] AIOStreams 1080p".into()), ..s };
         assert_eq!((facts(&uncached).cached, facts(&uncached).service()), (Some(false), Some("RD")));
+    }
+
+    /// Real addons' rows: a debrid row is one whatever its cache mark (the switch keeps it), and a
+    /// plain row's "⚡", "[HD+]", "[18+]" or "Cached" title is no cache mark.
+    #[test]
+    fn debrid_rows_are_told_by_their_service_not_by_a_cache_mark() {
+        let row = |name: &str, body: &str, kind: Option<&str>| {
+            let mut s = stream(name, body);
+            s.stream_data = kind.map(|k| serde_json::from_value(serde_json::json!({ "type": k })).unwrap());
+            facts(&s)
+        };
+        for (name, body, kind, cached) in [
+            ("[RD+] Torrentio\n4k", "Film.2024.2160p", None, Some(true)),
+            ("[RD download] Torrentio\n4k", "Film.2024.2160p", None, Some(false)),
+            ("[TB⚡] Comet 2160p", "📄 Film.2024.2160p.mkv", None, Some(true)),
+            ("MediaFusion | RD ⏳ 4K", "Film 2024", None, Some(false)),
+            ("MediaFusion | RD 4K", "Film 2024", None, None),
+            ("[RD] Debridio 4K", "Film.2024.2160p", None, None),
+            ("STREMTHRU [TB] 4K", "Film.2024.2160p", None, None),
+            ("TorBox\n4K", "Film.2024.2160p.mkv\nType: Torrent | Cached: Yes", None, Some(true)),
+            ("AIOStreams 4K", "Film.2024.2160p", Some("debrid"), None),
+        ] {
+            let f = row(name, body, kind);
+            assert!(f.debrid && f.debrid_only_keeps(), "{name}");
+            assert_eq!(f.cached, cached, "{name}");
+        }
+        for (name, body) in [
+            ("Torrentio\n4k", "Film.2024.2160p"),
+            ("Easynews+\n1080p", "Film.2024.1080p.WEB"),
+            ("⚡ FastHTTP 1080p", "Film 2024"),
+            ("[HD+] Kanal", "Film 2024"),
+            ("Addon 1080p", "Film [18+] 2024"),
+            ("Archive 1080p", "Cached.Memories.2024.1080p"),
+            ("PenguPlay 1080p\n1080pHLS pad-Ani pm", "Film 2024"),
+        ] {
+            let f = row(name, body, Some("http"));
+            assert!(!f.debrid && !f.debrid_only_keeps(), "{name}");
+            assert_eq!(f.cached, None, "{name}");
+        }
     }
 
     #[test]
@@ -763,7 +838,7 @@ mod tests {
             aio("[TB⏳] Comet 2160p", "com.aiostreams.viren070|2160p|WEB-DL|NIMA4K", "🎥 WEB-DL 🎞️ HEVC 🏷️ NIMA4K\n📺 SDR\n📦 5.78 GB\n🌎 German | English📝 English | German", "Breaking.Bad.S01E02.2160p.WEB-DL.mkv"),
             aio("[TB⚡] Comet 1080p", IDN, "🎥 WEB-DL 🎞️ HEVC", "Breaking.Bad.1x02.Cat.s.in.the.Bag.1080p.H265.mkv"),
         ];
-        assert_eq!(same_release(&e1(), &streams), Some(2));
+        assert_eq!(same_release(&e1(), &streams, false), Some(2));
     }
 
     #[test]
@@ -774,11 +849,11 @@ mod tests {
             stream("[RD+] Torrentio\n1080p", "Show.S01E02.1080p.WEB-DL.H264-OTHER"),
             stream("[RD+] Torrentio\n1080p", "Show.S01E02.1080p.WEB-DL.H264-GRP"),
         ];
-        assert_eq!(same_release(&old, &streams), Some(2), "same resolution and group; another group's 1080p is another release");
+        assert_eq!(same_release(&old, &streams, false), Some(2), "same resolution and group; another group's 1080p is another release");
         // nothing else names a group: the same resolution, source and codec is the release
         let streams = [stream("[RD+] Torrentio\n720p", "Show.S01E02.720p.WEB-DL.H264"), stream("[RD+] Torrentio\n1080p", "Show.S01E02.1080p.WEB-DL.H264")];
-        assert_eq!(same_release(&old, &streams[..1]), None, "a 720p is not the release");
-        assert_eq!(same_release(&old, &streams), Some(1));
+        assert_eq!(same_release(&old, &streams[..1], false), None, "a 720p is not the release");
+        assert_eq!(same_release(&old, &streams, false), Some(1));
     }
 
     #[test]
@@ -787,12 +862,34 @@ mod tests {
             aio("[TB⏳] Comet 1080p", IDN, "🏷️ iDN_CreW", "Breaking.Bad.1x02.1080p.H265-iDN_CreW.mkv"),
             aio("[RD⚡] Comet 1080p", "com.aiostreams.viren070|1080p|iDN_CreW|rd", "🏷️ iDN_CreW", "Breaking.Bad.1x02.1080p.H265-iDN_CreW.mkv"),
         ];
-        assert_eq!(same_release(&e1(), &streams), Some(1), "the cached copy of the release, over the waiting binge match");
+        assert_eq!(same_release(&e1(), &streams, false), Some(1), "the cached copy of the release, over the waiting binge match");
         let other = [aio("[TB⚡] Comet 2160p", "com.aiostreams.viren070|2160p|WEB-DL|NIMA4K", "🏷️ NIMA4K", "Breaking.Bad.S01E02.2160p.WEB-DL.mkv")];
-        assert_eq!(same_release(&e1(), &other), None, "a cached stream of another release is never picked");
+        assert_eq!(same_release(&e1(), &other, false), None, "a cached stream of another release is never picked");
         let waiting_only = [aio("[TB⏳] Comet 1080p", IDN, "🏷️ iDN_CreW", "Breaking.Bad.1x02.1080p.H265-iDN_CreW.mkv")];
-        assert_eq!(same_release(&e1(), &waiting_only), None, "an uncached match would only play the download placeholder");
+        assert_eq!(same_release(&e1(), &waiting_only, false), None, "an uncached match would only play the download placeholder");
         let unplayable = Stream { info_hash: Some("ab".into()), ..aio("[TB⚡] Comet 1080p", IDN, "", "x.mkv") };
-        assert_eq!(same_release(&e1(), &[Stream { url: None, ..unplayable }]), None, "only an HTTP stream plays");
+        assert_eq!(same_release(&e1(), &[Stream { url: None, ..unplayable }], false), None, "only an HTTP stream plays");
+    }
+
+    /// "Only debrid streams": a debrid stream, cached or not, is kept; one whose text says nothing
+    /// about debrid is not, unless it is live. The next episode's pick follows the same switch.
+    #[test]
+    fn only_debrid_keeps_debrid_streams_and_the_next_episode_pick_obeys_it() {
+        let keeps = |name: &str, desc: &str| facts(&stream(name, desc)).debrid_only_keeps();
+        assert!(keeps("[RD+] Torrentio\n4k", "Film.2160p"), "cached");
+        assert!(keeps("[TB download] AIOStreams\n4K", "Film.2160p"), "uncached debrid, which the service downloads first");
+        assert!(!keeps("Torrentio\n1080p", "Film.1080p\n\u{1f464} 12"), "the text says nothing about debrid");
+        let mut live = stream("Vavoo", "[SKY 1]");
+        live.behavior_hints.is_live = true;
+        assert!(facts(&live).debrid_only_keeps(), "a live stream is exempt");
+
+        // a plain match of the release is picked while the switch is off, never while it is on
+        let plain = [aio("Comet 1080p", IDN, "\u{1f3a5} WEB-DL \u{1f39e}\u{fe0f} HEVC", "Breaking.Bad.1x02.1080p.H265.mkv")];
+        assert_eq!(facts(&plain[0]).cached, None, "the premise: nothing says debrid");
+        assert_eq!(same_release(&e1(), &plain, false), Some(0));
+        assert_eq!(same_release(&e1(), &plain, true), None);
+        // a cached one still wins, and is still picked, with the switch on
+        let mixed = [plain[0].clone(), aio("[TB\u{26a1}] Comet 1080p", IDN, "\u{1f3a5} WEB-DL", "Breaking.Bad.1x02.1080p.H265.mkv")];
+        assert_eq!(same_release(&e1(), &mixed, true), Some(1));
     }
 }

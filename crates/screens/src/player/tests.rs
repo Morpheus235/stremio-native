@@ -648,6 +648,26 @@ fn no_same_release_opens_the_stream_list() {
     assert!(matches!(app.top_arg(), Some(AppArg::Streams(v)) if v.video_id == "tt9:1:4"));
 }
 
+/// Only debrid streams: the next episode's same release is never a stream the switch hides, so a
+/// plain link that matches the release (nothing in its text says debrid) is not auto-played, while
+/// it is with the switch off.
+#[test]
+fn only_debrid_never_auto_plays_a_stream_it_hides() {
+    let _g = sn_base::testlock::serial();
+    let plain_e4 = || vec![aio_stream("Comet 1080p", IDN, "Breaking.Bad.1x04.1080p.H265.mkv", "https://example.com/plain.mkv")];
+    for (debrid_only, plays) in [(0, 1), (1, 0)] {
+        let mut app = boot();
+        app.rig.settings.set(Pref::DebridOnly, debrid_only);
+        let key = binge_episode(&mut app);
+        open_next(&mut app, &key, Some(plain_e4()));
+        app.frames(2);
+        app.press(Key::Ok);
+        let effects = app.take_effects();
+        assert_eq!(played(&effects).len(), plays, "debrid only {debrid_only}: {effects:?}");
+        assert!(matches!(app.top_arg(), Some(AppArg::Streams(v)) if v.video_id == "tt9:1:4"), "either way the episode's Streams page opens");
+    }
+}
+
 #[test]
 fn always_choose_opens_the_stream_list_without_asking() {
     let _g = sn_base::testlock::serial();

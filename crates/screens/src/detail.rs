@@ -32,7 +32,10 @@
 //! placeholder clip until the download lands). Settings > Stream order picks how each addon's
 //! streams are listed ([`stream_order`]): as the addon sent them (the default), or the ones that
 //! play at once first and then the Stream sorting languages (`SettingsStore::stream_languages`)
-//! or the highest resolution.
+//! or the highest resolution. Settings > Only debrid streams hides the streams whose text says
+//! nothing about debrid (cached and uncached debrid streams stay, and so do live ones): the header
+//! counts what is listed, a row keeps the key of its place in what the addon sent, and an addon
+//! left with nothing is a quiet one (*No debrid streams*).
 //! An addon's header counts its streams; an upstream failure AIOStreams sends as a stream
 //! ("[❌] Comet p2p", `stream_facts::error_note`) is a muted note after them, not counted, as is
 //! its optional scrape summary ("🟢 [Comet] Scrape Summary", `stream_facts::statistic_note`, after
@@ -436,6 +439,9 @@ pub struct StreamView {
     pub quiet_open: bool,
     /// `Pref::StreamOrder`'s rung (`settings::ORDER_*`).
     pub order: u8,
+    /// `Pref::DebridOnly`: a stream whose text says nothing about debrid is not listed (cached and
+    /// uncached debrid streams are, [`Facts::debrid_only_keeps`]).
+    pub debrid_only: bool,
 }
 
 /// The closing row's key (*N addons without streams*), clear of every stream key.
@@ -458,7 +464,14 @@ fn real_streams(streams: &[sn_stremio::types::Stream]) -> usize {
     streams.iter().filter(|s| !stream_facts::is_note(s)).count()
 }
 
-fn group_show(g: &StreamGroup) -> GroupShow {
+/// A stream's facts as this page reads them: a live-TV item's streams are live whatever their
+/// hints say.
+fn stream_facts_in(s: &sn_stremio::types::Stream, mode: &Mode) -> Facts {
+    let f = stream_facts::facts(s);
+    Facts { live: f.live || mode.kind() == "tv", ..f }
+}
+
+fn group_show(g: &StreamGroup, mode: &Mode, view: &StreamView) -> GroupShow {
     match &g.state {
         GroupState::Off => GroupShow::Off,
         GroupState::Loading => GroupShow::Asking,
@@ -467,6 +480,12 @@ fn group_show(g: &StreamGroup) -> GroupShow {
             // an addon that sent only its upstreams' failures says the first one
             let why = s.iter().find_map(stream_facts::error_note).unwrap_or_else(|| msg::app_detail_no_streams().to_string());
             GroupShow::Quiet(why)
+        }
+        // streams, none of them debrid: the switch leaves nothing to list
+        GroupState::Ready(s)
+            if view.debrid_only && !s.iter().take(MAX_STREAMS_PER_ADDON).any(|st| !stream_facts::is_note(st) && stream_facts_in(st, mode).debrid_only_keeps()) =>
+        {
+            GroupShow::Quiet(msg::app_detail_no_debrid_streams().to_string())
         }
         GroupState::Ready(_) => GroupShow::Streams,
     }
@@ -498,7 +517,7 @@ fn stream_sections(out: &mut Built, groups: &[StreamGroup], mode: &Mode, prefer:
     let mut quiet: Vec<(String, String)> = Vec::new();
     let mut listed = 0;
     for (gi, group) in groups.iter().enumerate().take(MAX_STREAM_ADDONS) {
-        let streams = match (group_show(group), &group.state) {
+        let streams = match (group_show(group, mode, view), &group.state) {
             (GroupShow::Streams, GroupState::Ready(streams)) => streams,
             (GroupShow::Asking, _) => {
                 asking += 1;
@@ -520,11 +539,12 @@ fn stream_sections(out: &mut Built, groups: &[StreamGroup], mode: &Mode, prefer:
         let errors: Vec<Option<String>> = streams.iter().map(stream_facts::error_note).collect();
         let stats: Vec<Option<String>> = streams.iter().map(stream_facts::statistic_note).collect();
         let is_note = |si: usize| errors[si].is_some() || stats[si].is_some();
-        s = s.accessory(real_streams(streams).to_string());
-        let live_item = mode.kind() == "tv";
-        let facts: Vec<Facts> = streams.iter().map(stream_facts::facts).map(|f| Facts { live: f.live || live_item, ..f }).collect();
+        let facts: Vec<Facts> = streams.iter().map(|st| stream_facts_in(st, mode)).collect();
+        // a stream the debrid-only switch hides is no row and no count (a note stays a note)
+        let hidden = |si: usize| view.debrid_only && !facts[si].debrid_only_keeps();
+        s = s.accessory((0..streams.len()).filter(|si| !is_note(*si) && !hidden(*si)).count().to_string());
         let playable: Vec<Option<Playable>> = streams.iter().map(sn_stremio::types::Stream::playable).collect();
-        let mut order: Vec<usize> = stream_order(&facts, prefer, view.order).into_iter().filter(|si| !is_note(*si)).collect();
+        let mut order: Vec<usize> = stream_order(&facts, prefer, view.order).into_iter().filter(|si| !is_note(*si) && !hidden(*si)).collect();
         // what plays here before what cannot (a torrent with no debrid, a link elsewhere)
         order.sort_by_key(|si| !matches!(playable[*si], Some(Playable::Http { .. })));
         for si in order {
@@ -2367,7 +2387,11 @@ impl DetailScreen {
             Some(MetaState::Ready(m)) => Some(self.watched_marks(cx, m)),
             _ => None,
         };
-        let view = StreamView { order: cx.views.settings.get(crate::stores::settings::Pref::StreamOrder), ..self.stream_view.clone() };
+        let view = StreamView {
+            order: cx.views.settings.get(crate::stores::settings::Pref::StreamOrder),
+            debrid_only: cx.views.settings.get(crate::stores::settings::Pref::DebridOnly) != 0,
+            ..self.stream_view.clone()
+        };
         let built = build_marked(&self.mode, meta, streams, self.season, &today(), &prefer, marks.as_ref(), &view);
         let moved = std::mem::take(&mut self.season_moved);
         let mut want = self.sel.or_else(|| self.focus_episode.map(RowKey));
@@ -2782,6 +2806,128 @@ mod tests {
         assert!(last.chips[0].quiet, "…in the quiet ink");
         assert!(b.actions[4].is_some(), "an uncached stream still plays");
         assert_eq!(b.keys[0], RowKey(STREAM_KEY + 2), "a row keeps the key of its place in the addon's answer");
+    }
+
+    /// A plain link (nothing says debrid), an uncached debrid stream and a cached one, as one addon
+    /// sends them.
+    fn mixed_streams() -> Vec<Stream> {
+        vec![
+            http("Plain\n720p", "Film.2024.720p.WEB", "https://example.com/p"),
+            http("[TB download] AIOStreams\n4K", "Film.2024.2160p.WEB-DL", "https://example.com/u"),
+            http("[TB+] AIOStreams\n1080p", "Film.2024.1080p.BluRay", "https://example.com/c"),
+        ]
+    }
+
+    fn debrid_only() -> StreamView {
+        StreamView { debrid_only: true, ..StreamView::default() }
+    }
+
+    fn stream_labels(b: &Built, section: usize) -> Vec<&str> {
+        b.sections[section].rows.iter().map(|r| r.label.as_str()).collect()
+    }
+
+    #[test]
+    fn only_debrid_is_off_by_default_and_off_changes_nothing() {
+        assert!(!StreamView::default().debrid_only, "every stream is listed until the switch is on");
+        let groups = [group("AIO", GroupState::Ready(mixed_streams()))];
+        let b = build_marked(&movie(), None, Some(&groups), None, "", &[], None, &StreamView::default());
+        assert_eq!(stream_labels(&b, 0), ["Film 2024 720p WEB", "Film 2024 2160p WEB-DL", "Film 2024 1080p BluRay"]);
+        assert_eq!(b.sections[0].accessory, "3");
+        assert_eq!(b.keys, [RowKey(STREAM_KEY), RowKey(STREAM_KEY + 1), RowKey(STREAM_KEY + 2)]);
+    }
+
+    /// With the switch on a cached and an uncached debrid stream stay, a stream that says nothing
+    /// about debrid goes, the header counts what is listed, and every row keeps the key of its
+    /// place in what the addon sent (focus does not jump).
+    #[test]
+    fn only_debrid_lists_cached_and_uncached_debrid_streams_and_hides_the_rest() {
+        let _en = sn_platform::i18n::language_on_this_thread_for_test(sn_platform::i18n::Preference::En);
+        let other = vec![
+            http("[RD+] Torrentio\n4k", "Film.2024.2160p.BluRay", "https://example.com/t1"),
+            http("Torrentio\n1080p", "Film.2024.1080p.WEB\n\u{1f464} 7", "https://example.com/t2"),
+        ];
+        let groups = [group("AIO", GroupState::Ready(mixed_streams())), group("Torrentio", GroupState::Ready(other))];
+        let b = build_marked(&movie(), None, Some(&groups), None, "", &[], None, &debrid_only());
+        assert_eq!(stream_labels(&b, 0), ["Film 2024 2160p WEB-DL", "Film 2024 1080p BluRay"], "the uncached one stays, in the addon's order");
+        assert_eq!(b.sections[0].accessory, "2", "the header counts what is listed");
+        assert_eq!(b.keys[..2], [RowKey(STREAM_KEY + 1), RowKey(STREAM_KEY + 2)], "the original positions");
+        assert_eq!(stream_labels(&b, 1), ["Film 2024 2160p BluRay"]);
+        assert_eq!(b.sections[1].accessory, "1");
+        assert_eq!(b.keys[2], RowKey(STREAM_KEY + (1 << 12)));
+        assert_eq!(b.actions.iter().filter(|a| matches!(a, Some(Action::Play(_)))).count(), 3);
+        // the language order sorts what is left, still keyed by original position
+        let by_quality = StreamView { order: crate::stores::settings::ORDER_QUALITY, ..debrid_only() };
+        let b = build_marked(&movie(), None, Some(&groups[..1]), None, "", &[], None, &by_quality);
+        assert_eq!(b.keys[..2], [RowKey(STREAM_KEY + 2), RowKey(STREAM_KEY + 1)], "cached first, the download last");
+    }
+
+    /// An addon whose streams are all hidden is a quiet addon with its own reason, on the closing
+    /// row, and no section of its own; with every addon so, the reasons stand open.
+    #[test]
+    fn an_addon_with_only_plain_streams_is_quiet_with_a_reason() {
+        let _en = sn_platform::i18n::language_on_this_thread_for_test(sn_platform::i18n::Preference::En);
+        let direct = group("Direct", GroupState::Ready(vec![http("Link", "Film.Link", "https://cdn.example/a.mkv")]));
+        let groups = [direct.clone(), group("AIO", GroupState::Ready(mixed_streams()))];
+        let off = build_marked(&movie(), None, Some(&groups), None, "", &[], None, &StreamView::default());
+        assert_eq!(off.sections.iter().map(|s| s.header.as_str()).collect::<Vec<_>>(), ["Direct", "AIO"], "off: both are sections");
+        let b = build_marked(&movie(), None, Some(&groups), None, "", &[], None, &debrid_only());
+        assert_eq!(texts(&b), vec![("AIO".into(), vec!["Film 2024 2160p WEB-DL".into(), "Film 2024 1080p BluRay".into()]), (String::new(), vec![msg::app_detail_quiet_addons(1)])]);
+        assert_eq!(b.actions.last(), Some(&Some(Action::ToggleQuiet)));
+        let open = StreamView { quiet_open: true, ..debrid_only() };
+        let b = build_marked(&movie(), None, Some(&groups), None, "", &[], None, &open);
+        assert_eq!(texts(&b)[1].1[1], format!("Direct \u{b7} {}", msg::app_detail_no_debrid_streams()));
+        assert_eq!(msg::app_detail_no_debrid_streams(), "No debrid streams");
+        // nothing else to show: the reasons stand open under the heading
+        let b = build_marked(&movie(), None, Some(&[direct]), None, "", &[], None, &debrid_only());
+        assert_eq!(texts(&b), vec![(msg::app_detail_streams().into(), vec![msg::app_detail_quiet_addons(1), format!("Direct \u{b7} {}", msg::app_detail_no_debrid_streams())])]);
+    }
+
+    /// The notes an addon sends stay as they are; a live channel is never hidden.
+    #[test]
+    fn only_debrid_keeps_notes_and_live_streams() {
+        let _en = sn_platform::i18n::language_on_this_thread_for_test(sn_platform::i18n::Preference::En);
+        let parse = |j: &str| serde_json::from_str::<Stream>(j).unwrap();
+        let error = parse(r#"{"name":"[❌] Comet p2p","description":"No results","externalUrl":"https://example.com/repo","streamData":{"type":"error"}}"#);
+        let mut streams = mixed_streams();
+        streams.push(error);
+        let b = build_marked(&movie(), None, Some(&[group("AIO", GroupState::Ready(streams))]), None, "", &[], None, &debrid_only());
+        let rows = &b.sections[0].rows;
+        assert_eq!(rows.len(), 3, "two streams and the failure note");
+        assert!(rows[2].is_note() && rows[2].label == "Comet p2p: No results");
+        assert_eq!(b.sections[0].accessory, "2");
+        // real streams all hidden next to a failure: the reason is the switch's
+        let b = build_marked(&movie(), None, Some(&[group("Mixed", GroupState::Ready(vec![http("Plain", "Film.720p", "https://x/p"), parse(r#"{"name":"[❌] Comet","description":"x","streamData":{"type":"error"}}"#)]))]), None, "", &[], None, &StreamView { quiet_open: true, ..debrid_only() });
+        assert_eq!(texts(&b)[0].1[1], format!("Mixed \u{b7} {}", msg::app_detail_no_debrid_streams()));
+        // a live item's streams have no debrid to speak of
+        let tv = Mode::Item(ItemRef { kind: "tv".into(), id: "ch1".into(), name: "SKY 1".into(), from: String::new() });
+        let b = build_marked(&tv, None, Some(&[group("TvVoo", GroupState::Ready(vec![http("Proxy", "[🛰️] SKY 1", "https://example.com/p")]))]), None, "", &[], None, &debrid_only());
+        assert_eq!(stream_labels(&b, 0), ["[🛰️] SKY 1"]);
+        let live = parse(r#"{"name":"Vavoo","title":"SKY 1","url":"https://example.com/v.m3u8","behaviorHints":{"isLive":true}}"#);
+        let b = build_marked(&movie(), None, Some(&[group("TvVoo", GroupState::Ready(vec![live]))]), None, "", &[], None, &debrid_only());
+        assert_eq!(stream_labels(&b, 0), ["SKY 1"]);
+    }
+
+    /// The page reads the switch from the settings store, through the real dispatcher.
+    #[test]
+    fn the_stream_page_follows_the_only_debrid_setting() {
+        use crate::stores::settings::Pref;
+        let _g = sn_base::testlock::serial();
+        let _en = sn_platform::i18n::language_on_this_thread_for_test(sn_platform::i18n::Preference::En);
+        let mut app = two_addon_movie();
+        let labels = |app: &crate::test_support::TestApp| detail_page(app).sections().iter().flat_map(|s| s.rows.iter().map(|r| r.label.clone())).collect::<Vec<_>>();
+        assert!(labels(&app).contains(&"Film One".to_string()), "off: the plain link is listed");
+        app.rig.settings.set(Pref::DebridOnly, 1);
+        let gen = app.rig.settings.gen();
+        app.notify(StoreId::Settings, gen);
+        app.frames(20);
+        let on = labels(&app);
+        assert!(!on.contains(&"Film One".to_string()) && !on.contains(&"Film Two".to_string()), "on: nothing says debrid, nothing is listed: {on:?}");
+        assert!(on.contains(&msg::app_detail_quiet_addons(2)), "both addons are quiet: {on:?}");
+        app.rig.settings.set(Pref::DebridOnly, 0);
+        let gen = app.rig.settings.gen();
+        app.notify(StoreId::Settings, gen);
+        app.frames(20);
+        assert!(labels(&app).contains(&"Film One".to_string()), "off again: listed again");
     }
 
     /// Every piece of text a stream row draws: the side column, the title, the chips.

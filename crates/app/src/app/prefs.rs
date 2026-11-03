@@ -113,6 +113,9 @@ struct File {
     /// `Pref::Theme`'s rung (absent: Stremio's).
     #[serde(default)]
     theme: u8,
+    /// `Pref::DebridOnly` (absent: off, every stream is listed).
+    #[serde(default)]
+    debrid_only: bool,
 }
 
 fn yes() -> bool {
@@ -216,6 +219,7 @@ fn of(file: File) -> Loaded {
         .seeded(Pref::TvGuide, sn_screens::stores::settings::tv_guide_rung(&file.tv_guide))
         .seeded(Pref::StreamOrder, file.stream_order)
         .seeded(Pref::Theme, file.theme)
+        .seeded(Pref::DebridOnly, u8::from(file.debrid_only))
         .with_audio_offsets(file.audio_offsets),
         search: SearchStore::new(file.recent_searches),
     }
@@ -256,6 +260,7 @@ pub fn snapshot(settings: &SettingsStore, search: &SearchStore) -> Vec<u8> {
         tv_guide: sn_screens::stores::settings::tv_guide_name(settings.get(Pref::TvGuide)).to_string(),
         stream_order: settings.get(Pref::StreamOrder),
         theme: settings.get(Pref::Theme),
+        debrid_only: settings.get(Pref::DebridOnly) != 0,
     };
     serde_json::to_vec_pretty(&file).unwrap_or_default()
 }
@@ -348,6 +353,7 @@ mod tests {
         assert_eq!(Pref::SubtitleOpacity.default_rung(), SubtitleOpacity::default().index());
         assert_eq!(Pref::AssStyling.default_rung(), u8::from(yes()), "ASS keeps its styling by default");
         assert_eq!(Pref::AutoPlay.default_rung(), u8::from(yes()), "auto-play is on by default");
+        assert_eq!(Pref::DebridOnly.default_rung(), 0, "every stream is listed by default");
     }
 
     /// The install directory is read-only to the running app on a Homebrew Channel install
@@ -425,6 +431,25 @@ mod tests {
         // an earlier build's filter in this file is read past (the addons store holds it now)
         std::fs::write(&path, br#"{"search_disabled":["x"],"recent_searches":["old"]}"#).unwrap();
         assert_eq!(load(&path).search.recents(), ["old"]);
+    }
+
+    /// Only debrid streams is kept in the settings file; an earlier file (and a fresh install) lists every stream.
+    #[test]
+    fn the_debrid_only_switch_is_kept_and_defaults_off() {
+        let dir = sn_base::testscratch::process_dir("settings-debrid-only");
+        let path = dir.join("settings.json");
+        let none = SearchStore::new(Vec::new());
+        let mut s = SettingsStore::default();
+        assert_eq!(s.get(Pref::DebridOnly), 0);
+        write_atomic(&path, &snapshot(&s, &none)).unwrap();
+        assert!(std::fs::read_to_string(&path).unwrap().contains(r#""debrid_only": false"#));
+        assert_eq!(load(&path).settings.get(Pref::DebridOnly), 0);
+        assert!(s.set(Pref::DebridOnly, 1));
+        write_atomic(&path, &snapshot(&s, &none)).unwrap();
+        assert!(std::fs::read_to_string(&path).unwrap().contains(r#""debrid_only": true"#));
+        assert_eq!(load(&path).settings.get(Pref::DebridOnly), 1, "the choice is kept");
+        std::fs::write(&path, br#"{"stream_order":2}"#).unwrap();
+        assert_eq!(load(&path).settings.get(Pref::DebridOnly), 0, "a file from before the switch existed lists every stream");
     }
 
     /// The multichannel choice is kept by NAME: a file the four-rung build wrote reads back as the

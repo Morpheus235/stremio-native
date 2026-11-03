@@ -59,6 +59,10 @@ pub enum Pref {
     /// The colour theme, an index into `sn_gfx::gfx::tokens::PALETTES` ([`THEMES`] of them):
     /// Stremio (the default), Graphite, Ocean, Crimson, Emerald, Gold, OLED black.
     Theme = 18,
+    /// Only debrid streams: Off (rung 0, every stream is listed, the default) or On (a stream
+    /// whose text says nothing about debrid is hidden; cached and uncached debrid streams stay,
+    /// `stream_facts::Facts::cached`). App-local: Stremio has no such account setting.
+    DebridOnly = 19,
 }
 
 /// How many colour themes [`Pref::Theme`] picks from (`sn_gfx::gfx::tokens::PALETTES`, which the
@@ -250,6 +254,7 @@ impl Pref {
         Pref::TvGuide,
         Pref::StreamOrder,
         Pref::Theme,
+        Pref::DebridOnly,
     ];
 
     /// How many rungs the ladder has (`sn_media::prefs`'s `LADDER.len()`).
@@ -274,6 +279,7 @@ impl Pref {
             Pref::TvGuide => 1 + TV_GUIDES.len() as u8,
             Pref::StreamOrder => 3,
             Pref::Theme => THEMES,
+            Pref::DebridOnly => 2,
         }
     }
 
@@ -300,6 +306,7 @@ impl Pref {
             Pref::TvGuide => msg::app_settings_tv_guide(),
             Pref::StreamOrder => msg::app_settings_stream_order(),
             Pref::Theme => msg::app_settings_theme(),
+            Pref::DebridOnly => msg::app_settings_debrid_only(),
         }
     }
 
@@ -343,8 +350,8 @@ impl Pref {
             (Pref::SubtitleOpacity, 0) => msg::app_settings_opacity_100(),
             (Pref::SubtitleOpacity, 1) => msg::app_settings_opacity_75(),
             (Pref::SubtitleOpacity, _) => msg::app_settings_opacity_50(),
-            (Pref::AssStyling | Pref::AutoPlay, 0) => msg::app_settings_switch_off(),
-            (Pref::AssStyling | Pref::AutoPlay, _) => msg::app_settings_switch_on(),
+            (Pref::AssStyling | Pref::AutoPlay | Pref::DebridOnly, 0) => msg::app_settings_switch_off(),
+            (Pref::AssStyling | Pref::AutoPlay | Pref::DebridOnly, _) => msg::app_settings_switch_on(),
             (Pref::UpNextAt, UP_NEXT_CREDITS) => msg::app_settings_up_next_credits(),
             (Pref::UpNextAt, 1) => msg::app_settings_up_next_15(),
             (Pref::UpNextAt, 2) => msg::app_settings_up_next_25(),
@@ -397,12 +404,13 @@ impl Pref {
             Pref::TvGuide => 0,
             Pref::StreamOrder => ORDER_ADDON,
             Pref::Theme => 0,
+            Pref::DebridOnly => 0,
         }
     }
 }
 
 /// How many preferences [`Pref::ALL`] holds.
-pub const PREFS: usize = 19;
+pub const PREFS: usize = 20;
 
 /// The pages that show their items as posters or as a list, each remembering its own choice.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -721,6 +729,7 @@ mod tests {
         assert_eq!(Pref::up_next_lead(99), (35_000, true), "out of range is the default");
         let s = SettingsStore::default();
         assert_eq!([Pref::AutoPlay, Pref::AssStyling, Pref::UpNextAt, Pref::SubtitleColor].map(|p| s.get(p)), [1, 1, 0, 0]);
+        assert_eq!(s.get(Pref::DebridOnly), 0, "only debrid streams starts off");
         assert_eq!(Pref::ALL.len(), PREFS);
         assert!(Pref::ALL.iter().enumerate().all(|(i, p)| *p as usize == i), "a pref's discriminant is its slot");
     }

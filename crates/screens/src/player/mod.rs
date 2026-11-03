@@ -52,7 +52,8 @@
 //! addon's stream of the release that is playing (`sn_stremio::stream_facts::same_release`: the
 //! `bingeGroup`, else the facts) straight away, over that episode's Streams page, the Up Next
 //! line saying so once it is found. No match, a failed or slow addon ([`PICK_WAIT_MS`]), or
-//! *Always choose* opens the Streams page instead (a stream is the viewer's to pick).
+//! *Always choose* opens the Streams page instead (a stream is the viewer's to pick). With
+//! Settings > Only debrid streams on, a stream the switch hides is never the pick.
 //!
 //! **Skip intro / Skip recap**: the playback's markers (`PlaybackView::skips`, which the
 //! application looks up from introdb.app or AniSkip after the first picture,
@@ -538,7 +539,7 @@ impl PlayerScreen {
         let group = groups.iter().find(|g| g.addon_id == release.addon_id);
         let pick = match group.map(|g| (g, &g.state)) {
             Some((_, sn_stremio::streams::GroupState::Loading)) if !waited => return None,
-            Some((g, sn_stremio::streams::GroupState::Ready(streams))) => sn_stremio::stream_facts::same_release(release, streams)
+            Some((g, sn_stremio::streams::GroupState::Ready(streams))) => sn_stremio::stream_facts::same_release(release, streams, cx.views.settings.get(Pref::DebridOnly) != 0)
                 .and_then(|i| next_play(next, g, &streams[i], cx))
                 .map(Box::new),
             _ => None,

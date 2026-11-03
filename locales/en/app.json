@@ -1384,5 +1384,17 @@
   "app.settings.theme_oled": {
     "value": "OLED black",
     "description": "Theme option: a true black background for OLED screens."
+  },
+  "app.settings.debrid_only": {
+    "value": "Only debrid streams",
+    "description": "Settings: row and picker title: whether a stream list shows only streams from a debrid service."
+  },
+  "app.settings.debrid_only_copy": {
+    "value": "On: lists only streams from a debrid service, cached or not. Streams that don’t mention debrid are hidden. Off: lists every stream.",
+    "description": "Only debrid streams picker: the line under the title."
+  },
+  "app.detail.no_debrid_streams": {
+    "value": "No debrid streams",
+    "description": "Detail: the reason on the closing row for an addon whose streams are all hidden by Only debrid streams."
   }
 }
