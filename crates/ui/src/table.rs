@@ -815,6 +815,19 @@ pub struct TableView {
     width_memo: std::cell::Cell<Option<(WidthKey, f32)>>,
     /// [`Self::side_col_w`]'s last answer, memoized the same way: every row's label x asks for it.
     side_memo: std::cell::Cell<Option<((WidthKey, u32), f32)>>,
+    /// What [`Self::fit_notes`] last fitted the rows under. The draw calls it every frame and it
+    /// re-wraps every note and chip row, a stream list's hundreds of them, so it runs again only
+    /// when this key changes. Set only for the live font (see `fit_notes`).
+    fit_memo: std::cell::Cell<Option<FitKey>>,
+}
+/// What [`TableView::fit_notes`] depends on: the rows ([`WidthKey`]'s rev, row count and measure)
+/// and the frame width, plus the section count as a cheap guard for a direct write to the public
+/// [`TableView::sections`], which stamps nothing.
+#[derive(Clone, Copy, PartialEq)]
+struct FitKey {
+    width: WidthKey,
+    frame_w: u32,
+    sections: usize,
 }
 /// What a memoized width depends on beyond the rows themselves, which [`TableView::rev`] stamps.
 #[derive(Clone, Copy, PartialEq)]
@@ -827,6 +840,31 @@ struct WidthKey {
 /// [`TableView::walk`]'s event index for the hairline that divides a section from the one above
 /// it (`-1` is a header, `>= 0` a row). Emitted for EVERY section after the first, headed or not.
 const WALK_DIVIDER: i32 = -2;
+/// Work counters for the cost tests: a count is deterministic where a clock is not. `walks` is
+/// [`TableView::walk`] runs, `row_hs` is [`TableView::row_h`] calls and `rows_ats` is
+/// [`TableView::rows_at`] calls, per thread.
+#[cfg(test)]
+pub(crate) mod census {
+    use std::cell::Cell;
+    thread_local! {
+        static COUNTS: Cell<[u32; 3]> = const { Cell::new([0; 3]) };
+    }
+    pub(crate) fn reset() {
+        COUNTS.with(|c| c.set([0; 3]));
+    }
+    pub(crate) fn bump(i: usize) {
+        COUNTS.with(|c| {
+            let mut n = c.get();
+            n[i] += 1;
+            c.set(n);
+        });
+    }
+    /// `(walks, row_hs, rows_ats)` since the last [`reset`].
+    pub(crate) fn counts() -> (u32, u32, u32) {
+        let [w, r, a] = COUNTS.with(Cell::get);
+        (w, r, a)
+    }
+}
 /// [`TableView::walk`]'s event index for the page title band ([`TableView::set_title`]); it is
 /// followed by a [`WALK_DIVIDER`] event, so the title reads as the page's own heading.
 const WALK_TITLE: i32 = -3;
@@ -838,7 +876,7 @@ impl TableView {
     /// The owner records its row data separately. These fields determine layout, the selected
     /// face and subsequent motion; no text/texture cache or renderer pointer is traversed.
     pub fn write_motion(&self, c: &mut sn_machine::machine::Canon) {
-        let Self { sections: _, sel, list_focused, compact, tall, grouped, header_ink, hl_top, hl_bot, scroll, title: _, min_panel_w: _, rev: _, width_memo: _, side_memo: _ } = self;
+        let Self { sections: _, sel, list_focused, compact, tall, grouped, header_ink, hl_top, hl_bot, scroll, title: _, min_panel_w: _, rev: _, width_memo: _, side_memo: _, fit_memo: _ } = self;
         c.u32(*sel as u32).bool(*list_focused).bool(*compact).bool(*tall).bool(*grouped);
         for component in header_ink { c.f32(*component); }
         for spring in [hl_top, hl_bot, scroll] { c.f32(spring.pos).f32(spring.vel); }
@@ -867,6 +905,8 @@ impl TableView {
     }
     /// Row `gi`'s height as laid out: [`Row::height_in`], or a focused chip row's expanded one.
     fn row_h(&self, gi: i32, row: &Row) -> f32 {
+        #[cfg(test)]
+        census::bump(1);
         if self.expanded(gi, row) {
             let (lines, chip_lines) = row.chip_wrap.get();
             chip_row_h(lines, if row.chips.is_empty() { 0 } else { chip_lines.max(1) })
@@ -899,6 +939,7 @@ impl TableView {
             rev: 0,
             width_memo: std::cell::Cell::new(None),
             side_memo: std::cell::Cell::new(None),
+            fit_memo: std::cell::Cell::new(None),
         }
     }
 
@@ -950,15 +991,35 @@ impl TableView {
         let top0 = frame.y + TOP_PAD;
         let scroll = self.scroll.pos;
         let mut out = None;
-        self.walk(|cy, gi, _| {
-            if gi != i || gi < 0 || self.rows_at(gi).sep {
+        self.walk(|cy, gi, _, row| {
+            let Some(row) = row else { return };
+            if gi != i || row.sep {
                 return;
             }
             let sy = top0 + cy - scroll;
-            let h = self.row_h(gi, self.rows_at(gi));
-            out = Some(Rect::new(frame.x + SIDE, sy, frame.w - 2.0 * SIDE, h));
+            out = Some(Rect::new(frame.x + SIDE, sy, frame.w - 2.0 * SIDE, self.row_h(gi, row)));
         });
         out
+    }
+
+    /// **Every selectable row's [`row_frame`](Self::row_frame), in row order, from ONE walk** —
+    /// `f(row index, frame)` for each row that is not a header, a hairline or a note (a note is a
+    /// `sep` row, never a stop), whether or not it is
+    /// inside the viewport. A caller that places something per row (the page's pointer stops) asks
+    /// this once instead of `row_frame` per row, which walks the whole table to find each one: rows²
+    /// row heights, 6 frames a second on a 497-stream list. The geometry is `row_frame`'s own, so
+    /// the two cannot disagree about a row's band.
+    pub fn for_each_row_frame(&self, frame: Rect, mut f: impl FnMut(i32, Rect)) {
+        let top0 = frame.y + TOP_PAD;
+        let scroll = self.scroll.pos;
+        self.walk(|cy, gi, _, row| {
+            let Some(row) = row else { return };
+            if row.sep {
+                return;
+            }
+            let sy = top0 + cy - scroll;
+            f(gi, Rect::new(frame.x + SIDE, sy, frame.w - 2.0 * SIDE, self.row_h(gi, row)));
+        });
     }
 
     /// The next SELECTABLE row from `i` in direction `delta` (−1/+1; 0 answers `i` itself if
@@ -992,12 +1053,13 @@ impl TableView {
         let top0 = frame.y + TOP_PAD;
         let scroll = self.scroll.pos;
         let mut hit = None;
-        self.walk(|cy, gi, _| {
-            if gi < 0 || self.rows_at(gi).sep {
+        self.walk(|cy, gi, _, row| {
+            let Some(row) = row else { return };
+            if row.sep {
                 return; // headers and grouping hairlines are not click targets
             }
             let sy = top0 + cy - scroll;
-            if my >= sy && my <= sy + self.row_h(gi, self.rows_at(gi)) {
+            if my >= sy && my <= sy + self.row_h(gi, row) {
                 hit = Some(gi);
             }
         });
@@ -1432,7 +1494,28 @@ impl TableView {
     /// count [`Row::height_in`] reads back. `Row::height_in` has no measure, so this is the one
     /// place a note's height is decided; [`Self::draw`] runs it before it walks, and an owner that
     /// sizes its panel from [`Self::measured_height`] (the track menu) runs it first. Idempotent.
+    ///
+    /// **Memoized for the live font**, by [`Self::layout_rev`], the row count and `frame_w`: a
+    /// stream list holds hundreds of chip rows and re-wrapping them every frame made it scroll
+    /// slowly on the TV. Every path that changes a row stamps the rev (`set_sections` and its
+    /// variants, `set_title`, [`Self::row_mut`]); a write to the public `sections` field is caught
+    /// only by its row or section count, so replace rows through `set_sections`. A capability that
+    /// is not the live font (a recording must see every query) is fitted every time.
     pub fn fit_notes(&self, frame_w: f32, measure: &dyn sn_machine::machine::Measure) {
+        let key = FitKey { width: self.width_key(measure), frame_w: frame_w.to_bits(), sections: self.sections.len() };
+        if measure.live_font() {
+            if self.fit_memo.get() == Some(key) {
+                return;
+            }
+            self.fit_rows(frame_w, measure);
+            self.fit_memo.set(Some(key));
+        } else {
+            self.fit_memo.set(None);
+            self.fit_rows(frame_w, measure);
+        }
+    }
+
+    fn fit_rows(&self, frame_w: f32, measure: &dyn sn_machine::machine::Measure) {
         let w = Self::note_column_w(frame_w);
         for row in self.sections.iter().flat_map(|s| s.rows.iter()).filter(|r| r.is_note()) {
             let lines = crate::text_view::TextView::new(&row.label, theme::size::CAPTION, theme::TEXT_TERTIARY)
@@ -1667,29 +1750,34 @@ impl TableView {
         self.sel = cur;
     }
 
-    /// walk the visual layout top-to-bottom, invoking `f(content_y, global_row_index_or_-1, sec)`
-    /// once per header (gi = -1) and once per row (gi >= 0). Cheap; the lists are short.
-    fn walk(&self, mut f: impl FnMut(f32, i32, usize)) {
+    /// walk the visual layout top-to-bottom, invoking `f(content_y, global_row_index_or_-1, sec, row)`
+    /// once per header (gi = -1) and once per row (gi >= 0); `row` is that row, `None` for a
+    /// header, a divider or the title band, so no caller scans the table to find the row the walk
+    /// is standing on. One pass is linear in the rows: a long list (a stream list's hundreds)
+    /// must be walked once per use, never once per row.
+    fn walk(&self, mut f: impl FnMut(f32, i32, usize, Option<&Row>)) {
+        #[cfg(test)]
+        census::bump(0);
         let mut y = 0.0f32;
         let mut gi = 0i32;
         if self.title.is_some() {
-            f(y, WALK_TITLE, 0);
+            f(y, WALK_TITLE, 0, None);
             y += HDR_H + TITLE_GAP + DIV_H;
-            f(y, WALK_DIVIDER, 0);
+            f(y, WALK_DIVIDER, 0, None);
         }
         for (si, sec) in self.sections.iter().enumerate() {
             // an EMPTY section (a `Form` whose items all fell through) has nothing to divide from
             // the one above: no hairline, no gap, and it must not lengthen the content
             if si > 0 && !sec.rows.is_empty() {
                 y += self.div_h();
-                f(y, WALK_DIVIDER, si);
+                f(y, WALK_DIVIDER, si, None);
             }
             if !sec.header.is_empty() {
-                f(y, -1, si);
+                f(y, -1, si, None);
                 y += HDR_H;
             }
             for row in &sec.rows {
-                f(y, gi, si);
+                f(y, gi, si, Some(row));
                 y += self.row_h(gi, row);
                 gi += 1;
             }
@@ -1700,11 +1788,14 @@ impl TableView {
     /// first row's) to its last row's bottom — what a [`Self::grouped`] card wraps.
     fn group_spans(&self) -> Vec<(usize, f32, f32)> {
         let mut out: Vec<(usize, f32, f32)> = Vec::new();
-        self.walk(|y, gi, si| {
+        self.walk(|y, gi, si, row| {
             if gi == WALK_DIVIDER || gi == WALK_TITLE || self.sections[si].rows.is_empty() {
                 return;
             }
-            let bot = if gi >= 0 { y + self.row_h(gi, self.rows_at(gi)) } else { y + HDR_H };
+            let bot = match row {
+                Some(row) => y + self.row_h(gi, row),
+                None => y + HDR_H,
+            };
             match out.last_mut() {
                 Some(last) if last.0 == si => last.2 = bot,
                 _ => out.push((si, y, bot)),
@@ -1715,7 +1806,7 @@ impl TableView {
 
     fn row_top(&self, target: i32) -> f32 {
         let mut out = 0.0;
-        self.walk(|y, gi, _| {
+        self.walk(|y, gi, _, _| {
             if gi == target {
                 out = y;
             }
@@ -1723,22 +1814,13 @@ impl TableView {
         out
     }
     fn row_height(&self, target: i32) -> f32 {
-        let mut n = 0i32;
-        for sec in &self.sections {
-            for row in &sec.rows {
-                if n == target {
-                    return self.row_h(n, row);
-                }
-                n += 1;
-            }
-        }
-        ROW_H
+        self.row_at(target).map_or(ROW_H, |row| self.row_h(target, row))
     }
     fn content_h(&self) -> f32 {
         // the LAST ROW's bottom, not the last walk event's: a trailing header or divider event
         // (an empty section) is not content
         let mut h = 0.0;
-        self.walk(|y, gi, _| {
+        self.walk(|y, gi, _, _| {
             if gi >= 0 {
                 h = y;
             }
@@ -1813,6 +1895,13 @@ impl TableView {
         self.draw_in(p, frame, true, measure)
     }
 
+    /// What a PAGE's table draws into ([`Self::draw_page`]): `frame` from its top to the bottom
+    /// of the screen, never shorter than `frame` itself. A row that starts below it is culled; the
+    /// page's pointer stops are culled to the same rectangle (`table_screen::TablePart`).
+    pub fn page_clip(frame: Rect) -> Rect {
+        Rect::new(frame.x, frame.y, frame.w, (crate::consts::SCR_H - frame.y).max(frame.h))
+    }
+
     fn draw_in(&self, p: Painter, frame: Rect, page: bool, measure: &dyn sn_machine::machine::Measure) {
         if self.n_rows() == 0 {
             Label::new(
@@ -1831,11 +1920,7 @@ impl TableView {
         // row stays uniform however close it is to an edge. A page's clip runs on to the bottom of
         // the screen instead ([`Self::draw_page`]). A `ClipScope`, so it intersects with an
         // enclosing panel clip and restores it when this fn returns.
-        let clip = if page {
-            Rect::new(frame.x, frame.y, frame.w, (crate::consts::SCR_H - frame.y).max(frame.h))
-        } else {
-            frame
-        };
+        let clip = if page { Self::page_clip(frame) } else { frame };
         let _clip = crate::screen::ClipScope::open_in(p, clip);
         let top0 = frame.y + TOP_PAD;
         let scroll = self.scroll.pos;
@@ -1888,7 +1973,7 @@ impl TableView {
         }
 
         // ---- headers + rows ----
-        self.walk(|cy, gi, si| {
+        self.walk(|cy, gi, si, row| {
             // ONE alpha over the whole group (see `Section::dim`) — pushed here, at the top of the
             // walk, so header, accessory, rows, marks and read-outs can never dim out of step.
             let sy = top0 + cy - scroll;
@@ -1991,7 +2076,8 @@ impl TableView {
                 }
                 return;
             }
-            let row = self.rows_at(gi);
+            // a header, divider or title never gets here: only a row does
+            let Some(row) = row else { return };
             let h = self.row_h(gi, row);
             if sy + h < vis_top || sy > vis_bot {
                 return; // fully scrolled out; a partial edge row is drawn and scissor-clipped to `frame`
@@ -2382,22 +2468,30 @@ impl TableView {
         usize::try_from(gi).ok().and_then(|gi| row_mut_in(&mut self.sections, gi))
     }
 
-    fn rows_at(&self, gi: i32) -> &Row {
-        let mut n = 0i32;
+    /// Row `gi` by GLOBAL index: skips whole sections by their length, so the cost is the section
+    /// count, never the row count. `None` for an index out of range.
+    fn row_at(&self, gi: i32) -> Option<&Row> {
+        let mut left = usize::try_from(gi).ok()?;
         for sec in &self.sections {
-            for row in &sec.rows {
-                if n == gi {
-                    return row;
-                }
-                n += 1;
+            if left < sec.rows.len() {
+                return Some(&sec.rows[left]);
             }
+            left -= sec.rows.len();
         }
+        None
+    }
+
+    fn rows_at(&self, gi: i32) -> &Row {
+        #[cfg(test)]
+        census::bump(2);
         // unreachable for a valid gi (draw early-returns when there are no rows)
-        self.sections
-            .iter()
-            .flat_map(|s| s.rows.iter())
-            .next()
-            .unwrap()
+        self.row_at(gi).unwrap_or_else(|| {
+            self.sections
+                .iter()
+                .flat_map(|s| s.rows.iter())
+                .next()
+                .unwrap()
+        })
     }
 }
 
@@ -2919,7 +3013,7 @@ mod tests {
             false,
         );
         let (mut dividers, mut headers) = (0, 0);
-        t.walk(|_, gi, _| match gi {
+        t.walk(|_, gi, _, _| match gi {
             WALK_DIVIDER => dividers += 1,
             -1 => headers += 1,
             _ => {}
@@ -2947,7 +3041,7 @@ mod tests {
         t.set_title(Some("Style".into()));
         assert_eq!(t.measured_height(), bare + HDR_H + TITLE_GAP + DIV_H);
         let (mut titles, mut dividers, mut first_row_y) = (0, 0, None);
-        t.walk(|y, gi, _| match gi {
+        t.walk(|y, gi, _, _| match gi {
             WALK_TITLE => titles += 1,
             WALK_DIVIDER => dividers += 1,
             0 => first_row_y = Some(y),
@@ -2966,7 +3060,7 @@ mod tests {
         let rows = || vec![Section::new("A").row(Row::new("a")), Section::new("B").row(Row::new("b"))];
         let count = |t: &TableView| {
             let mut d = 0;
-            t.walk(|_, gi, _| d += (gi == WALK_DIVIDER) as i32);
+            t.walk(|_, gi, _, _| d += (gi == WALK_DIVIDER) as i32);
             d
         };
         let mut bare = TableView::new();
@@ -3010,7 +3104,7 @@ mod tests {
         assert_eq!(t.title_rect(frame), None, "scrolled out of the viewport");
         // the dim is the section's alone: title and its hairline keep the page's painter
         let (mut page, mut rows) = (Vec::new(), Vec::new());
-        t.walk(|_, gi, si| {
+        t.walk(|_, gi, si, _| {
             let o = t.event_painter(Painter::root(), gi, si).opacity();
             if gi == WALK_TITLE || gi == WALK_DIVIDER { page.push(o) } else { rows.push(o) }
         });
@@ -3291,6 +3385,122 @@ mod tests {
         assert!(t.measured_width(&m) > w, "an edit must re-measure");
     }
 
+    /// A measure shaped like the device font: stable answers, `live_font`, and a count of how many
+    /// strings it was asked to measure (`live` false answers the same widths as a capability a
+    /// recording must see on every query).
+    struct CountingFont {
+        calls: std::cell::Cell<u32>,
+        live: bool,
+    }
+    impl CountingFont {
+        fn new(live: bool) -> Self {
+            Self { calls: std::cell::Cell::new(0), live }
+        }
+    }
+    impl sn_machine::machine::Measure for CountingFont {
+        fn width(&self, s: &std::ffi::CStr, sz: i32, bold: bool) -> f32 {
+            self.calls.set(self.calls.get() + 1);
+            s.to_bytes().len() as f32 * sz as f32 * if bold { 0.55 } else { 0.5 }
+        }
+        fn cap_h(&self, sz: i32) -> f32 { sz as f32 * 0.7 }
+        fn line_h(&self, sz: i32) -> f32 { sz as f32 * 1.2 }
+        fn live_font(&self) -> bool { self.live }
+    }
+
+    /// A stream list's shape: a note, then `n` chip rows with long titles and six chips each.
+    fn stream_like_sections(tag: &str, n: usize) -> Vec<Section> {
+        let mut sec = Section::new("Addon").row(Row::note(format!("{tag} an addon note that is long enough to wrap onto a second caption line in a narrow column")));
+        for i in 0..n {
+            let mut r = Row::new(format!("{tag}.Some.Release.Name.{i}.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR10.HEVC-GROUP another long run of words to wrap")).side("Addon", "4K");
+            for c in 0..6 {
+                r = r.chip(Chip::new(format!("Chip {i} {c} text")).server());
+            }
+            sec = sec.row(r);
+        }
+        vec![sec]
+    }
+
+    fn fitted(t: &TableView) -> Vec<(u8, (u8, u8))> {
+        t.sections.iter().flat_map(|s| s.rows.iter()).map(|r| (r.note_lines.get(), r.chip_wrap.get())).collect()
+    }
+
+    /// **`fit_notes` re-wraps every note and every chip row, so it must run only when something it
+    /// reads changed.** The draw calls it every frame and a stream list holds hundreds of chip rows
+    /// (the Detail page scrolled slowly on the TV). The same rev and width must not measure again;
+    /// a new width, new sections or an edited row must.
+    #[test]
+    fn fit_notes_measures_only_when_its_inputs_change() {
+        let _serial = sn_base::testlock::serial();
+        let m = CountingFont::new(true);
+        let mut t = TableView::new();
+        t.set_sections(stream_like_sections("zq-fit-a", 12), 1, false);
+        t.fit_notes(884.0, &m);
+        let first = m.calls.get();
+        assert!(first > 0, "the first fit measures");
+        let settled = fitted(&t);
+        t.fit_notes(884.0, &m);
+        t.fit_notes(884.0, &m);
+        assert_eq!(m.calls.get(), first, "the same rev and width measured again");
+        assert_eq!(fitted(&t), settled);
+
+        t.fit_notes(700.0, &m);
+        let narrower = m.calls.get();
+        assert!(narrower > first, "a new width must refit");
+        t.fit_notes(700.0, &m);
+        assert_eq!(m.calls.get(), narrower);
+        t.fit_notes(884.0, &m);
+        assert!(m.calls.get() > narrower, "back to the first width is a change too");
+        assert_eq!(fitted(&t), settled, "and lands where the first fit did");
+
+        let before = m.calls.get();
+        t.set_sections(stream_like_sections("zq-fit-b", 12), 1, true);
+        t.fit_notes(884.0, &m);
+        assert!(m.calls.get() > before, "new sections must refit");
+
+        let before = m.calls.get();
+        t.row_mut(3).expect("a row").label = "A much shorter title".into();
+        t.fit_notes(884.0, &m);
+        assert!(m.calls.get() > before, "an edited row must refit");
+        assert_eq!(t.rows_at(3).note_lines.get(), 1, "the edit's own wrap, not the old one");
+    }
+
+    /// The memo is an optimisation, never a different layout; and a capability that is not the
+    /// live font (a recording, which must SEE every query) is never answered from it.
+    #[test]
+    fn the_fit_memo_keeps_the_layout_and_spares_only_the_live_font() {
+        let _serial = sn_base::testlock::serial();
+        let live = CountingFont::new(true);
+        let plain = CountingFont::new(false);
+        let mut a = TableView::new();
+        a.set_sections(stream_like_sections("zq-fit-c", 8), 0, false);
+        let mut b = TableView::new();
+        b.set_sections(stream_like_sections("zq-fit-c", 8), 0, false);
+        for w in [884.0, 640.0, 884.0, 520.0] {
+            a.fit_notes(w, &live);
+            a.fit_notes(w, &live);
+            b.fit_notes(w, &plain);
+            assert_eq!(fitted(&a), fitted(&b), "layout at {w}");
+        }
+        let calls = plain.calls.get();
+        b.fit_notes(520.0, &plain);
+        assert!(plain.calls.get() > calls, "a non-live measure is asked every time");
+    }
+
+    /// A direct write to the public `sections` (no stamp) that changes the row count cannot be
+    /// answered from a stale fit.
+    #[test]
+    fn a_direct_sections_write_does_not_reuse_a_stale_fit() {
+        let _serial = sn_base::testlock::serial();
+        let m = CountingFont::new(true);
+        let mut t = TableView::new();
+        t.sections = stream_like_sections("zq-fit-d", 3);
+        t.fit_notes(884.0, &m);
+        let before = m.calls.get();
+        t.sections = stream_like_sections("zq-fit-e", 5);
+        t.fit_notes(884.0, &m);
+        assert!(m.calls.get() > before);
+    }
+
     fn cover_of(t: &TableView, gi: i32) -> f32 {
         t.pill_cover(t.row_top(gi), t.row_height(gi))
     }
@@ -3384,4 +3594,123 @@ mod tests {
         assert!(FIRST_HEADER_CAP_OFFSET >= TOP_FADE_H);
         assert!(TOP_PAD + ROW_INK_PAD >= TOP_FADE_H);
     }
+    /// Sections of every shape the lookups index across: rows, an empty section in the middle, a
+    /// rule and a note among the rows, a lone row, and an empty one at the end.
+    fn lookup_table() -> TableView {
+        let mut t = TableView::new();
+        t.set_sections(
+            vec![
+                Section::new("A").row(Row::new("a0")).row(Row::new("a1").detail("two lines")).row(Row::new("a2")),
+                Section::new("empty"),
+                Section::new("").row(Row::separator()).row(Row::note("a note")).row(Row::new("c2")),
+                Section::new("D").row(Row::new("d0").side("Addon", "4K").chip(Chip::new("HEVC").server())),
+                Section::new("empty"),
+            ],
+            0,
+            false,
+        );
+        t
+    }
+
+    /// **The row lookups index by section lengths, and agree with a flat enumeration.** `rows_at`,
+    /// `row_height`, `section_of_row` and `next_selectable` are asked per row by every walk, so
+    /// each must answer what scanning every row would, at every index and past either end.
+    #[test]
+    fn the_row_lookups_agree_with_a_flat_enumeration_of_the_rows() {
+        let _serial = sn_base::testlock::serial();
+        let mut t = lookup_table();
+        t.sel = 3;
+        let flat: Vec<(usize, &Row)> = t.sections.iter().enumerate().flat_map(|(si, s)| s.rows.iter().map(move |r| (si, r))).collect();
+        assert_eq!(flat.len() as i32, t.n_rows());
+        for (gi, (si, row)) in flat.iter().enumerate() {
+            let gi = gi as i32;
+            assert!(std::ptr::eq(t.rows_at(gi), *row), "rows_at({gi})");
+            assert_eq!(t.row_height(gi), t.row_h(gi, row), "row_height({gi})");
+            assert_eq!(t.section_of_row(gi), *si, "section_of_row({gi})");
+            for delta in [-1, 0, 1] {
+                let want = match delta {
+                    0 => (!row.sep).then_some(gi),
+                    d => (0..flat.len() as i32).filter(|j| (j - gi) * d > 0).filter(|j| !flat[*j as usize].1.sep).min_by_key(|j| (j - gi).abs()),
+                };
+                assert_eq!(t.next_selectable(gi, delta), want, "next_selectable({gi}, {delta})");
+            }
+        }
+        let n = t.n_rows();
+        assert!(std::ptr::eq(t.rows_at(n), flat[0].1), "past the end falls back to the first row, as it always did");
+        assert!(std::ptr::eq(t.rows_at(-1), flat[0].1));
+        assert_eq!(t.row_height(n), ROW_H);
+        assert_eq!(t.row_height(-1), ROW_H);
+        assert_eq!(t.next_selectable(n, 0), None);
+        assert_eq!(t.next_selectable(-1, 1), None);
+        assert_eq!(t.section_of_row(n), 0);
+    }
+
+    /// A 500-row stream list, for the cost tests below.
+    fn five_hundred_streams() -> TableView {
+        let mut t = TableView::new();
+        let mut secs = Vec::new();
+        for a in 0..5 {
+            let mut sec = Section::new(format!("Addon {a}"));
+            for i in 0..100 {
+                let mut r = Row::new(format!("Some.Release.Name.{a}.{i}.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR10.HEVC-GROUP")).side("Addon", "4K");
+                for c in 0..4 {
+                    r = r.chip(Chip::new(format!("Chip {c}")).server());
+                }
+                sec = sec.row(r);
+            }
+            secs.push(sec);
+        }
+        t.set_sections(secs, 10, false);
+        t
+    }
+
+    /// **A walk hands the closure the row it already holds**, so a draw, a hit test or a row's frame
+    /// never scans the table again to find it: `rows_at` was a linear scan, run per row per walk.
+    #[test]
+    fn a_walk_hands_over_its_row_so_nothing_scans_for_it() {
+        let _serial = sn_base::testlock::serial();
+        let t = five_hundred_streams();
+        let frame = Rect::new(940.0, 100.0, 884.0, 800.0);
+        t.fit_notes(frame.w, &crate::fixture::FixtureMeasure);
+        census::reset();
+        let r = t.row_frame(frame, 321).expect("a row");
+        t.hit_row(frame, r.x + 10.0, r.y + 10.0);
+        t.draw_page(crate::Painter::recording(), frame, &crate::fixture::FixtureMeasure);
+        let (_, _, rows_ats) = census::counts();
+        assert!(rows_ats <= 8, "{rows_ats} linear row lookups");
+    }
+
+    /// **`for_each_row_frame` is `row_frame` for every selectable row, from ONE walk.** The same
+    /// rects (the focused chip row EXPANDED, a scrolled table, a grouped one, a title band), the
+    /// same order, rules, notes and headers left out as `row_frame` leaves them out.
+    #[test]
+    fn for_each_row_frame_is_row_frame_for_every_selectable_row() {
+        let _serial = sn_base::testlock::serial();
+        let frame = Rect::new(940.0, 100.0, 884.0, 600.0);
+        for grouped in [false, true] {
+            for titled in [false, true] {
+                for sel in [0, 3, 5, 6] {
+                    let mut t = lookup_table();
+                    t.grouped = grouped;
+                    t.set_title(titled.then(|| "Title".to_string()));
+                    t.sel = sel;
+                    t.fit_notes(frame.w, &crate::fixture::FixtureMeasure);
+                    for _ in 0..120 {
+                        t.update(1.0 / 60.0, 200.0);
+                    }
+                    let want: Vec<(i32, Rect)> = (0..t.n_rows()).filter(|&i| t.next_selectable(i, 0) == Some(i)).filter_map(|i| Some((i, t.row_frame(frame, i)?))).collect();
+                    census::reset();
+                    let mut got = Vec::new();
+                    t.for_each_row_frame(frame, |gi, r| got.push((gi, r)));
+                    assert_eq!(census::counts().0, 1, "one walk");
+                    assert_eq!(got.len(), want.len());
+                    for ((gi, r), (wi, w)) in got.iter().zip(&want) {
+                        assert_eq!(gi, wi);
+                        assert_eq!((r.x, r.y, r.w, r.h), (w.x, w.y, w.w, w.h), "grouped {grouped}, titled {titled}, sel {sel}, row {gi}");
+                    }
+                }
+            }
+        }
+    }
+
 }

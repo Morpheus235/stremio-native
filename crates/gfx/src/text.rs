@@ -1154,6 +1154,7 @@ unsafe fn render_runs(
 pub fn init_text() {
     FITTED_LINES.with(|cache| cache.borrow_mut().entries.clear());
     MEASURED_BOUNDS.with(|cache| cache.borrow_mut().entries.clear());
+    reset_cap_bands();
     unsafe {
         if TTF_Init() != 0 {
             log("TTF_Init failed");
@@ -1932,6 +1933,111 @@ mod supplied_elide_tests {
     }
 }
 
+#[cfg(test)]
+mod cap_band_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    /// A font whose cap band depends on the size and weight, and a count of how often it was read.
+    fn band_of(sz: c_int, bold: c_int, reads: &Cell<u32>, font: f32) -> ((f32, f32), bool) {
+        reads.set(reads.get() + 1);
+        ((font + sz as f32 * 0.2, font + sz as f32 * 0.8 + bold as f32), true)
+    }
+
+    /// **The cap band is a font constant, read once per size and weight.** A table of hundreds of
+    /// rows asked it per row per walk, and each ask hashed "H" and scanned the glyph cache. Every
+    /// answer is the uncached one, across the `theme::size` ladder in both weights, and a second
+    /// ask reads nothing.
+    #[test]
+    fn a_cap_band_is_read_once_per_size_and_weight_and_is_the_uncached_answer() {
+        reset_cap_bands();
+        let reads = Cell::new(0);
+        let sizes = [72, 48, 40, 32, 28, 26, 24, 22, 20];
+        for round in 0..3 {
+            for &sz in &sizes {
+                for bold in [0, 1] {
+                    let got = cap_band_memo(sz, bold, || band_of(sz, bold, &reads, 1.0));
+                    assert_eq!(got, band_of(sz, bold, &Cell::new(0), 1.0).0, "{sz}/{bold} round {round}");
+                }
+            }
+            assert_eq!(reads.get(), 18, "round {round}: one read per (size, weight), none after the first round");
+        }
+    }
+
+    /// Size and weight are the whole key: a band remembered for one never answers for another.
+    #[test]
+    fn a_cap_band_is_keyed_by_size_and_weight() {
+        reset_cap_bands();
+        let reads = Cell::new(0);
+        let regular = cap_band_memo(28, 0, || band_of(28, 0, &reads, 1.0));
+        let bold = cap_band_memo(28, 1, || band_of(28, 1, &reads, 1.0));
+        let larger = cap_band_memo(32, 0, || band_of(32, 0, &reads, 1.0));
+        assert_ne!(regular, bold);
+        assert_ne!(regular, larger);
+        assert_eq!(reads.get(), 3);
+    }
+
+    /// **A re-initialised font gets its own bands**: `init_text` clears the memo, so the next ask
+    /// reads the new font rather than the one it replaced.
+    #[test]
+    fn the_cap_bands_are_recomputed_after_the_font_is_reinitialised() {
+        reset_cap_bands();
+        let reads = Cell::new(0);
+        let before = cap_band_memo(28, 0, || band_of(28, 0, &reads, 1.0));
+        assert_eq!(cap_band_memo(28, 0, || band_of(28, 0, &reads, 5.0)), before, "remembered, not re-read");
+        reset_cap_bands();
+        let after = cap_band_memo(28, 0, || band_of(28, 0, &reads, 5.0));
+        assert_ne!(after, before, "the new font's band");
+        assert_eq!(after, band_of(28, 0, &Cell::new(0), 5.0).0);
+        assert_eq!(reads.get(), 2, "one read per font");
+        // the clear is what `init_text` does, on its first line, before any font is opened
+        let src = include_str!("text.rs");
+        let init = &src[src.find("pub fn init_text()").expect("init_text")..];
+        let init = &init[..init.find("\n}\n").expect("its end")];
+        assert!(init.contains("reset_cap_bands();"), "init_text must clear the cap bands");
+    }
+
+    /// A glyph that failed to render has no band yet: the zero it answers for that call is not kept,
+    /// so the next call reads again.
+    #[test]
+    fn a_band_that_failed_to_render_is_not_remembered() {
+        reset_cap_bands();
+        let reads = Cell::new(0);
+        assert_eq!(cap_band_memo(24, 0, || { reads.set(reads.get() + 1); ((0.0, 0.0), false) }), (0.0, 0.0));
+        let got = cap_band_memo(24, 0, || band_of(24, 0, &reads, 1.0));
+        assert_eq!(got, band_of(24, 0, &Cell::new(0), 1.0).0);
+        assert_eq!(reads.get(), 2, "read again after the failure");
+    }
+
+    /// A band read inside another band's read (a glyph-cache path that asks for one) answers
+    /// instead of panicking on a held borrow, and both are kept.
+    #[test]
+    fn a_band_asked_while_another_is_read_answers() {
+        reset_cap_bands();
+        let reads = Cell::new(0);
+        let outer = cap_band_memo(28, 0, || {
+            let inner = cap_band_memo(24, 0, || band_of(24, 0, &reads, 1.0));
+            assert_eq!(inner, band_of(24, 0, &Cell::new(0), 1.0).0);
+            band_of(28, 0, &reads, 1.0)
+        });
+        assert_eq!(outer, band_of(28, 0, &Cell::new(0), 1.0).0);
+        cap_band_memo(24, 0, || band_of(24, 0, &reads, 1.0));
+        cap_band_memo(28, 0, || band_of(28, 0, &reads, 1.0));
+        assert_eq!(reads.get(), 2, "both remembered");
+    }
+
+    /// The no-font path (the host, a build whose font did not load) is the same em-band as ever and
+    /// remembers nothing.
+    #[test]
+    fn without_a_font_the_band_is_the_em_estimate_and_nothing_is_remembered() {
+        reset_cap_bands();
+        assert_eq!(unsafe { addr_of!(TEXT_OK).read() }, 0, "the host suite loads no font");
+        assert_eq!(text_cap_band(28, 0), (28.0 * 0.15, 28.0 * 0.9));
+        assert_eq!(text_cap_band(40, 1), (40.0 * 0.15, 40.0 * 0.9));
+        assert!(CAP_BANDS.with(|bands| bands.borrow().entries.is_empty()));
+    }
+}
+
 /// rendered height in px of a line of text at `sz`/`bold` — the font's line height, independent of
 /// the string. Used to vertically center a glyph on a text line (e.g. the transport clock).
 pub fn text_height(sz: c_int, bold: c_int) -> f32 {
@@ -1949,14 +2055,64 @@ pub fn text_height(sz: c_int, bold: c_int) -> f32 {
 /// stable, string-independent band UI toolkits centre type on — it deliberately ignores descenders
 /// (g j y p q) and ascenders, so every label of a given size aligns the same way. Falls back to a
 /// rough em band without TTF.
+///
+/// A font constant per size and weight, so it is **memoised** ([`CapBands`]): the lookup it
+/// replaces hashes the reference capital and scans the glyph cache's slots, and a table of
+/// hundreds of chip rows asked it thousands of times a frame (`ui::table`). [`init_text`] clears
+/// the memo with the font.
 pub fn text_cap_band(sz: c_int, bold: c_int) -> (f32, f32) {
     unsafe {
         if TEXT_OK == 0 {
             return (sz as f32 * 0.15, sz as f32 * 0.9);
         }
-        let (_t, _w, _h, it, ib) = text_tex(b"H", c"H".as_ptr(), sz, bold);
-        (it as f32, ib as f32)
     }
+    cap_band_memo(sz, bold, || unsafe {
+        let (tex, _w, _h, it, ib) = text_tex(b"H", c"H".as_ptr(), sz, bold);
+        ((it as f32, ib as f32), tex != 0)
+    })
+}
+
+/// [`text_cap_band`]'s answers, per (size, weight). A few dozen entries at most (the `theme::size`
+/// ladder in two weights), so a short vector read front to back beats hashing.
+#[derive(Default)]
+struct CapBands {
+    entries: Vec<((c_int, c_int), (f32, f32))>,
+}
+
+impl CapBands {
+    fn find(&self, sz: c_int, bold: c_int) -> Option<(f32, f32)> {
+        self.entries.iter().find(|(spec, _)| *spec == (sz, bold)).map(|&(_, band)| band)
+    }
+}
+
+thread_local! {
+    /// Main-render-thread only, like the glyph cache the bands are read from.
+    static CAP_BANDS: std::cell::RefCell<CapBands> = Default::default();
+}
+
+/// The band for `sz`/`bold`: remembered, else `compute`d. A `compute` that did not rasterise the
+/// reference capital (`false`: the glyph failed to render) answers for this call only, so the next
+/// call tries again instead of keeping a zero band for the rest of the session. No borrow is held
+/// while `compute` runs: it reaches the glyph cache, which must stay free to ask for a band itself.
+fn cap_band_memo(sz: c_int, bold: c_int, compute: impl FnOnce() -> ((f32, f32), bool)) -> (f32, f32) {
+    if let Some(band) = CAP_BANDS.with(|bands| bands.borrow().find(sz, bold)) {
+        return band;
+    }
+    let (band, complete) = compute();
+    if complete {
+        CAP_BANDS.with(|bands| {
+            let mut bands = bands.borrow_mut();
+            if bands.find(sz, bold).is_none() {
+                bands.entries.push(((sz, bold), band));
+            }
+        });
+    }
+    band
+}
+
+/// Forget every remembered cap band: the font they were read from is being (re)loaded.
+fn reset_cap_bands() {
+    CAP_BANDS.with(|bands| bands.borrow_mut().entries.clear());
 }
 
 /// The layout HEIGHT of one line of `sz`/`bold` text — its cap band, cap-top to baseline. Layout ≠
