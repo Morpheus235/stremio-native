@@ -55,7 +55,7 @@ pub enum RowState {
 
 impl SearchRow {
     pub fn title(&self) -> String {
-        format!("{} — {}", self.addon_name, self.pager.catalog.display_name())
+        format!("{} \u{b7} {}", self.addon_name, self.pager.catalog.display_name())
     }
 
     pub fn state(&self) -> RowState {

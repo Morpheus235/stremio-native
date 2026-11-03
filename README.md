@@ -65,6 +65,8 @@ The packages (ipk + sha256) are on the [download page](https://morpheus235.githu
   Dolby Digital Plus, PCM, stereo or Pro Logic II.
 - Text subtitles through libass (SRT, WebVTT, ASS/SSA, embedded fonts), plus addon subtitles
 - Skip intro/recap/credits, CH +/- to jump between chapters, Up Next
+- Seven dark themes under **Settings → Theme**, OLED black among them
+- Posters or a list (with genres and the plot) on Home, Discover, Search and the Library
 - English, Deutsch, Español, Français, Italiano, Беларуская
 - Remote control mapping: [docs/remote-keys.md](docs/remote-keys.md)
 
@@ -92,9 +94,25 @@ CARGO_INCREMENTAL=0 cargo test --workspace
 make check                         # host tests + packaging selftests
 ```
 
+### Desktop simulator
+
+The app in a desktop window, signed out, for UI work without a TV (SDL2 + desktop GL; used on macOS):
+
+```sh
+make sim                           # or tools/sim.sh run; optimised build
+tools/sim.sh key down down ok      # remote keys: up down left right ok back
+tools/sim.sh text dune             # type into the focused field
+tools/sim.sh shot                  # save a frame as PNG and print its path
+```
+
+The UI follows the system language. Settings and the event log live in `/tmp/stremionative-sim`
+(`SIM_DIR`). Text rendering, video and frame rates still have to be checked on the TV.
+
+### Releases
+
 Releases are cut by pushing a `vX.Y.Z` tag on `main` (a suffixed tag such as `v0.2.0-beta.1`
 publishes the Beta). CI builds and publishes the release; the Homebrew Channel repository is
-refreshed by hand for now. Details in [docs/roadmap.md](docs/roadmap.md#releases).
+refreshed by hand for now. Details in [docs/releasing.md](docs/releasing.md).
 
 ## Layout
 
@@ -113,6 +131,7 @@ refreshed by hand for now. Details in [docs/roadmap.md](docs/roadmap.md#releases
 | `crates/storage` | the private storage helper process |
 | `native/` | C boot/crash shim, Starfish/ACB seam, libass and audio-decoder glue, SVG rasterizer |
 | `locales/`, `assets/`, `pkg/` | translations, icons, fonts, the app manifest |
+| `tools/` | the simulator driver, TV deploy, profiling helpers |
 
 ## Built on PlxNative
 

@@ -11,6 +11,9 @@
 //! * `sub=<i>` — show the file's `i`-th subtitle track (`sub=off`: none);
 //! * `up` `down` `left` `right` `ok` `back` — one synthetic press of that key; a suffix `+`, `*`
 //!   or `-` sends only its press, an auto-repeat or its release (a held key: `right+ right* … right-`).
+//! * `text=<word>` — type `<word>` into the focused text field, as a keyboard commit;
+//! * `shot` — the desktop simulator only (`hostsim`): write the next frame as `shot-<n>.png` in the
+//!   runtime root (`app::shot`).
 //!
 //! It exists because measuring "after N playbacks" needs N playbacks in ONE process, with no
 //! remote in the loop. Compiled out without `devtriggers`.
@@ -56,6 +59,15 @@ pub fn poll(app: &mut App, tick: Tick) -> Vec<InputEvent<u32>> {
             }
             "play" => {
                 play(app);
+                continue;
+            }
+            #[cfg(feature = "hostsim")]
+            "shot" => {
+                super::shot::request();
+                continue;
+            }
+            word if word.starts_with("text=") => {
+                inputs.extend(super::input::text_inputs(&word[5..], false, tick));
                 continue;
             }
             sub if sub.starts_with("sub=") => {

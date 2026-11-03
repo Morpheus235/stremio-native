@@ -545,13 +545,13 @@ impl Dial {
                             p.rect(
                                 r,
                                 PANEL_RADIUS,
-                                theme::PANEL_FROST_TOP,
-                                theme::PANEL_FROST_BOT,
+                                theme::PANEL_FROST_TOP(),
+                                theme::PANEL_FROST_BOT(),
                                 0.0,
                             );
                         });
                     } else {
-                        p.rect(r, PANEL_RADIUS, theme::PANEL_TOP, theme::PANEL_BOT, 0.0);
+                        p.rect(r, PANEL_RADIUS, theme::PANEL_TOP(), theme::PANEL_BOT(), 0.0);
                     }
                 }
                 Kind::Card { focused } => {

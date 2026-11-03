@@ -353,12 +353,12 @@ fn a_settled_mixed_pill_is_the_boolean_look_it_replaced() {
     );
     is(
         TabPill::mixed_ink(1.0, 0.0),
-        crate::ACCENT_INK,
+        crate::ACCENT_INK(),
         "focused",
     );
     is(
         TabPill::mixed_ink(1.0, 1.0),
-        crate::ACCENT_INK,
+        crate::ACCENT_INK(),
         "focus outranks selection",
     );
     // out-of-range mixes clamp rather than extrapolating past the tokens
@@ -369,7 +369,7 @@ fn a_settled_mixed_pill_is_the_boolean_look_it_replaced() {
     );
     is(
         TabPill::mixed_ink(9.0, -9.0),
-        crate::ACCENT_INK,
+        crate::ACCENT_INK(),
         "an over-range focus clamps",
     );
 }
@@ -669,14 +669,14 @@ fn the_current_pill_is_purple_unless_focus_is_on_another() {
     let near = |a: [f32; 4], b: [f32; 4]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-3);
     let ink = |(f, s): (f32, f32)| TabPill::mixed_ink(f, s);
     let unfocused = settle(1, -1);
-    assert!(near(unfocused.selection_colour(ground), theme::TAB_CURRENT), "bar unfocused: the current pill is the accent");
-    assert!(near(ink(unfocused.tracked_mixes(span_of(&w, 1))), crate::ACCENT_INK), "…inked for it");
+    assert!(near(unfocused.selection_colour(ground), theme::TAB_CURRENT()), "bar unfocused: the current pill is the accent");
+    assert!(near(ink(unfocused.tracked_mixes(span_of(&w, 1))), crate::ACCENT_INK()), "…inked for it");
     let elsewhere = settle(1, 3);
     assert!(near(elsewhere.selection_colour(ground), theme::TAB_CURRENT_UNDER_FOCUS), "focus on another pill: the current is the wash");
     assert!(near(ink(elsewhere.tracked_mixes(span_of(&w, 1))), theme::TEXT_PRIMARY), "…inked as selected");
-    assert!(near(ink(elsewhere.tracked_mixes(span_of(&w, 3))), crate::ACCENT_INK), "the focused pill is the purple one");
+    assert!(near(ink(elsewhere.tracked_mixes(span_of(&w, 3))), crate::ACCENT_INK()), "the focused pill is the purple one");
     let on_current = settle(1, 1);
-    assert!(near(ink(on_current.tracked_mixes(span_of(&w, 1))), crate::ACCENT_INK), "focus on the current pill: the purple capsule");
+    assert!(near(ink(on_current.tracked_mixes(span_of(&w, 1))), crate::ACCENT_INK()), "focus on the current pill: the purple capsule");
     assert!(on_current.mixes(span_of(&w, 1)).0 > 0.999, "…which is the focus capsule's");
     assert!(near(settle(1, -1).selection_colour(TabGround::Plated { pop: 1.0 }), theme::TAB_PLATE_SELECTED_OVER), "the season strip is unchanged");
 }

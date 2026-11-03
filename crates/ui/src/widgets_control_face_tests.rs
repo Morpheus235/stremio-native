@@ -21,7 +21,7 @@ fn focus_is_the_accent_violet_whatever_the_page_key() {
     ]);
     assert_eq!(blue.focus_face(), amber.focus_face());
     let (top, body) = blue.focus_face();
-    assert_eq!(top, theme::ACCENT);
+    assert_eq!(top, theme::ACCENT());
     let (t, b) = (srgb_to_oklab(top), srgb_to_oklab(body));
     assert!((t[0] - b[0] - theme::CONTROL_FOCUS_BODY_STEP).abs() < 0.003);
     assert!((t[1] - b[1]).abs() < 0.003 && (t[2] - b[2]).abs() < 0.003, "same hue and chroma");
@@ -47,22 +47,22 @@ fn focus_ink_clears_4_5_on_every_focus_fill() {
     }
     let p = ControlPalette::default();
     for (name, fill) in [
-        ("ACCENT", theme::ACCENT),
+        ("ACCENT", theme::ACCENT()),
         ("keyed top", p.focus_top),
         ("keyed body", p.focus_body),
         ("keyed spent", p.spent),
-        ("CONTROL_SPENT_FILL", theme::CONTROL_SPENT_FILL),
+        ("CONTROL_SPENT_FILL", theme::CONTROL_SPENT_FILL()),
     ] {
-        let c = contrast(theme::ACCENT_INK, fill);
+        let c = contrast(theme::ACCENT_INK(), fill);
         assert!(c >= 4.5, "ACCENT_INK over {name} at {c:.2}:1");
-        let v = contrast(theme::ROW_VALUE_INK_ON, fill);
+        let v = contrast(theme::ROW_VALUE_INK_ON(), fill);
         assert!(v >= 4.5, "ROW_VALUE_INK_ON over {name} at {v:.2}:1");
     }
     // The reading inks on the purple-navy ground and the two panel surfaces.
     for (name, ground) in [
-        ("SURFACE_APP", theme::SURFACE_APP),
-        ("SURFACE_PANEL", theme::SURFACE_PANEL),
-        ("PANEL_BOT", theme::PANEL_BOT),
+        ("SURFACE_APP", theme::SURFACE_APP()),
+        ("SURFACE_PANEL", theme::SURFACE_PANEL()),
+        ("PANEL_BOT", theme::PANEL_BOT()),
     ] {
         for (ink_name, ink) in [
             ("TEXT_PRIMARY", theme::TEXT_PRIMARY),
@@ -84,7 +84,7 @@ fn an_unkeyed_control_never_samples_the_ambient_palette() {
     let idle = ControlStyle::Accent.face(false, ControlGround::Unkeyed, palette);
     assert_eq!(
         (focus.top, focus.body, focus.ink),
-        (theme::ACCENT, theme::ACCENT, theme::ACCENT_INK)
+        (theme::ACCENT(), theme::ACCENT(), theme::ACCENT_INK())
     );
     assert_eq!(
         (idle.top, idle.body),
@@ -418,7 +418,7 @@ fn the_unkeyed_ground_drops_the_ambient_contract_whole() {
     );
     assert_eq!(
         (video_focus.top, video_focus.body),
-        (theme::ACCENT, theme::ACCENT)
+        (theme::ACCENT(), theme::ACCENT())
     );
     assert_eq!(
         keyed_focus.ink, video_focus.ink,
@@ -446,7 +446,7 @@ fn the_unkeyed_idle_face_is_the_one_whose_polarity_cannot_flip() {
         let frame = i as f32 / 10.0;
         let ground = frame * (1.0 - ramp); // the frame, under the HUD's ramp
         let film = over(theme::CONTROL_IDLE_FILL_UNKEYED, ground);
-        let plate = over(theme::CONTROL_IDLE_FILL, ground);
+        let plate = over(theme::CONTROL_IDLE_FILL(), ground);
         assert!(
             film > ground,
             "frame {frame}: the film has to be the lighter of the two on EVERY frame"
@@ -546,7 +546,7 @@ fn the_ground_reaches_the_standalone_pill_and_stops_at_a_segment() {
     };
     assert_eq!(
         pill(ControlGround::Keyed, false).0,
-        Some(theme::CONTROL_IDLE_FILL)
+        Some(theme::CONTROL_IDLE_FILL())
     );
     assert_eq!(
         pill(ControlGround::Unkeyed, false).0,
@@ -651,9 +651,9 @@ fn a_selected_player_tab_keeps_a_quiet_face_until_it_owns_focus() {
         .ground(ControlGround::Unkeyed).selected(true);
     let selected = pill().face();
     assert_eq!(selected, (Some(theme::TAB_PLATE_SELECTED), theme::TEXT_PRIMARY, 1.0));
-    assert_ne!(selected.0, Some(crate::ACCENT));
+    assert_ne!(selected.0, Some(crate::ACCENT()));
     let focused = pill().focused(true).face();
-    assert_eq!(focused, (Some(crate::ACCENT), crate::ACCENT_INK, 1.0));
+    assert_eq!(focused, (Some(crate::ACCENT()), crate::ACCENT_INK(), 1.0));
 }
 
 // ---- a press abandoned by a direction key --------------------------------------------------

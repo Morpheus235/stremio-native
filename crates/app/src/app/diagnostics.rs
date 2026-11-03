@@ -855,7 +855,7 @@ impl Diagnostics {
         let e = Env::inert();
         let frame = self.panel_rect();
         // its own opaque ground: the player's UI plane is cleared transparent over the video
-        p.rect(frame, 24.0, theme::PANEL_TOP, theme::PANEL_BOT, 0.0);
+        p.rect(frame, 24.0, theme::PANEL_TOP(), theme::PANEL_BOT(), 0.0);
         let layout = HeaderLayout::new(&self.head_lines);
         let inner = frame.x + PAD;
         let iw = frame.w - 2.0 * PAD;

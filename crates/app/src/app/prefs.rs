@@ -110,6 +110,9 @@ struct File {
     /// `Pref::StreamOrder`'s rung (absent: the addon's order).
     #[serde(default)]
     stream_order: u8,
+    /// `Pref::Theme`'s rung (absent: Stremio's).
+    #[serde(default)]
+    theme: u8,
 }
 
 fn yes() -> bool {
@@ -212,6 +215,7 @@ fn of(file: File) -> Loaded {
         .seeded(Pref::Language, language_rung(&file.language))
         .seeded(Pref::TvGuide, sn_screens::stores::settings::tv_guide_rung(&file.tv_guide))
         .seeded(Pref::StreamOrder, file.stream_order)
+        .seeded(Pref::Theme, file.theme)
         .with_audio_offsets(file.audio_offsets),
         search: SearchStore::new(file.recent_searches),
     }
@@ -251,6 +255,7 @@ pub fn snapshot(settings: &SettingsStore, search: &SearchStore) -> Vec<u8> {
         audio_offsets: settings.audio_offsets().to_vec(),
         tv_guide: sn_screens::stores::settings::tv_guide_name(settings.get(Pref::TvGuide)).to_string(),
         stream_order: settings.get(Pref::StreamOrder),
+        theme: settings.get(Pref::Theme),
     };
     serde_json::to_vec_pretty(&file).unwrap_or_default()
 }
@@ -307,6 +312,9 @@ pub fn publish(settings: &SettingsStore) {
     sn_media::prefs::set_subtitle_outline(SubtitleOutline::from_index(settings.get(Pref::SubtitleOutline)));
     sn_media::prefs::set_subtitle_opacity(SubtitleOpacity::from_index(settings.get(Pref::SubtitleOpacity)));
     sn_media::prefs::set_ass_styling(settings.get(Pref::AssStyling) != 0);
+    // the theme is the next frame's colours: every page repaints in it
+    sn_gfx::gfx::tokens::set_theme(settings.get(Pref::Theme));
+    sn_machine::idle::invalidate();
 }
 
 #[cfg(test)]
@@ -317,6 +325,7 @@ mod tests {
     /// so an index the Settings page writes is the rung the player draws.
     #[test]
     fn the_settings_ladders_are_the_media_layers() {
+        assert_eq!(usize::from(Pref::Theme.rungs()), sn_gfx::gfx::tokens::PALETTES.len(), "a rung per palette");
         assert_eq!(usize::from(Pref::SubtitleSize.rungs()), SubtitleSize::LADDER.len());
         assert_eq!(usize::from(Pref::SubtitlePosition.rungs()), SubtitlePosition::LADDER.len());
         assert_eq!(Pref::SubtitleSize.default_rung(), SubtitleSize::default().index());

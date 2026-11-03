@@ -373,7 +373,7 @@ impl PanelMotion {
     /// laid out at, each on its own alpha and offset; a page too faint to see is not drawn.
     pub fn draw(&self, p: Painter, natural: Rect, radius: f32, live: &TableView, measure: &dyn Measure) {
         let shown = self.shown(natural);
-        p.rect(shown, radius, theme::PANEL_TOP, theme::PANEL_BOT, 0.0);
+        p.rect(shown, radius, theme::PANEL_TOP(), theme::PANEL_BOT(), 0.0);
         match &self.slide {
             None => {
                 let _clip = ClipScope::open_in(p, shown);

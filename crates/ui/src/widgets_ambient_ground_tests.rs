@@ -69,7 +69,7 @@ fn a_ground_stays_light_enough_for_a_card_shadow() {
     let rejected = [12.0 / 255.0, 11.0 / 255.0, 17.0 / 255.0, 1.0];
     for corner in floor {
         for ch in 0..3 {
-            let want = theme::SURFACE_APP[ch] * (1.0 - AmbientWash::GROUND_W);
+            let want = theme::SURFACE_APP()[ch] * (1.0 - AmbientWash::GROUND_W);
             assert!(
                 (corner[ch] - want).abs() < 1e-6,
                 "the darkest ground is the surface scaled by 1-GROUND_W"
@@ -92,7 +92,7 @@ fn no_artwork_is_the_apps_own_ground() {
         let quad = [[src[0], src[1], src[2], 1.0]; 4];
         assert_eq!(
             AmbientWash::target(quad, [0.0; 4]),
-            [theme::SURFACE_APP; 4],
+            [theme::SURFACE_APP(); 4],
             "src {src:?}"
         );
     }
@@ -149,7 +149,7 @@ fn the_corners_keep_their_ring_order() {
     for i in 0..4 {
         assert_eq!(
             plain[i],
-            theme::mix(theme::SURFACE_APP, quad[i], w[i]),
+            theme::mix(theme::SURFACE_APP(), quad[i], w[i]),
             "target moved corner {i}"
         );
     }
@@ -162,9 +162,9 @@ fn the_corners_keep_their_ring_order() {
 #[test]
 fn a_wash_that_has_resolved_to_the_ground_is_flat() {
     const EPS: f32 = AmbientWash::FLAT_EPS;
-    let mut w = AmbientWash::flat(theme::SURFACE_APP);
+    let mut w = AmbientWash::flat(theme::SURFACE_APP());
     assert!(
-        w.is_flat(theme::SURFACE_APP, EPS),
+        w.is_flat(theme::SURFACE_APP(), EPS),
         "a wash mounted on the ground is already flat"
     );
 
@@ -173,15 +173,15 @@ fn a_wash_that_has_resolved_to_the_ground_is_flat() {
         w.step(away, AmbientWash::K, 1.0 / 60.0);
     }
     assert!(
-        !w.is_flat(theme::SURFACE_APP, EPS),
+        !w.is_flat(theme::SURFACE_APP(), EPS),
         "a wash on its way to a colour is not the ground"
     );
 
     for _ in 0..60 {
-        w.step([theme::SURFACE_APP; 4], AmbientWash::K, 1.0 / 60.0);
+        w.step([theme::SURFACE_APP(); 4], AmbientWash::K, 1.0 / 60.0);
     }
     assert!(
-        w.is_flat(theme::SURFACE_APP, EPS),
+        w.is_flat(theme::SURFACE_APP(), EPS),
         "a second of dissolve must land back on the ground"
     );
 }
@@ -268,7 +268,7 @@ fn a_ground_keyed_to_nothing_is_a_pass_the_screen_can_skip() {
     }
     assert!(!g.is_flat(), "a keyed ground is drawn");
     for _ in 0..60 {
-        g.key_target([theme::SURFACE_APP; 4], 1.0 / 60.0);
+        g.key_target([theme::SURFACE_APP(); 4], 1.0 / 60.0);
     }
     assert!(g.is_flat(), "a second of dissolve back to the surface is skippable again");
 }
@@ -316,7 +316,7 @@ fn the_ambient_wash_reports_the_colour_the_shader_puts_at_a_point() {
     let tr = [0.0, 1.0, 0.0];
     let br = [0.0, 0.0, 1.0];
     let bl = [1.0, 1.0, 0.0];
-    let mut w = AmbientWash::flat(theme::SURFACE_APP);
+    let mut w = AmbientWash::flat(theme::SURFACE_APP());
     w.jump([
         [tl[0], tl[1], tl[2], 1.0],
         [tr[0], tr[1], tr[2], 1.0],

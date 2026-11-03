@@ -56,7 +56,14 @@ pub enum Pref {
     /// default), [`ORDER_LANGUAGE`] (cached first, then the Stream sorting languages) or
     /// [`ORDER_QUALITY`] (cached first, then the highest resolution).
     StreamOrder = 17,
+    /// The colour theme, an index into `sn_gfx::gfx::tokens::PALETTES` ([`THEMES`] of them):
+    /// Stremio (the default), Graphite, Ocean, Crimson, Emerald, Gold, OLED black.
+    Theme = 18,
 }
+
+/// How many colour themes [`Pref::Theme`] picks from (`sn_gfx::gfx::tokens::PALETTES`, which the
+/// application's test holds this to).
+pub const THEMES: u8 = 7;
 
 /// [`Pref::StreamOrder`]'s rungs.
 pub const ORDER_ADDON: u8 = 0;
@@ -242,6 +249,7 @@ impl Pref {
         Pref::MultichannelAudio,
         Pref::TvGuide,
         Pref::StreamOrder,
+        Pref::Theme,
     ];
 
     /// How many rungs the ladder has (`sn_media::prefs`'s `LADDER.len()`).
@@ -265,6 +273,7 @@ impl Pref {
             Pref::MultichannelAudio => 6,
             Pref::TvGuide => 1 + TV_GUIDES.len() as u8,
             Pref::StreamOrder => 3,
+            Pref::Theme => THEMES,
         }
     }
 
@@ -290,6 +299,7 @@ impl Pref {
             Pref::MultichannelAudio => msg::app_settings_multichannel_audio(),
             Pref::TvGuide => msg::app_settings_tv_guide(),
             Pref::StreamOrder => msg::app_settings_stream_order(),
+            Pref::Theme => msg::app_settings_theme(),
         }
     }
 
@@ -357,6 +367,13 @@ impl Pref {
             (Pref::StreamOrder, ORDER_ADDON) => msg::app_settings_stream_order_addon(),
             (Pref::StreamOrder, ORDER_LANGUAGE) => msg::app_settings_stream_order_language(),
             (Pref::StreamOrder, _) => msg::app_settings_stream_order_quality(),
+            (Pref::Theme, 0) => msg::app_settings_theme_stremio(),
+            (Pref::Theme, 1) => msg::app_settings_theme_graphite(),
+            (Pref::Theme, 2) => msg::app_settings_theme_ocean(),
+            (Pref::Theme, 3) => msg::app_settings_theme_crimson(),
+            (Pref::Theme, 4) => msg::app_settings_theme_emerald(),
+            (Pref::Theme, 5) => msg::app_settings_theme_gold(),
+            (Pref::Theme, _) => msg::app_settings_theme_oled(),
             (Pref::Language, r) => sn_platform::i18n::Preference::ALL[usize::from(r).min(sn_platform::i18n::Preference::ALL.len() - 1)].native_name(),
         }
     }
@@ -379,12 +396,13 @@ impl Pref {
             Pref::MultichannelAudio => MULTI_AUTO,
             Pref::TvGuide => 0,
             Pref::StreamOrder => ORDER_ADDON,
+            Pref::Theme => 0,
         }
     }
 }
 
 /// How many preferences [`Pref::ALL`] holds.
-pub const PREFS: usize = 18;
+pub const PREFS: usize = 19;
 
 /// The pages that show their items as posters or as a list, each remembering its own choice.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
