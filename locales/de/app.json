@@ -1223,6 +1223,10 @@
     "value": "Torrents brauchen einen Streaming-Server: Richte ihn unter Einstellungen > Streams ein",
     "description": "Toast when OK is pressed on a torrent stream and no streaming server is set: where to set one up."
   },
+  "app.detail.why_torrent_offline": {
+    "value": "Der Streaming-Server antwortet nicht: Prüfe, ob er läuft, oder wähle unter Einstellungen > Streams einen anderen",
+    "description": "Toast when OK is pressed on a torrent stream while the streaming server set in Settings did not answer its check."
+  },
   "app.detail.why_youtube": {
     "value": "YouTube-Videos können in dieser App nicht abgespielt werden",
     "description": "Toast when OK is pressed on a YouTube stream: the app cannot play YouTube."

@@ -273,6 +273,7 @@
   "app.reason.cancelled": "annulé",
   "app.reason.api_error": "erreur {code}",
   "app.detail.why_torrent": "Les torrents ont besoin d’un serveur de streaming : configurez-en un dans Réglages > Flux",
+  "app.detail.why_torrent_offline": "Le serveur de streaming ne répond pas : vérifiez qu’il est lancé ou choisissez-en un autre dans Réglages > Flux",
   "app.detail.why_youtube": "Les vidéos YouTube ne peuvent pas être lues dans cette application",
   "app.detail.why_external": "Ce flux s’ouvre dans une autre application ou un site web, pas ici",
   "app.detail.quiet_addons": {

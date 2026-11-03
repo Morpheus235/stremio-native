@@ -273,6 +273,7 @@
   "app.reason.cancelled": "cancelado",
   "app.reason.api_error": "error {code}",
   "app.detail.why_torrent": "Los torrents necesitan un servidor de streaming: configúralo en Ajustes > Streams",
+  "app.detail.why_torrent_offline": "El servidor de streaming no responde: comprueba que esté en marcha o elige otro en Ajustes > Streams",
   "app.detail.why_youtube": "Los vídeos de YouTube no se pueden reproducir en esta aplicación",
   "app.detail.why_external": "Esta fuente se abre en otra aplicación o sitio web, no aquí",
   "app.detail.quiet_addons": {

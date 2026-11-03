@@ -442,6 +442,9 @@ pub struct StreamView {
     /// The streaming server in use (`SettingsStore::streaming_server`): with one, a torrent plays
     /// through it; without, a torrent row only explains.
     pub server: Option<String>,
+    /// The server is set but did not answer its last check: a torrent row only explains, as
+    /// without one, and says the server is down.
+    pub server_down: bool,
     /// `Pref::DebridOnly`: a stream whose text says nothing about debrid is not listed (cached and
     /// uncached debrid streams are, [`Facts::debrid_only_keeps`]).
     pub debrid_only: bool,
@@ -554,7 +557,7 @@ fn stream_sections(out: &mut Built, groups: &[StreamGroup], mode: &Mode, prefer:
         // elsewhere); a torrent with one is a stream like any other and keeps the addon's order
         let plays = |p: &Option<Playable>| match p {
             Some(Playable::Http { .. }) => true,
-            Some(Playable::Torrent { .. }) => view.server.is_some(),
+            Some(Playable::Torrent { .. }) => view.server.is_some() && !view.server_down,
             _ => false,
         };
         order.sort_by_key(|si| !plays(&playable[*si]));
@@ -580,6 +583,7 @@ fn stream_sections(out: &mut Built, groups: &[StreamGroup], mode: &Mode, prefer:
                 Some(Playable::Torrent { info_hash, file_idx, sources }) => view
                     .server
                     .as_deref()
+                    .filter(|_| !view.server_down)
                     .map(|base| (sn_stremio::streaming_server::torrent_url(base, &info_hash, file_idx, &sources), Vec::new())),
                 _ => None,
             };
@@ -606,7 +610,10 @@ fn stream_sections(out: &mut Built, groups: &[StreamGroup], mode: &Mode, prefer:
                 None => {
                     // still a stop: OK says why it does not play here
                     row = row.value(msg::app_detail_not_playable()).dim(true);
-                    Action::Explain(unplayable_reason(playable[si].as_ref()))
+                    Action::Explain(match &playable[si] {
+                        Some(Playable::Torrent { .. }) if view.server.is_some() => msg::app_detail_why_torrent_offline(),
+                        p => unplayable_reason(p.as_ref()),
+                    })
                 }
             };
             out.row(&mut s, row, STREAM_KEY + ((gi as u32) << 12) + si as u32, Some(action));
@@ -1762,7 +1769,7 @@ pub struct DetailScreen {
     table: TableView,
     built: Built,
     /// What the store held at the last build, and the settings it was ordered by.
-    built_gen: Option<(u32, u32, u32)>,
+    built_gen: Option<(u32, u32, u32, u32)>,
     /// The streams this page holds open: the item's own, or a series' that listed no video.
     streams: Option<StreamKey>,
     /// The meta this page holds open.
@@ -2368,7 +2375,7 @@ impl DetailScreen {
                 self.streams = Some(key);
             }
         }
-        let gens = (store.gen(), cx.views.settings.gen(), cx.views.library.gen());
+        let gens = (store.gen(), cx.views.settings.gen(), cx.views.library.gen(), cx.views.server.gen());
         if self.built_gen == Some(gens) {
             return;
         }
@@ -2411,6 +2418,7 @@ impl DetailScreen {
             order: cx.views.settings.get(crate::stores::settings::Pref::StreamOrder),
             debrid_only: cx.views.settings.get(crate::stores::settings::Pref::DebridOnly) != 0,
             server: cx.views.settings.streaming_server().map(str::to_string),
+            server_down: *cx.views.server.status() == crate::stores::server::ServerStatus::Unreachable,
             ..self.stream_view.clone()
         };
         let built = build_marked(&self.mode, meta, streams, self.season, &today(), &prefer, marks.as_ref(), &view);
@@ -2464,6 +2472,11 @@ impl Machine<Bundle> for DetailScreen {
         match ev {
             ScreenEvent::Mount => {
                 self.open(fx);
+                // a fresh answer on the streaming server, so a torrent row does not offer one that
+                // has gone away since the last check
+                if cx.views.settings.streaming_server().is_some() {
+                    fx.push(Fx::App(AppFx::Server(crate::registry::ServerCmd::Check)));
+                }
                 self.sync(cx, fx);
                 self.sync_library(cx, fx);
                 Handled::Yes
@@ -3215,6 +3228,17 @@ mod tests {
     }
 
     #[test]
+    fn a_torrent_through_a_server_that_did_not_answer_only_explains() {
+        let torrent = Stream { info_hash: Some("0123456789abcdef0123456789abcdef01234567".into()), name: Some("Torrent".into()), ..Default::default() };
+        let groups = vec![group("One", GroupState::Ready(vec![torrent, http("Link", "Film.Link", "https://cdn.example/a.mkv")]))];
+        let down = StreamView { server: Some("http://192.168.1.40:11470/".into()), server_down: true, ..StreamView::default() };
+        let b = build_marked(&movie(), None, Some(&groups), None, "", &[], None, &down);
+        assert!(matches!(&b.actions[0], Some(Action::Play(req)) if req.url == "https://cdn.example/a.mkv"), "the link plays first");
+        assert_eq!(b.actions[1], Some(Action::Explain(msg::app_detail_why_torrent_offline())), "OK says the server is down, not that none is set");
+        assert!(b.sections[0].rows[1].dim);
+    }
+
+    #[test]
     fn the_streaming_server_changes_nothing_for_a_link() {
         let groups = vec![group("One", GroupState::Ready(vec![http("Link", "Film.Link", "https://cdn.example/a.mkv")]))];
         let on = StreamView { server: Some("http://192.168.1.40:11470/".into()), ..StreamView::default() };
@@ -3227,9 +3251,10 @@ mod tests {
     fn the_torrent_explanation_points_to_settings_and_streams_in_every_language() {
         for language in sn_platform::i18n::SHIPPED {
             let _g = sn_platform::i18n::language_on_this_thread_for_test(language);
-            let text = msg::app_detail_why_torrent();
-            assert!(!text.contains('\u{2014}'), "{}: no em dash", language.tag());
-            assert!(text.contains(msg::app_tab_settings()) && text.contains(msg::app_settings_streams()), "{}: {text} names Settings and Streams", language.tag());
+            for text in [msg::app_detail_why_torrent(), msg::app_detail_why_torrent_offline()] {
+                assert!(!text.contains('\u{2014}'), "{}: no em dash", language.tag());
+                assert!(text.contains(msg::app_tab_settings()) && text.contains(msg::app_settings_streams()), "{}: {text} names Settings and Streams", language.tag());
+            }
         }
     }
 

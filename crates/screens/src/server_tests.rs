@@ -157,3 +157,18 @@ fn the_root_opens_the_page_from_its_streams_section() {
     app.press(Key::Ok);
     assert_eq!(app.top_arg(), Some(&AppArg::SettingsPage(SettingsPage::StreamingServer)));
 }
+
+#[test]
+fn the_overview_asks_again_whether_the_server_answers() {
+    let _g = sn_base::testlock::serial();
+    let mut app = TestApp::boot(CatalogStore::new(Vec::<&str>::new()));
+    app.rig.settings.set_streaming_server(Some(FOUND_A.into()));
+    app.frames(4);
+    app.rig.server_jobs.clear();
+    app.d.request(MachineId::Nav, NavOp::SelectTab(AppArg::Settings));
+    app.frames(4);
+    assert!(
+        matches!(app.rig.server_jobs.last(), Some(ServerJob::Check { base, .. }) if base == FOUND_A),
+        "a 'Connected' from minutes ago is not shown as the server's state now"
+    );
+}

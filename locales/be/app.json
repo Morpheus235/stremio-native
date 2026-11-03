@@ -273,6 +273,7 @@
   "app.reason.cancelled": "скасавана",
   "app.reason.api_error": "памылка {code}",
   "app.detail.why_torrent": "Торэнтам патрэбны струменевы сервер: наладзьце яго ў Налады > Патокі",
+  "app.detail.why_torrent_offline": "Струменевы сервер не адказвае: праверце, ці працуе ён, або выберыце іншы ў Налады > Патокі",
   "app.detail.why_youtube": "Відэа YouTube не прайграюцца ў гэтай праграме",
   "app.detail.why_external": "Гэты паток адкрываецца ў іншай праграме ці на сайце, не тут",
   "app.detail.quiet_addons": {

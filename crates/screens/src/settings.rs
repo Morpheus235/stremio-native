@@ -1096,8 +1096,8 @@ impl Machine<Bundle> for SettingsScreen {
         match ev {
             ScreenEvent::Mount => {
                 self.sync(&cx.views);
-                // the server page opens on a fresh answer about the server in use
-                if matches!(self.mode, Mode::Server(_)) {
+                // the overview and the server page open on a fresh answer about the server in use
+                if matches!(self.mode, Mode::Root(_) | Mode::Server(_)) {
                     fx.push(Fx::App(AppFx::Server(ServerCmd::Check)));
                 }
                 // a picker opens on the rung in force, not on its first row
