@@ -78,23 +78,23 @@
     }
   },
   "widgets.failure.jail": {
-    "value": "Wiedergabe fehlgeschlagen – die Sandbox dieses TVs blockiert natives Video",
+    "value": "Wiedergabe fehlgeschlagen: die Sandbox dieses TVs blockiert natives Video",
     "description": "failure jail"
   },
   "widgets.failure.no_video": {
-    "value": "Wiedergabe fehlgeschlagen – kein Video in der Datei",
+    "value": "Wiedergabe fehlgeschlagen: kein Video in der Datei",
     "description": "Player error caption or supporting subscription fact."
   },
   "widgets.failure.open": {
-    "value": "Wiedergabe fehlgeschlagen – der Stream ließ sich nicht öffnen",
+    "value": "Wiedergabe fehlgeschlagen: der Stream ließ sich nicht öffnen",
     "description": "Player error caption or supporting subscription fact."
   },
   "widgets.failure.stopped": {
-    "value": "Wiedergabe fehlgeschlagen – nach dem Start abgebrochen",
+    "value": "Wiedergabe fehlgeschlagen: nach dem Start abgebrochen",
     "description": "Player error caption or supporting subscription fact."
   },
   "widgets.failure.tv_rejected": {
-    "value": "Wiedergabe fehlgeschlagen – der TV hat den Stream abgelehnt",
+    "value": "Wiedergabe fehlgeschlagen: der TV hat den Stream abgelehnt",
     "description": "Player error caption or supporting subscription fact."
   },
   "widgets.reason.jail": {
@@ -179,7 +179,7 @@
     "description": "Player diagnostic reason; preserve technical device paths and protocol endpoints."
   },
   "widgets.failure.load_timeout": {
-    "value": "Wiedergabe fehlgeschlagen – der TV hat den Stream nicht fertig gestartet",
+    "value": "Wiedergabe fehlgeschlagen: der TV hat den Stream nicht fertig gestartet",
     "description": "failure load_timeout"
   },
   "widgets.panel.load_timeout": {
@@ -288,7 +288,7 @@
     "description": "Badge: the title has an audio-description track. Must match the abbreviation in browse.detail.audio_description (es: audiodescripción, AD)."
   },
   "widgets.failure.audio_unsupported": {
-    "value": "Wiedergabe fehlgeschlagen – dieser TV kann die Tonspur nicht decodieren",
+    "value": "Wiedergabe fehlgeschlagen: dieser TV kann die Tonspur nicht decodieren",
     "description": "Player error caption: the selected audio track's format (or channel count) has no decoder on this TV and the app has no software decoder for it yet."
   },
   "widgets.reason.audio_unsupported": {
@@ -300,7 +300,7 @@
     "description": "Diagnostics panel verdict suffix: the audio track cannot be decoded by the TV."
   },
   "widgets.failure.video_unsupported": {
-    "value": "Wiedergabe fehlgeschlagen – dieser TV kann das Video nicht decodieren",
+    "value": "Wiedergabe fehlgeschlagen: dieser TV kann das Video nicht decodieren",
     "description": "Player error caption: the stream's video codec has no decoder on this TV."
   },
   "widgets.reason.video_unsupported": {
@@ -308,11 +308,11 @@
     "description": "Explanation beneath the playback-failed heading when the video codec cannot be decoded by the TV."
   },
   "widgets.failure.video_not_streamable": {
-    "value": "Wiedergabe fehlgeschlagen – dieses Videoformat ist auf diesem TV nicht streambar",
+    "value": "Wiedergabe fehlgeschlagen: dieses Videoformat ist auf diesem TV nicht streambar",
     "description": "Player error caption: the stream's video codec (MPEG-4 Part 2/Xvid/DivX, MPEG-2, H.263, VC-1/WMV, RealVideo) is one the TV's streaming player cannot be fed, though the TV's own file player may know it."
   },
   "widgets.reason.video_not_streamable": {
-    "value": "Dieser TV streamt nur H.264, HEVC, AV1, VP9 und VP8 – nicht Xvid/DivX, MPEG-2, H.263, VC-1/WMV oder RealVideo; wähle einen anderen Stream",
+    "value": "Dieser TV streamt nur H.264, HEVC, AV1, VP9 und VP8, nicht Xvid/DivX, MPEG-2, H.263, VC-1/WMV oder RealVideo. Wähle einen anderen Stream.",
     "description": "Explanation beneath the playback-failed heading when the video codec is one the TV's streaming player cannot take. Keep the codec names untranslated."
   },
   "widgets.panel.video_not_streamable": {
@@ -324,7 +324,7 @@
     "description": "Diagnostics panel verdict suffix: the video codec cannot be decoded by the TV."
   },
   "widgets.failure.dolby_vision": {
-    "value": "Wiedergabe fehlgeschlagen – dieser Dolby-Vision-Stream ist hier nicht korrekt darstellbar",
+    "value": "Wiedergabe fehlgeschlagen: dieser Dolby-Vision-Stream ist hier nicht korrekt darstellbar",
     "description": "Player error caption: a Dolby Vision stream whose base layer alone is a wrong picture, on a TV that cannot be told it is Dolby Vision."
   },
   "widgets.reason.dolby_vision": {

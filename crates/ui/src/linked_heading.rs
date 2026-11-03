@@ -220,9 +220,9 @@ impl<'a> LinkedHeading<'a> {
                 p,
                 face,
                 if focused {
-                    ACCENT
+                    ACCENT()
                 } else {
-                    theme::CONTROL_IDLE_FILL
+                    theme::CONTROL_IDLE_FILL()
                 },
                 focused,
                 ControlGround::Keyed,
@@ -242,7 +242,7 @@ impl<'a> LinkedHeading<'a> {
                     theme::size::LABEL,
                     true,
                     if focused {
-                        ACCENT_INK
+                        ACCENT_INK()
                     } else {
                         theme::TEXT_PRIMARY
                     },
@@ -267,7 +267,7 @@ impl<'a> LinkedHeading<'a> {
                         theme::size::LABEL,
                         false,
                         if focused {
-                            theme::ROW_VALUE_INK_ON
+                            theme::ROW_VALUE_INK_ON()
                         } else {
                             theme::TEXT_TERTIARY
                         },
@@ -275,7 +275,7 @@ impl<'a> LinkedHeading<'a> {
                 }
             }
             Presentation::Heading if !m.runs.is_empty() => {
-                let ink = |own: [f32; 4]| if focused { ACCENT_INK } else { own };
+                let ink = |own: [f32; 4]| if focused { ACCENT_INK() } else { own };
                 for r in &m.runs {
                     draw_cap(p, &r.text, content_x + r.dx, y, r.size, r.bold != 0, ink(r.ink));
                 }
@@ -296,7 +296,7 @@ impl<'a> LinkedHeading<'a> {
                             cap_y,
                             size,
                             bold != 0,
-                            if focused { ACCENT_INK } else { ink },
+                            if focused { ACCENT_INK() } else { ink },
                         )
                     },
                 );
@@ -314,7 +314,7 @@ impl<'a> LinkedHeading<'a> {
                 CHEVRON_SIZE,
             ),
             match (self.presentation, focused) {
-                (_, true) => ACCENT_INK,
+                (_, true) => ACCENT_INK(),
                 (Presentation::Entry, false) => theme::TEXT_PRIMARY,
                 (Presentation::Heading, false) => theme::TEXT_TERTIARY,
             },

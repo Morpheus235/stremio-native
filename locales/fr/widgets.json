@@ -72,7 +72,7 @@
   "widgets.reason.video_unsupported": "Ce téléviseur n’a pas de décodeur pour ce format vidéo ; choisissez un autre flux",
   "widgets.panel.video_unsupported": "le téléviseur n’a pas de décodeur pour la vidéo",
   "widgets.failure.video_not_streamable": "Échec de la lecture : ce format vidéo ne peut pas être diffusé sur ce téléviseur",
-  "widgets.reason.video_not_streamable": "Ce téléviseur ne diffuse que la vidéo H.264, HEVC, AV1, VP9 et VP8 — pas Xvid/DivX, MPEG-2, H.263, VC-1/WMV ni RealVideo ; choisissez un autre flux",
+  "widgets.reason.video_not_streamable": "Ce téléviseur ne diffuse que la vidéo H.264, HEVC, AV1, VP9 et VP8, pas Xvid/DivX, MPEG-2, H.263, VC-1/WMV ni RealVideo. Choisissez un autre flux.",
   "widgets.panel.video_not_streamable": "le lecteur de diffusion du téléviseur n’accepte pas ce format vidéo",
   "widgets.failure.dolby_vision": "Échec de la lecture : ce flux Dolby Vision ne peut pas être affiché correctement ici",
   "widgets.reason.dolby_vision": "Ce flux Dolby Vision n’a pas d’image que ce téléviseur puisse afficher sans Dolby Vision ; choisissez un autre flux",

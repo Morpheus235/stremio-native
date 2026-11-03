@@ -964,12 +964,16 @@ impl<K: Copy + Eq, P> StackView<'_, K, P> {
             let k = s.specs[i].key;
             let r = s.rect(page, f.cx, i);
             match (&s.specs[i].kind, &s.bodies[i]) {
-                (Kind::Shelf { .. }, Body::Shelf(sh)) => {
+                (Kind::Shelf { heading, .. }, Body::Shelf(sh)) => {
                     if r.h <= 0.0 || r.y >= SCR_H || r.y + r.h <= 0.0 {
                         continue;
                     }
                     let Some(src) = cards(page, f.cx, k) else { continue };
-                    page.draw_heading(k, f, r, sh.heading_lift());
+                    // a shelf with no heading band has its heading drawn by another section (Search's
+                    // linked heading): drawing one here would put it behind the cards
+                    if *heading > 0.0 {
+                        page.draw_heading(k, f, r, sh.heading_lift());
+                    }
                     sh.draw(f, p, &src, s.frame(page, f.cx, i));
                 }
                 (Kind::Grid { .. }, Body::Grid(g)) => {

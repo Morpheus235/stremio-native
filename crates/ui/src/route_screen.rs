@@ -174,7 +174,7 @@ impl RouteGround {
     /// ([`Self::authored`], [`Self::draw_default`]) and, since PR2 stage B,
     /// [`Self::draw_host`]'s own answer when the live frame is not a readable source this frame.
     fn fallback_corners() -> [[f32; 3]; 4] {
-        theme::ROUTE_GROUND_FALLBACK.map(|c| [c[0], c[1], c[2]])
+        theme::ROUTE_GROUND_FALLBACK().map(|c| [c[0], c[1], c[2]])
     }
 
     /// A pre-content page's ground: the authored default ambient, latched at construction.
@@ -271,7 +271,7 @@ impl RouteGround {
         if self.field.is_latched() {
             self.field.sample(x, y)
         } else {
-            SURFACE_APP_RGB
+            SURFACE_APP_RGB()
         }
     }
 
@@ -279,7 +279,7 @@ impl RouteGround {
         ControlPalette::ambient(if self.field.is_latched() {
             self.field.key()
         } else {
-            SURFACE_APP_RGB
+            SURFACE_APP_RGB()
         })
     }
 
@@ -288,11 +288,11 @@ impl RouteGround {
     }
 }
 
-const SURFACE_APP_RGB: [f32; 3] = [
-    theme::SURFACE_APP[0],
-    theme::SURFACE_APP[1],
-    theme::SURFACE_APP[2],
-];
+#[allow(non_snake_case)]
+fn SURFACE_APP_RGB() -> [f32; 3] {
+    let c = theme::SURFACE_APP();
+    [c[0], c[1], c[2]]
+}
 
 /// The one nested-route transition of the Settings family: the surface's page push
 /// (`screens::settings::RouteSurface`) drives this for every Settings drill-down, the preference
@@ -1666,7 +1666,7 @@ mod tests {
 
     #[test]
     fn pre_home_fallback_is_an_envelope_not_a_flat_grey() {
-        let c = theme::ROUTE_GROUND_FALLBACK;
+        let c = theme::ROUTE_GROUND_FALLBACK();
         assert!(c.windows(2).any(|pair| pair[0] != pair[1]));
         assert!(c.iter().any(|corner| {
             (corner[0] - corner[1]).abs() > 0.001 || (corner[1] - corner[2]).abs() > 0.001
@@ -1704,7 +1704,7 @@ mod tests {
     /// this exact ground with no further dimming.
     #[test]
     fn the_pre_home_fallback_reads_as_a_directional_wash() {
-        let c = theme::ROUTE_GROUND_FALLBACK;
+        let c = theme::ROUTE_GROUND_FALLBACK();
         let luma: Vec<f32> = c.iter().map(|corner| rel_luma(*corner)).collect();
         let (lo, hi) = (
             luma.iter().cloned().fold(f32::INFINITY, f32::min),
@@ -1736,9 +1736,9 @@ mod tests {
     /// actually read on a panel — shows it plainly is not.
     #[test]
     fn every_fallback_corner_is_visibly_apart_from_the_app_surface() {
-        for (i, corner) in theme::ROUTE_GROUND_FALLBACK.iter().enumerate() {
+        for (i, corner) in theme::ROUTE_GROUND_FALLBACK().iter().enumerate() {
             let d: f32 = (0..3)
-                .map(|ch| (corner[ch] - theme::SURFACE_APP[ch]).abs())
+                .map(|ch| (corner[ch] - theme::SURFACE_APP()[ch]).abs())
                 .sum::<f32>()
                 / 3.0;
             assert!(

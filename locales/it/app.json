@@ -129,8 +129,12 @@
     "description": "Detail: chip on a stream the addon's debrid service already holds (it plays at once)."
   },
   "app.detail.stream_uncached": {
-    "value": "Non in cache — avvia un download",
+    "value": "Non ancora in cache",
     "description": "Detail: quiet chip on a stream the debrid service does not hold yet: playing it starts the download and shows the service's placeholder clip."
+  },
+  "app.detail.stream_upscaled": {
+    "value": "Upscalato",
+    "description": "Detail: quiet chip on a stream whose release says it was upscaled (an AI or upscaled 4K): the picture is not native to the resolution shown."
   },
   "app.detail.stream_live": {
     "value": "IN DIRETTA",
@@ -270,6 +274,10 @@
   "app.detail.upcoming": {
     "value": "In arrivo",
     "description": "Detail: trailing read-out of an episode whose release date is still ahead."
+  },
+  "app.detail.tba": {
+    "value": "Da annunciare",
+    "description": "Detail: trailing read-out of an announced episode that has no release date yet (Stremio's TBA)."
   },
   "app.detail.all_episodes": {
     "value": "Tutti gli episodi",
@@ -984,6 +992,42 @@
     "args": {
       "version": "str"
     }
+  },
+  "app.settings.theme": {
+    "value": "Tema",
+    "description": "Settings: row and picker title — the app's colour theme."
+  },
+  "app.settings.theme_copy": {
+    "value": "I colori dell'app: la tinta dello sfondo e il colore d'accento. Nero OLED spegne i pixel dello sfondo su uno schermo OLED.",
+    "description": "Theme picker: the line under the title."
+  },
+  "app.settings.theme_stremio": {
+    "value": "Stremio",
+    "description": "Theme option: Stremio's own violet (the default)."
+  },
+  "app.settings.theme_graphite": {
+    "value": "Grafite",
+    "description": "Theme option: neutral grey with a white accent."
+  },
+  "app.settings.theme_ocean": {
+    "value": "Oceano",
+    "description": "Theme option: deep blue."
+  },
+  "app.settings.theme_crimson": {
+    "value": "Cremisi",
+    "description": "Theme option: deep red."
+  },
+  "app.settings.theme_emerald": {
+    "value": "Smeraldo",
+    "description": "Theme option: deep green."
+  },
+  "app.settings.theme_gold": {
+    "value": "Oro",
+    "description": "Theme option: warm dark with a gold accent."
+  },
+  "app.settings.theme_oled": {
+    "value": "Nero OLED",
+    "description": "Theme option: a true black background for OLED screens."
   },
   "app.settings.debrid_only": {
     "value": "Solo stream debrid",

@@ -74,7 +74,7 @@ pub fn short_name(email: &str) -> Option<&str> {
 /// The account's avatar face: a stable pick from [`theme::AVATAR_FILLS`] by a hash of its id.
 pub fn avatar_fill(user_id: &str) -> [f32; 4] {
     let h = sn_base::sha256::sha256(user_id.as_bytes());
-    theme::AVATAR_FILLS[usize::from(h[0]) % theme::AVATAR_FILLS.len()]
+    theme::AVATAR_FILLS()[usize::from(h[0]) % theme::AVATAR_FILLS().len()]
 }
 
 impl ChromeBar {
@@ -87,7 +87,7 @@ impl ChromeBar {
             selected: Tab::Home,
             focus: TopFocus::Away,
             shown: false,
-            account: AccountFace { said: Default::default(), initial: CString::default(), name: CString::default(), name_w: 0.0, fill: theme::CONTROL_IDLE_FILL },
+            account: AccountFace { said: Default::default(), initial: CString::default(), name: CString::default(), name_w: 0.0, fill: theme::CONTROL_IDLE_FILL() },
         }
     }
 
@@ -138,7 +138,7 @@ impl ChromeBar {
                 let initial = name.chars().next().map(|c| c.to_uppercase().collect::<String>()).unwrap_or_default();
                 (initial, name, avatar_fill(&a.user_id))
             }
-            None => (String::new(), msg::app_addons_sign_in().to_string(), theme::CONTROL_IDLE_FILL),
+            None => (String::new(), msg::app_addons_sign_in().to_string(), theme::CONTROL_IDLE_FILL()),
         };
         self.account.fill = fill;
         if self.account.said.0 == label && self.account.said.1 == initial {
@@ -229,6 +229,14 @@ impl ChromeBar {
         }
         let Some(glass) = glass else { return };
         let p = sn_ui::Painter::root().alpha(nav.chrome_alpha);
+        // a page scrolled up passes under the bar: the ground covers it there and fades out down
+        // to where content rests (every tab page clears to this ground), so no title shows
+        // through or between the pills
+        let (r, g, b) = sn_ui::theme::CLEAR_RGB();
+        let (ground, clear) = ([r, g, b, 1.0], [r, g, b, 0.0]);
+        let fade_to = widgets::TOP_BAR_BOTTOM + sn_ui::theme::space::MD; // home::CONTENT_TOP
+        p.rect(sn_ui::Rect::new(0.0, 0.0, sn_ui::consts::SCR_W, widgets::TOP_BAR_BOTTOM), 0.0, ground, ground, 0.0);
+        p.rect(sn_ui::Rect::new(0.0, widgets::TOP_BAR_BOTTOM, sn_ui::consts::SCR_W, fade_to - widgets::TOP_BAR_BOTTOM), 0.0, ground, clear, 0.0);
         let labels = TabLabels { generation: 1, labels: &self.labels };
         self.strip.draw(labels, p, glass.tab_band_mut());
         let face = glass.tab_band_mut().face();
@@ -284,12 +292,12 @@ mod tests {
         bar.vocabulary(&m);
         bar.face(&AccountStore::signed_out(true), &m);
         assert_eq!(bar.account_text(), ("", msg::app_addons_sign_in()), "signed out: the person glyph and Sign in");
-        assert_eq!(bar.account_fill(), theme::CONTROL_IDLE_FILL);
+        assert_eq!(bar.account_fill(), theme::CONTROL_IDLE_FILL());
         let store = signed_in("u1", "viewer.name@example.com");
         bar.face(&store, &m);
         assert_eq!(bar.account_text(), ("V", "viewer.name"), "the initial and the email's local part");
         assert!(!bar.account_text().1.contains('@'), "the address is never drawn on the bar");
-        assert!(theme::AVATAR_FILLS.contains(&bar.account_fill()));
+        assert!(theme::AVATAR_FILLS().contains(&bar.account_fill()));
         assert_eq!(bar.account_fill(), avatar_fill("u1"), "the face is the account id's");
         assert_eq!(avatar_fill("u1"), avatar_fill("u1"), "and stable");
         assert!((0..32).map(|i| avatar_fill(&format!("user{i}"))).collect::<Vec<_>>().windows(2).any(|w| w[0] != w[1]), "accounts differ");

@@ -21,7 +21,7 @@
 //! their alpha per call via [`scrim`]/[`scrim_black`].
 //!
 //! `ACCENT`/`ACCENT_INK` live here and are re-exported from `ui` (`mod.rs`) so the existing
-//! `crate::ACCENT` call sites keep compiling unchanged.
+//! `crate::ACCENT()` call sites keep compiling unchanged.
 #![allow(dead_code)]
 
 // ── PRIMITIVES — the palette. PRIVATE: nothing outside this module may name a stop ───────────
@@ -33,15 +33,15 @@
 // `rgb8`, and the two stops the renderer itself paints with (`NEUTRAL_500`, the app ground, and
 // `NEUTRAL_1000`, the scrim ink behind `SCRIM_INK`), are written down in `gfx::tokens` (module-layers
 // step L5) and imported here, so a code still exists in exactly one place.
-use sn_gfx::gfx::tokens::{rgb8, NEUTRAL_500};
+use sn_gfx::gfx::tokens::{palette, rgb8, NEUTRAL_500, TEXT_INKS};
 
 // Cool — blue-leaning: everything that is text, and artwork that has not loaded.
-const COOL_0: [f32; 4] = rgb8(0xf7, 0xfa, 0xfc);
-const COOL_50: [f32; 4] = rgb8(0xeb, 0xf0, 0xf7);
-const COOL_150: [f32; 4] = rgb8(0xdb, 0xe0, 0xeb);
-const COOL_200: [f32; 4] = rgb8(0xcd, 0xd3, 0xdd);
-const COOL_300: [f32; 4] = rgb8(0xb8, 0xbf, 0xcc);
-const COOL_400: [f32; 4] = rgb8(0x94, 0x99, 0xa3);
+const COOL_0: [f32; 4] = TEXT_INKS[0];
+const COOL_50: [f32; 4] = TEXT_INKS[1];
+const COOL_150: [f32; 4] = TEXT_INKS[2];
+const COOL_200: [f32; 4] = TEXT_INKS[3];
+const COOL_300: [f32; 4] = TEXT_INKS[4];
+const COOL_400: [f32; 4] = TEXT_INKS[5];
 const COOL_700: [f32; 4] = rgb8(0x2e, 0x32, 0x3d);
 const COOL_850: [f32; 4] = rgb8(0x1f, 0x21, 0x29);
 const COOL_900: [f32; 4] = rgb8(0x14, 0x17, 0x1c);
@@ -51,8 +51,14 @@ const COOL_900: [f32; 4] = rgb8(0x14, 0x17, 0x1c);
 // `--modal-background-color: rgba(15, 13, 32, 1)` and `NEUTRAL_750` is
 // `--primary-background-color: rgba(12, 11, 17, 1)`, both darker than the ground (`NEUTRAL_500`,
 // `--secondary-background-color`), as the old greys were. Names kept: a stop's job did not move.
-const NEUTRAL_650: [f32; 4] = rgb8(0x0f, 0x0d, 0x20);
-const NEUTRAL_750: [f32; 4] = rgb8(0x0c, 0x0b, 0x11);
+#[allow(non_snake_case)]
+fn NEUTRAL_650() -> [f32; 4] {
+    palette().panel[0]
+}
+#[allow(non_snake_case)]
+fn NEUTRAL_750() -> [f32; 4] {
+    palette().panel[1]
+}
 const NEUTRAL_850: [f32; 4] = rgb8(0x14, 0x14, 0x16);
 const WHITE: [f32; 4] = rgb8(0xff, 0xff, 0xff);
 const BLACK: [f32; 4] = rgb8(0x00, 0x00, 0x00);
@@ -75,9 +81,15 @@ const SAND_100: [f32; 4] = rgb8(0xe9, 0xe6, 0xe0);
 
 // Violet — Stremio's one accent, stremio-web `src/App/styles.less`
 // `--primary-accent-color: rgb(123, 91, 245)`. The focus fill and nothing decorative.
-const VIOLET_500: [f32; 4] = rgb8(0x7b, 0x5b, 0xf5);
+#[allow(non_snake_case)]
+fn VIOLET_500() -> [f32; 4] {
+    palette().accent[0]
+}
 /// One step deeper than the brand violet: the list focus pill's fill (white clears 5.3:1 on it).
-const VIOLET_550: [f32; 4] = rgb8(0x6e, 0x4e, 0xe8);
+#[allow(non_snake_case)]
+fn VIOLET_550() -> [f32; 4] {
+    palette().accent[1]
+}
 
 // Atmosphere — deliberately dark light for a pre-content route. These are not state colours
 // and never ink a control; together they stand in for an artwork UltraBlur envelope before the
@@ -101,10 +113,22 @@ const VIOLET_550: [f32; 4] = rgb8(0x6e, 0x4e, 0xe8);
 // an authored key light would use — bright near one corner, dark at its opposite — while every
 // corner still clears 3:1 against `TEXT_TERTIARY` and 7:1 against `TEXT_PRIMARY`, the same floors
 // `AmbientWash::keyed` holds a real hero to.
-const ATMOS_NIGHT: [f32; 4] = rgb8(0x0c, 0x0b, 0x11);
-const ATMOS_DUSK: [f32; 4] = rgb8(0x26, 0x20, 0x5e);
-const ATMOS_VIOLET: [f32; 4] = rgb8(0x2e, 0x28, 0x73);
-const ATMOS_INDIGO: [f32; 4] = rgb8(0x0f, 0x0d, 0x20);
+#[allow(non_snake_case)]
+fn ATMOS_NIGHT() -> [f32; 4] {
+    palette().atmos[0]
+}
+#[allow(non_snake_case)]
+fn ATMOS_DUSK() -> [f32; 4] {
+    palette().atmos[1]
+}
+#[allow(non_snake_case)]
+fn ATMOS_VIOLET() -> [f32; 4] {
+    palette().atmos[2]
+}
+#[allow(non_snake_case)]
+fn ATMOS_INDIGO() -> [f32; 4] {
+    palette().atmos[3]
+}
 
 // Semantic — amber / red / green: state and verdict, never decoration.
 const AMBER_300: [f32; 4] = rgb8(0xfa, 0xb8, 0x2e);
@@ -297,28 +321,45 @@ pub mod logo {
 /// pair collapsed onto this one. Both survivors of that collapse are elsewhere and neither is a
 /// control: the warm off-white is [`WASH_WARM`], a page ground; the cool plate is
 /// [`SURFACE_QR_PLATE`], a scan surface.
-pub const ACCENT: [f32; 4] = VIOLET_500;
+#[allow(non_snake_case)]
+pub fn ACCENT() -> [f32; 4] {
+    VIOLET_500()
+}
 /// Ink/glyphs drawn over [`ACCENT`] — pure `WHITE`, the one ink that clears 4.5:1 on Stremio's
 /// violet (4.51:1; even `TEXT_PRIMARY`'s `#f7fafc` lands at 4.30). Pinned by
 /// `widgets_control_face_tests::focus_ink_clears_4_5_on_every_focus_fill`. It was the near-black `NEUTRAL_950` over
 /// the old near-white fill.
-pub const ACCENT_INK: [f32; 4] = WHITE;
+#[allow(non_snake_case)]
+pub fn ACCENT_INK() -> [f32; 4] {
+    palette().accent_ink
+}
 /// **The account avatar's face** (the top bar's account pill): one of these, picked by a stable
 /// hash of the account id, so one account always wears the same colour and two accounts on one
 /// television usually differ. All on the accent's one hue — the violet and three darker steps
 /// toward the atmosphere's night — so the initial inks in [`ACCENT_INK`] on every one of them.
-pub const AVATAR_FILLS: [[f32; 4]; 4] =
-    [VIOLET_500, mix(VIOLET_500, ATMOS_VIOLET, 0.5), ATMOS_VIOLET, ATMOS_DUSK];
+#[allow(non_snake_case)]
+pub fn AVATAR_FILLS() -> [[f32; 4]; 4] {
+    [VIOLET_500(), mix(VIOLET_500(), ATMOS_VIOLET(), 0.5), ATMOS_VIOLET(), ATMOS_DUSK()]
+}
 /// Alias for [`ACCENT_INK`] read from the "ink over accent" intent. The one legitimate alias in this
 /// file: it is the same ROLE under a second name, not a second role that happens to share a stop.
-pub const INK_ON_ACCENT: [f32; 4] = ACCENT_INK;
+#[allow(non_snake_case)]
+pub fn INK_ON_ACCENT() -> [f32; 4] {
+    ACCENT_INK()
+}
 /// **A list's focus pill** (`TableView`'s sliding pill, a list row's focused face): the accent a
 /// step deeper, so a row's white title clears 5:1 and its secondary ink 3:1 on it (on the brand
 /// violet itself white sits at 4.51 and the old dark sub-ink well under 3). Still Stremio's purple.
-pub const FOCUS_FILL: [f32; 4] = VIOLET_550;
+#[allow(non_snake_case)]
+pub fn FOCUS_FILL() -> [f32; 4] {
+    VIOLET_550()
+}
 /// The SECONDARY ink over the accent (a focused row's source column, sub-line): white at the
 /// weight that clears 3:1 on [`FOCUS_FILL`].
-pub const INK_ON_ACCENT_SECONDARY: [f32; 4] = with_a(WHITE, 0.78);
+#[allow(non_snake_case)]
+pub fn INK_ON_ACCENT_SECONDARY() -> [f32; 4] {
+    with_a(ACCENT_INK(), 0.78)
+}
 // (`CONTROL_FOCUS_FACE_L` .972 / `CONTROL_FOCUS_AMBIENT_C` .36 stood here: a keyed focused face
 // was near-white material carrying the page's hue. Since the Stremio palette sync focus is the
 // fixed [`ACCENT`] violet on every ground, so the page's key reaches only the IDLE face.)
@@ -343,7 +384,10 @@ pub const CONTROL_SPENT_FOCUS_W: f32 = 0.76;
 /// focus state changing. Deliberately close enough to `ACCENT` that [`ACCENT_INK`] stays legible on
 /// BOTH sides — the first version flipped the ink at the sweep line and cut the label in half
 /// mid-word.
-pub const CONTROL_SPENT_FILL: [f32; 4] = mix(VIOLET_500, NEUTRAL_500, 1.0 - CONTROL_SPENT_FOCUS_W);
+#[allow(non_snake_case)]
+pub fn CONTROL_SPENT_FILL() -> [f32; 4] {
+    mix(VIOLET_500(), NEUTRAL_500(), 1.0 - CONTROL_SPENT_FOCUS_W)
+}
 
 /// The Search query field's **editing** ink — the bright endpoint of the `hot` cross-fade in
 /// `search::field::draw` (idle end: `TEXT_SECONDARY`) while the television's keyboard is up. Its own
@@ -381,9 +425,15 @@ pub const SEARCH_FIELD_FILL_FOCUS: [f32; 4] = with_a(WHITE, 0.13);
 /// The Search field's resting outline.
 pub const SEARCH_FIELD_RIM: [f32; 4] = with_a(WHITE, 0.26);
 /// The Search field's focused outline: the accent, the app's one "the remote is here" colour.
-pub const SEARCH_FIELD_RIM_FOCUS: [f32; 4] = ACCENT;
+#[allow(non_snake_case)]
+pub fn SEARCH_FIELD_RIM_FOCUS() -> [f32; 4] {
+    ACCENT()
+}
 /// The halo the focused Search field casts (the accent, translucent).
-pub const SEARCH_FIELD_GLOW: [f32; 4] = with_a(ACCENT, 0.55);
+#[allow(non_snake_case)]
+pub fn SEARCH_FIELD_GLOW() -> [f32; 4] {
+    with_a(ACCENT(), 0.55)
+}
 /// The Search field's placeholder ink: a step brighter than tertiary fine print, so the empty field
 /// still says what it is for from the couch.
 pub const SEARCH_PLACEHOLDER_INK: [f32; 4] = TEXT_SECONDARY;
@@ -391,12 +441,18 @@ pub const SEARCH_PLACEHOLDER_INK: [f32; 4] = TEXT_SECONDARY;
 /// **The Detail page's stream panel** (stremio-web's `MetaDetails` streams column): the right-hand
 /// column of a Detail page stands on this dark ground, full height, so the stream list reads as a
 /// panel of its own over the full-bleed backdrop.
-pub const DETAIL_STREAM_PANEL: [f32; 4] = with_a(NEUTRAL_750, 0.86);
+#[allow(non_snake_case)]
+pub fn DETAIL_STREAM_PANEL() -> [f32; 4] {
+    with_a(NEUTRAL_750(), 0.86)
+}
 /// The stream panel's top-left corner radius.
 pub const DETAIL_STREAM_PANEL_RAD: f32 = 32.0;
 
 /// Idle (unfocused) control disc/pill fill — solid dark, faintly translucent.
-pub const CONTROL_IDLE_FILL: [f32; 4] = with_a(NEUTRAL_650, 0.92);
+#[allow(non_snake_case)]
+pub fn CONTROL_IDLE_FILL() -> [f32; 4] {
+    with_a(NEUTRAL_650(), 0.92)
+}
 /// White glyph/label over an idle control. Both grounds ink it the same: the design system states
 /// one `--control-idle-ink`, and the UNKEYED face below is a white film over a black ramp, which is
 /// still a dark surface — see [`CONTROL_IDLE_FILL_UNKEYED`].
@@ -479,26 +535,44 @@ pub const CONTROL_CAST_FOCUS: [(f32, f32, f32); 2] = [(5.0, 32.0, 0.34), (1.0, 6
 /// stremio-web's `--secondary-background-color`. The LIGHTER end of Stremio's page gradient, not its
 /// near-black #0c0b11 end, so the focused-card drop-shadow still has a ground to darken. (Was Apple
 /// TV's shelf gray #2c2c2e until the Stremio palette sync.)
-pub const SURFACE_APP: [f32; 4] = NEUTRAL_500;
+#[allow(non_snake_case)]
+pub fn SURFACE_APP() -> [f32; 4] {
+    NEUTRAL_500()
+}
 /// Opaque sheet drawn over the hardware video plane when a detail page scrolls the hero away.
 /// Same stop as [`SURFACE_APP`] so the rising page and the cover are one surface. Different role:
 /// this hides the plane. It is not atmosphere, so [`scrim`] is the wrong token.
-pub const PLANE_COVER: [f32; 4] = SURFACE_APP;
+#[allow(non_snake_case)]
+pub fn PLANE_COVER() -> [f32; 4] {
+    SURFACE_APP()
+}
 // GL clear color — 3-float (`frame_clear` takes r,g,b, no alpha): [`SURFACE_APP`] itself (both are
 // the `NEUTRAL_500` stop), defined in `gfx::tokens` because `gfx` clears with it.
 pub use sn_gfx::gfx::tokens::CLEAR_RGB;
 /// Opaque menu panel / fade mask / badge knockout interior.
-pub const SURFACE_PANEL: [f32; 4] = NEUTRAL_650;
+#[allow(non_snake_case)]
+pub fn SURFACE_PANEL() -> [f32; 4] {
+    NEUTRAL_650()
+}
 /// A grouped table's section card (`TableView::grouped`): Settings' regions and the Detail page's
 /// stream and episode lists, which sit on a full-bleed backdrop and must read over bright art.
 /// [`SURFACE_PANEL`]'s stop, near-opaque, so a chip's [`SURFACE_PANEL`] knockout is one material
 /// with the card under it.
-pub const SURFACE_GROUP: [f32; 4] = with_a(NEUTRAL_650, 0.94);
+#[allow(non_snake_case)]
+pub fn SURFACE_GROUP() -> [f32; 4] {
+    with_a(NEUTRAL_650(), 0.94)
+}
 /// Near-opaque sheet/card gradient — top stop. [`SURFACE_PANEL`]'s own stop at .985, so the sheet
 /// and its opaque twin are one material rather than two greys a hair apart.
-pub const PANEL_TOP: [f32; 4] = with_a(NEUTRAL_650, 0.985);
+#[allow(non_snake_case)]
+pub fn PANEL_TOP() -> [f32; 4] {
+    with_a(NEUTRAL_650(), 0.985)
+}
 /// Near-opaque sheet gradient — bottom stop (kept distinct; the gradient is deliberate).
-pub const PANEL_BOT: [f32; 4] = with_a(NEUTRAL_750, 0.985);
+#[allow(non_snake_case)]
+pub fn PANEL_BOT() -> [f32; 4] {
+    with_a(NEUTRAL_750(), 0.985)
+}
 /// **The material scale, named rather than numbered — SwiftUI's `Material` is the vocabulary.**
 ///
 /// Every glass surface in this app used to be described by two unrelated numbers written at its own
@@ -674,9 +748,15 @@ mod material_tests {
 /// The floor is legibility, not taste: the fine print's contrast over the composite at a white and
 /// a black underlay is graded in `underlay_tests.rs`
 /// (`text_contrast_floors_hold_over_a_bright_and_a_dark_underlay`).
-pub const PANEL_FROST_TOP: [f32; 4] = with_a(NEUTRAL_650, 0.72);
+#[allow(non_snake_case)]
+pub fn PANEL_FROST_TOP() -> [f32; 4] {
+    with_a(NEUTRAL_650(), 0.72)
+}
 /// The frosted sheet's bottom stop — see [`PANEL_FROST_TOP`].
-pub const PANEL_FROST_BOT: [f32; 4] = with_a(NEUTRAL_750, 0.72);
+#[allow(non_snake_case)]
+pub fn PANEL_FROST_BOT() -> [f32; 4] {
+    with_a(NEUTRAL_750(), 0.72)
+}
 /// The sign-in **QR card's** quiet-zone plate (`login.rs`) — a bright cool-white whose job is SCAN
 /// CONTRAST for a phone camera, not focus. It is a SURFACE, not a control fill, which is the whole
 /// reason it outlived the second control white it used to be (`FILL_PRIMARY`): a plate under a
@@ -878,8 +958,14 @@ pub const RAIL_FILL: [f32; 4] = with_a(WHITE, 0.95);
 /// **The player scrubber** (`widgets::Scrubber`): the played part in the brand accent, a soft
 /// accent glow under it, the playhead knob, its shadow, the time bubble's ground, and the cut a
 /// chapter boundary makes in the rail (the rail's own ground showing through, never a mark).
-pub const SCRUB_PLAYED: [f32; 4] = ACCENT;
-pub const SCRUB_GLOW: [f32; 4] = with_a(ACCENT, 0.55);
+#[allow(non_snake_case)]
+pub fn SCRUB_PLAYED() -> [f32; 4] {
+    ACCENT()
+}
+#[allow(non_snake_case)]
+pub fn SCRUB_GLOW() -> [f32; 4] {
+    with_a(ACCENT(), 0.55)
+}
 pub const SCRUB_KNOB: [f32; 4] = WHITE;
 pub const SCRUB_KNOB_SHADOW: [f32; 4] = with_a(BLACK, 0.45);
 pub const SCRUB_BUBBLE: [f32; 4] = with_a(BLACK, 0.78);
@@ -902,8 +988,10 @@ pub const WASH_WARM: [f32; 4] = SAND_100;
 /// violet stops (Stremio's page gradient, corners top-left, top-right, bottom-right, bottom-left) create the low-frequency wallpaper light of an UltraBlur envelope without
 /// pretending there is a poster behind a pre-Home screen.  Once real artwork exists,
 /// [`crate::route_screen::RouteGround`] uses that instead.
-pub const ROUTE_GROUND_FALLBACK: [[f32; 4]; 4] =
-    [ATMOS_DUSK, ATMOS_VIOLET, ATMOS_INDIGO, ATMOS_NIGHT];
+#[allow(non_snake_case)]
+pub fn ROUTE_GROUND_FALLBACK() -> [[f32; 4]; 4] {
+    [ATMOS_DUSK(), ATMOS_VIOLET(), ATMOS_INDIGO(), ATMOS_NIGHT()]
+}
 /// Warm amber Continue-Watching progress fill (Plex-specific; no player equivalent). `#fab82e`.
 pub const RESUME_FILL: [f32; 4] = with_a(AMBER_300, 0.95);
 /// Plex's own "Plex Pass" gold, `#e5a00d` — a BRAND REFERENCE, not a palette member
@@ -942,10 +1030,16 @@ pub const INK_ON_RESUME: [f32; 4] = NEUTRAL_850;
 /// the label's own [`ACCENT_INK`] and the hierarchy is carried by position and size alone. Unfocused rows use
 /// [`TEXT_SECONDARY`] (and [`TEXT_TERTIARY`] when quietened), which need no token of their own,
 /// and [`ROW_VALUE_INK_DIM`] on a dim row.
-pub const ROW_VALUE_INK_ON: [f32; 4] = ACCENT_INK;
+#[allow(non_snake_case)]
+pub fn ROW_VALUE_INK_ON() -> [f32; 4] {
+    ACCENT_INK()
+}
 /// The same read-out on a focused DIM row (an unavailable step) — [`ACCENT_INK`] quietened, as the
 /// row itself is: a disabled value is exempt from the 4.5:1 floor and must read as unavailable.
-pub const ROW_VALUE_INK_ON_DIM: [f32; 4] = with_a(ACCENT_INK, 0.62);
+#[allow(non_snake_case)]
+pub fn ROW_VALUE_INK_ON_DIM() -> [f32; 4] {
+    with_a(ACCENT_INK(), 0.62)
+}
 /// An unfocused **dim** row's read-out (`table::Row::dim` — an unavailable step, a limit reached).
 /// The dim row's label is already [`TEXT_TERTIARY`], and the value keeps its one step behind the
 /// label; a read-out at the live row's ink made the row look half-available. That same ink
@@ -995,7 +1089,10 @@ pub const DANGER_IDLE_TINT: f32 = 0.16;
 /// named before the remote reaches it; the FILL is still a property of FOCUS
 /// ([`DANGER`] whole, under [`TEXT_PRIMARY`]). That split is what keeps a destructive control a
 /// StremioNative control rather than a red button borrowed from somewhere else.
-pub const CONTROL_DANGER_IDLE_FILL: [f32; 4] = mix(CONTROL_IDLE_FILL, DANGER, DANGER_IDLE_TINT);
+#[allow(non_snake_case)]
+pub fn CONTROL_DANGER_IDLE_FILL() -> [f32; 4] {
+    mix(CONTROL_IDLE_FILL(), DANGER, DANGER_IDLE_TINT)
+}
 /// The label over [`CONTROL_DANGER_IDLE_FILL`] — the danger ink itself. The hue is stated twice on
 /// an idle destructive control (a tinted plate AND a tinted label) because at ten feet the plate
 /// alone is a shade of grey; the label is what names the action.
@@ -1268,7 +1365,10 @@ pub const TAB_PLATE_SELECTED_OVER: [f32; 4] = with_a(WHITE, 0.13);
 /// **The top bar's current-page plate while the bar does not hold focus**: the accent, so the page
 /// you are on reads purple from across the room (owner, 2026-10-17: "purple highlighted ideally on
 /// page change"). Its label inks in [`ACCENT_INK`], the one ink that clears 4.5:1 on it.
-pub const TAB_CURRENT: [f32; 4] = ACCENT;
+#[allow(non_snake_case)]
+pub fn TAB_CURRENT() -> [f32; 4] {
+    ACCENT()
+}
 /// The same plate while focus is in the bar: the focus capsule is then the ONE purple thing on the
 /// row, and the current page steps back to the faint wash. `TabStrip::draw` blends the two by the
 /// focus capsule's alpha, so the hand-over animates.

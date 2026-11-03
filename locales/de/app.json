@@ -129,8 +129,12 @@
     "description": "Detail: chip on a stream the addon's debrid service already holds (it plays at once)."
   },
   "app.detail.stream_uncached": {
-    "value": "Nicht im Cache – lädt erst",
+    "value": "Noch nicht im Cache",
     "description": "Detail: quiet chip on a stream the debrid service does not hold yet: playing it starts the download and shows the service's placeholder clip."
+  },
+  "app.detail.stream_upscaled": {
+    "value": "Hochskaliert",
+    "description": "Detail: quiet chip on a stream whose release says it was upscaled (an AI or upscaled 4K): the picture is not native to the resolution shown."
   },
   "app.detail.stream_live": {
     "value": "LIVE",
@@ -271,6 +275,10 @@
     "value": "Demnächst",
     "description": "Detail: trailing read-out of an episode whose release date is still ahead."
   },
+  "app.detail.tba": {
+    "value": "Termin offen",
+    "description": "Detail: trailing read-out of an announced episode that has no release date yet (Stremio's TBA)."
+  },
   "app.detail.all_episodes": {
     "value": "Alle Folgen",
     "description": "Detail: the button on an episode's Streams page that opens the show's page with all its episodes."
@@ -310,7 +318,7 @@
     "description": "Player: the failure read-out when the stream's own request headers cannot be sent (malformed)."
   },
   "app.player.debrid_downloading": {
-    "value": "Lädt noch bei deinem Debrid-Dienst – versuche es in ein paar Minuten erneut",
+    "value": "Lädt noch bei deinem Debrid-Dienst. Versuche es in ein paar Minuten erneut.",
     "description": "Player: the system toast after a debrid service's \"still downloading\" placeholder clip played out (the torrent is not cached yet)."
   },
   "app.player.audio": {
@@ -1272,7 +1280,7 @@
     "description": "Settings: row and picker title — the programme guide Live TV channels show now / next from."
   },
   "app.settings.tv_guide_copy": {
-    "value": "Zeigt bei Live-TV-Sendern, was gerade und als Nächstes läuft – aus einem öffentlichen Programm für die Region. Sender werden über ihren Namen zugeordnet.",
+    "value": "Zeigt bei Live-TV-Sendern, was gerade und als Nächstes läuft, aus einem öffentlichen Programm für die Region. Sender werden über ihren Namen zugeordnet.",
     "description": "TV guide picker: the line under the title."
   },
   "app.settings.tv_guide_de": {
@@ -1391,6 +1399,42 @@
     "args": {
       "version": "str"
     }
+  },
+  "app.settings.theme": {
+    "value": "Farbschema",
+    "description": "Settings: row and picker title — the app's colour theme."
+  },
+  "app.settings.theme_copy": {
+    "value": "Die Farben der App: Hintergrundton und Akzentfarbe. OLED-Schwarz schaltet auf OLED-Bildschirmen die Pixel des Hintergrunds ab.",
+    "description": "Theme picker: the line under the title."
+  },
+  "app.settings.theme_stremio": {
+    "value": "Stremio",
+    "description": "Theme option: Stremio's own violet (the default)."
+  },
+  "app.settings.theme_graphite": {
+    "value": "Graphit",
+    "description": "Theme option: neutral grey with a white accent."
+  },
+  "app.settings.theme_ocean": {
+    "value": "Ozean",
+    "description": "Theme option: deep blue."
+  },
+  "app.settings.theme_crimson": {
+    "value": "Karmesin",
+    "description": "Theme option: deep red."
+  },
+  "app.settings.theme_emerald": {
+    "value": "Smaragd",
+    "description": "Theme option: deep green."
+  },
+  "app.settings.theme_gold": {
+    "value": "Gold",
+    "description": "Theme option: warm dark with a gold accent."
+  },
+  "app.settings.theme_oled": {
+    "value": "OLED-Schwarz",
+    "description": "Theme option: a true black background for OLED screens."
   },
   "app.settings.debrid_only": {
     "value": "Nur Debrid-Streams",

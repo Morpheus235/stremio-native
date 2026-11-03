@@ -129,8 +129,12 @@
     "description": "Detail: chip on a stream the addon's debrid service already holds (it plays at once)."
   },
   "app.detail.stream_uncached": {
-    "value": "Not cached — starts a download",
+    "value": "Not cached yet",
     "description": "Detail: quiet chip on a stream the debrid service does not hold yet: playing it starts the download and shows the service's placeholder clip."
+  },
+  "app.detail.stream_upscaled": {
+    "value": "Upscaled",
+    "description": "Detail: quiet chip on a stream whose release says it was upscaled (an AI or upscaled 4K): the picture is not native to the resolution shown."
   },
   "app.detail.stream_live": {
     "value": "LIVE",
@@ -271,6 +275,10 @@
     "value": "Upcoming",
     "description": "Detail: trailing read-out of an episode whose release date is still ahead."
   },
+  "app.detail.tba": {
+    "value": "TBA",
+    "description": "Detail: trailing read-out of an announced episode that has no release date yet (Stremio's TBA)."
+  },
   "app.detail.all_episodes": {
     "value": "All episodes",
     "description": "Detail: the button on an episode's Streams page that opens the show's page with all its episodes."
@@ -310,7 +318,7 @@
     "description": "Player: the failure read-out when the stream's own request headers cannot be sent (malformed)."
   },
   "app.player.debrid_downloading": {
-    "value": "Still downloading on your debrid service — try again in a few minutes",
+    "value": "Still downloading on your debrid service. Try again in a few minutes.",
     "description": "Player: the system toast after a debrid service's \"still downloading\" placeholder clip played out (the torrent is not cached yet)."
   },
   "app.player.audio": {
@@ -1391,6 +1399,42 @@
     "args": {
       "version": "str"
     }
+  },
+  "app.settings.theme": {
+    "value": "Theme",
+    "description": "Settings: row and picker title — the app's colour theme."
+  },
+  "app.settings.theme_copy": {
+    "value": "The app's colours: the background tint and the highlight. OLED black switches the background's pixels off on an OLED screen.",
+    "description": "Theme picker: the line under the title."
+  },
+  "app.settings.theme_stremio": {
+    "value": "Stremio",
+    "description": "Theme option: Stremio's own violet (the default)."
+  },
+  "app.settings.theme_graphite": {
+    "value": "Graphite",
+    "description": "Theme option: neutral grey with a white accent."
+  },
+  "app.settings.theme_ocean": {
+    "value": "Ocean",
+    "description": "Theme option: deep blue."
+  },
+  "app.settings.theme_crimson": {
+    "value": "Crimson",
+    "description": "Theme option: deep red."
+  },
+  "app.settings.theme_emerald": {
+    "value": "Emerald",
+    "description": "Theme option: deep green."
+  },
+  "app.settings.theme_gold": {
+    "value": "Gold",
+    "description": "Theme option: warm dark with a gold accent."
+  },
+  "app.settings.theme_oled": {
+    "value": "OLED black",
+    "description": "Theme option: a true black background for OLED screens."
   },
   "app.settings.debrid_only": {
     "value": "Only debrid streams",

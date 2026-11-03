@@ -176,7 +176,7 @@
     "description": "Search: the control under the recent searches that forgets them."
   },
   "app.search.no_catalogs": {
-    "value": "No addon is searching",
+    "value": "No addons to search",
     "description": "Search: every addon that can search is switched off."
   },
   "app.search.no_catalogs_reason": {
@@ -378,7 +378,7 @@
     "description": "Privacy: one line of what leaves the TV."
   },
   "app.privacy.addons": {
-    "value": "Catalog, search, meta, stream and subtitle requests — including your search text and the item you open — go to the addons you installed. Subtitle requests also send the video's file name, size and hash, and subtitle files download from the hosts the addon names.",
+    "value": "Catalog, search, meta, stream and subtitle requests go to the addons you installed, including your search text and the item you open. Subtitle requests also send the video's file name, size and hash, and subtitle files download from the hosts the addon names.",
     "description": "Privacy: one line of what leaves the TV."
   },
   "app.privacy.media": {
@@ -390,7 +390,7 @@
     "description": "Privacy: one line of what leaves the TV."
   },
   "app.privacy.skip": {
-    "value": "Unless Skip intros is Off, the ID of the episode or film you play goes to api.introdb.app — for anime to api.aniskip.com, kitsu.io and arm.haglund.dev — to find its intro, recap and credits.",
+    "value": "Unless Skip intros is Off, the ID of the episode or film you play goes to api.introdb.app (for anime, to api.aniskip.com, kitsu.io and arm.haglund.dev) to find its intro, recap and credits.",
     "description": "Privacy: one line of what leaves the TV. Skip intros is the Settings row; the hosts are proper names."
   },
   "app.privacy.stays_head": {
@@ -596,7 +596,7 @@
     }
   },
   "app.search.summary_failed": {
-    "value": "Failed: {addons}",
+    "value": "Search failed: {addons}",
     "description": "Search: the closing line naming the catalogs whose search failed, each with a short cause.",
     "args": {
       "addons": "str"
